@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FUSION — Regroupement par unité foncière</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{
+    --nuit:#0F2238;
+    --canard:#33838B;
+    --orange:#FF982D;
+    --carmin:#A01040;
+    --cyan:#6DD5DC;
+    --jaune-forme:#FFE764;
+    --jaune-texte:#FFC900;
+    --vert:#1F7A4D;
+    --gris:#8C97A3;
+    --papier:#FFFFFF;
+    --fond:#F2F4F6;
+    --trait:#DDE2E8;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    font-family:"Segoe UI",system-ui,sans-serif;
+    color:var(--nuit);
+    background:var(--fond);
+    font-size:14px;
+  }
+  h1,h2,h3{font-family:Georgia,"Times New Roman",serif;font-weight:normal;margin:0}
+  button{font-family:inherit;font-size:inherit;cursor:pointer}
+  button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{
+    outline:2px solid var(--cyan);outline-offset:2px
+  }
+
+  /* ---- ossature ---- */
+  .app{display:flex;flex-direction:column;height:100vh}
+  header.bandeau{
+    background:var(--nuit);color:#fff;
+    padding:10px 18px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap
+  }
+  .bandeau h1{font-size:19px;letter-spacing:.3px}
+  .bandeau .sous{color:var(--cyan);font-size:12.5px}
+  .bandeau .compteurs{margin-left:auto;display:flex;gap:16px;font-size:12.5px;color:#C9D3DE}
+  .bandeau .compteurs b{color:var(--jaune-texte);font-weight:600}
+
+  main{flex:1;display:flex;min-height:0}
+  .panneau{
+    width:390px;min-width:320px;background:var(--papier);
+    border-right:1px solid var(--trait);display:flex;flex-direction:column;min-height:0
+  }
+  .carte-zone{flex:1;position:relative;min-width:0}
+  #carte{position:absolute;inset:0}
+
+  /* ---- source ---- */
+  .source{padding:12px 14px;border-bottom:1px solid var(--trait)}
+  .depose{
+    border:1.5px dashed var(--canard);border-radius:4px;padding:14px;text-align:center;
+    color:var(--canard);background:#F6FAFB
+  }
+  .depose.actif{background:#E6F3F4;border-color:var(--nuit)}
+  .depose p{margin:0 0 8px}
+  .ligne-boutons{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+  .btn{
+    border:1px solid var(--canard);background:#fff;color:var(--canard);
+    padding:5px 11px;border-radius:3px
+  }
+  .btn:hover{background:var(--canard);color:#fff}
+  .btn.plein{background:var(--canard);color:#fff}
+  .btn.plein:hover{background:var(--nuit);border-color:var(--nuit)}
+  .btn.danger{border-color:var(--carmin);color:var(--carmin)}
+  .btn.danger:hover{background:var(--carmin);color:#fff}
+  .btn[disabled]{opacity:.4;cursor:not-allowed}
+  .btn[disabled]:hover{background:#fff;color:var(--canard)}
+
+  /* ---- réglages ---- */
+  .reglages{padding:10px 14px;border-bottom:1px solid var(--trait);background:#FAFBFC}
+  .reglage{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .reglage:last-child{margin-bottom:0}
+  .reglage label{flex:1;font-size:12.5px}
+  .reglage input[type=range]{flex:1;accent-color:var(--canard)}
+  .reglage .val{width:62px;text-align:right;font-variant-numeric:tabular-nums;color:var(--canard)}
+  .reglage input[type=number]{width:70px;padding:3px 5px;border:1px solid var(--trait);border-radius:3px}
+
+  /* ---- liste des groupes ---- */
+  .liste{flex:1;overflow:auto;min-height:0}
+  .vide{padding:26px 18px;color:var(--gris);line-height:1.55}
+  .groupe{border-bottom:1px solid var(--trait)}
+  .groupe-tete{
+    display:flex;align-items:center;gap:9px;padding:9px 14px;background:#fff;width:100%;
+    border:0;border-left:4px solid transparent;text-align:left
+  }
+  .groupe-tete:hover{background:#F4F8F9}
+  .groupe.ouvert>.groupe-tete{background:#EDF4F5;border-left-color:var(--carmin)}
+  .groupe-tete .num{
+    font-family:Georgia,serif;font-size:15px;color:var(--nuit);min-width:34px
+  }
+  .groupe-tete .info{flex:1;font-size:12.5px;color:var(--gris)}
+  .groupe-tete .pastille{width:11px;height:11px;border-radius:50%;border:1px solid rgba(0,0,0,.18)}
+  .parcelles{list-style:none;margin:0;padding:2px 0 8px;background:#FBFCFD}
+  .parcelles li{display:flex;align-items:center;gap:9px;padding:3px 14px 3px 30px}
+  .parcelles li:hover{background:#F1F5F7}
+  .parcelles label{flex:1;cursor:pointer;font-variant-numeric:tabular-nums}
+  .parcelles .surf{color:var(--gris);font-size:12px;font-variant-numeric:tabular-nums}
+  .parcelles input[type=checkbox]{accent-color:var(--carmin)}
+  .groupe-actions{padding:0 14px 10px 30px;display:flex;gap:8px;flex-wrap:wrap}
+
+  /* ---- pied ---- */
+  .pied{padding:10px 14px;border-top:1px solid var(--trait);background:#FAFBFC;display:flex;gap:8px;flex-wrap:wrap}
+
+  .legende{
+    position:absolute;bottom:14px;left:14px;z-index:500;background:rgba(255,255,255,.94);
+    border:1px solid var(--trait);border-radius:4px;padding:9px 12px;font-size:12.5px;line-height:1.9
+  }
+  .legende i{display:inline-block;width:13px;height:13px;border-radius:2px;margin-right:7px;vertical-align:-2px}
+
+  .message{
+    position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:600;
+    background:var(--nuit);color:#fff;padding:9px 16px;border-radius:3px;max-width:560px
+  }
+  .message.alerte{background:var(--carmin)}
+  @media (prefers-reduced-motion:no-preference){
+    .message{transition:opacity .2s}
+  }
+  textarea.coller{
+    width:100%;height:90px;margin-top:9px;border:1px solid var(--trait);border-radius:3px;
+    padding:7px;font-family:Consolas,monospace;font-size:12px;display:none
+  }
+  textarea.coller.visible{display:block}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="bandeau">
+    <h1>FUSION</h1>
+    <span class="sous">Regroupement par unité foncière</span>
+    <div class="compteurs">
+      <span>Parcelles <b id="c-parcelles">0</b></span>
+      <span>Groupes <b id="c-groupes">0</b></span>
+      <span>Surface <b id="c-surface">0 ha</b></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="panneau">
+
+      <div class="source">
+        <div class="depose" id="depose">
+          <p>Déposez ici le GeoJSON des parcelles de la société</p>
+          <div class="ligne-boutons">
+            <button class="btn" id="btn-fichier">Choisir un fichier</button>
+            <button class="btn" id="btn-coller">Coller du texte</button>
+            <button class="btn" id="btn-essai">Jeu d'essai</button>
+          </div>
+          <textarea class="coller" id="zone-coller" placeholder="Collez ici le contenu GeoJSON, puis Ctrl+Entrée"></textarea>
+        </div>
+        <input type="file" id="fichier" accept=".geojson,.json,application/geo+json,application/json" hidden>
+      </div>
+
+      <div class="reglages">
+        <div class="reglage">
+          <label for="rayon">Voisinage affiché</label>
+          <input type="range" id="rayon" min="0" max="500" step="10" value="100">
+          <span class="val" id="rayon-val">100 m</span>
+        </div>
+        <div class="reglage">
+          <label for="mini">Longueur minimale de limite commune</label>
+          <input type="number" id="mini" min="0" max="20" step="0.5" value="1">
+          <span class="val">m</span>
+        </div>
+      </div>
+
+      <div class="liste" id="liste">
+        <p class="vide">Aucune parcelle chargée. Déposez un GeoJSON, ou ouvrez le jeu d'essai pour voir le regroupement à l'œuvre.</p>
+      </div>
+
+      <div class="pied">
+        <button class="btn plein" id="btn-fusionner" disabled>Fusionner les groupes cochés</button>
+        <button class="btn" id="btn-recalculer" disabled>Recalculer</button>
+        <button class="btn" id="btn-export" disabled>Exporter les groupes</button>
+      </div>
+
+    </section>
+
+    <section class="carte-zone">
+      <div id="carte"></div>
+      <div class="legende">
+        <div><i style="background:#A01040"></i>Unité foncière retenue</div>
+        <div><i style="background:#1F7A4D"></i>Parcelles de la société à proximité</div>
+        <div><i style="background:#8C97A3"></i>Autres parcelles de la société</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+"use strict";
+
+/* ============================================================
+   FUSION — moteur de regroupement par unité foncière
+   Règles métier arrêtées :
+   - contiguïté calculée uniquement sur la géométrie cadastrale ;
+   - un contact par un simple coin (point unique) ne vaut PAS contiguïté :
+     il faut un segment de limite commun d'au moins `minCommun` mètres ;
+   - deux parcelles séparées par une voie forment par défaut deux unités
+     foncières distinctes — le regroupement se fait alors à la main ;
+   - une parcelle décochée ne disparaît jamais : elle retombe dans un
+     nouveau groupe, recalculé par contiguïté sur le reliquat.
+   ============================================================ */
+
+const etat = {
+  parcelles: [],      // {i, ref, ring[], surface, centre:{x,y}, bbox}
+  groupes: [],        // {num, membres:Set<int>, coche:bool}
+  adjacence: [],      // Set<int> par parcelle
+  ouvert: null,       // num du groupe déplié
+  compteurGroupe: 0,
+  lat0: 0
+};
+
+/* ---------- projection locale (mètres) ---------- */
+const R_TERRE = 6378137;
+function projeter(lon, lat, lat0){
+  const rad = Math.PI/180;
+  return [R_TERRE*lon*rad*Math.cos(lat0*rad), R_TERRE*lat*rad];
+}
+function deprojeter(x, y, lat0){
+  const rad = Math.PI/180;
+  return [x/(R_TERRE*rad*Math.cos(lat0*rad)), y/(R_TERRE*rad)];
+}
+
+/* ---------- lecture du GeoJSON ---------- */
+function referenceParcelle(p){
+  if(!p) return null;
+  const direct = p.idu || p.id || p.IDU || p.code || p.reference || p.ref;
+  if(direct) return String(direct);
+  const sec = p.section || p.SECTION || p.sec;
+  const num = p.numero || p.NUMERO || p.num;
+  const com = p.commune || p.COMMUNE || p.code_insee || p.insee;
+  if(sec && num) return [com, sec, String(num).padStart(4,"0")].filter(Boolean).join(" ");
+  return null;
+}
+
+function chargerGeoJSON(objet){
+  const traits = objet.type === "FeatureCollection" ? objet.features
+               : objet.type === "Feature" ? [objet]
+               : [];
+  if(!traits.length) throw new Error("Le fichier ne contient aucune entité exploitable.");
+
+  // latitude de référence pour la projection locale
+  let somme = 0, n = 0;
+  const parcourir = (c) => {
+    if(typeof c[0] === "number"){ somme += c[1]; n++; return; }
+    c.forEach(parcourir);
+  };
+  traits.forEach(t => t.geometry && parcourir(t.geometry.coordinates));
+  if(!n) throw new Error("Aucune coordonnée trouvée dans le fichier.");
+  const lat0 = somme/n;
+
+  const parcelles = [];
+  traits.forEach((t, idx) => {
+    const g = t.geometry;
+    if(!g) return;
+    const polys = g.type === "Polygon" ? [g.coordinates]
+                : g.type === "MultiPolygon" ? g.coordinates
+                : null;
+    if(!polys) return;
+
+    const anneaux = [];
+    polys.forEach(poly => poly.forEach(anneau => {
+      const pts = anneau.map(c => projeter(c[0], c[1], lat0));
+      if(pts.length > 2) anneaux.push(pts);
+    }));
+    if(!anneaux.length) return;
+
+    parcelles.push({
+      i: parcelles.length,
+      ref: referenceParcelle(t.properties) || ("Parcelle " + (idx+1)),
+      props: t.properties || {},
+      anneaux,
+      surface: surfaceAnneaux(anneaux),
+      centre: centreAnneaux(anneaux),
+      bbox: bboxAnneaux(anneaux)
+    });
+  });
+
+  if(!parcelles.length) throw new Error("Aucune parcelle (polygone) trouvée dans le fichier.");
+  etat.lat0 = lat0;
+  etat.parcelles = parcelles;
+}
+
+function surfaceAnneaux(anneaux){
+  // shoelace : le premier anneau de chaque polygone est extérieur, les
+  // suivants sont soustraits en valeur absolue décroissante
+  let total = 0;
+  anneaux.forEach((pts, k) => {
+    let s = 0;
+    for(let i = 0, j = pts.length-1; i < pts.length; j = i++){
+      s += (pts[j][0]*pts[i][1]) - (pts[i][0]*pts[j][1]);
+    }
+    total += (k === 0 ? 1 : -1) * Math.abs(s/2);
+  });
+  return Math.max(total, 0);
+}
+function centreAnneaux(anneaux){
+  const pts = anneaux[0];
+  let x = 0, y = 0;
+  pts.forEach(p => { x += p[0]; y += p[1]; });
+  return {x: x/pts.length, y: y/pts.length};
+}
+function bboxAnneaux(anneaux){
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  anneaux.forEach(pts => pts.forEach(p => {
+    if(p[0] < x1) x1 = p[0];
+    if(p[1] < y1) y1 = p[1];
+    if(p[0] > x2) x2 = p[0];
+    if(p[1] > y2) y2 = p[1];
+  }));
+  return {x1, y1, x2, y2};
+}
+
+/* ---------- index de points (grille) ---------- */
+function creerGrille(pas){
+  const cases = new Map();
+  const cle = (a,b) => a + "|" + b;
+  return {
+    pas,
+    ajouter(x, y, id){
+      const k = cle(Math.floor(x/pas), Math.floor(y/pas));
+      let l = cases.get(k);
+      if(!l){ l = []; cases.set(k, l); }
+      l.push({x, y, id});
+    },
+    autour(x, y){
+      const cx = Math.floor(x/pas), cy = Math.floor(y/pas), out = [];
+      for(let a = -1; a <= 1; a++) for(let b = -1; b <= 1; b++){
+        const l = cases.get(cle(cx+a, cy+b));
+        if(l) out.push(...l);
+      }
+      return out;
+    },
+    dansBoite(x1, y1, x2, y2){
+      const out = [];
+      for(let a = Math.floor(x1/pas); a <= Math.floor(x2/pas); a++)
+        for(let b = Math.floor(y1/pas); b <= Math.floor(y2/pas); b++){
+          const l = cases.get(cle(a,b));
+          if(l) out.push(...l);
+        }
+      return out;
+    }
+  };
+}
+
+/* ---------- calcul de l'adjacence ---------- */
+function calculerAdjacence(minCommun){
+  const TOL = 0.20;                 // fusion des sommets quasi confondus (20 cm)
+  const grille = creerGrille(Math.max(TOL, 0.5));
+  const sommets = [];               // {x,y}
+
+  function idSommet(x, y){
+    for(const s of grille.autour(x, y)){
+      if(Math.hypot(s.x - x, s.y - y) <= TOL) return s.id;
+    }
+    const id = sommets.length;
+    sommets.push({x, y});
+    grille.ajouter(x, y, id);
+    return id;
+  }
+
+  // 1. accrochage de tous les sommets
+  const anneauxIds = etat.parcelles.map(p =>
+    p.anneaux.map(pts => pts.map(pt => idSommet(pt[0], pt[1])))
+  );
+
+  // 2. densification : un sommet voisin posé au milieu d'une limite
+  //    (jonction en T) doit couper cette limite, sinon la limite commune
+  //    passe inaperçue
+  const anneauxDenses = anneauxIds.map(anneaux => anneaux.map(ids => {
+    const sortie = [];
+    for(let i = 0; i < ids.length - 1; i++){
+      const a = sommets[ids[i]], b = sommets[ids[i+1]];
+      sortie.push(ids[i]);
+      const x1 = Math.min(a.x,b.x)-TOL, x2 = Math.max(a.x,b.x)+TOL;
+      const y1 = Math.min(a.y,b.y)-TOL, y2 = Math.max(a.y,b.y)+TOL;
+      const dx = b.x-a.x, dy = b.y-a.y;
+      const long2 = dx*dx + dy*dy;
+      if(long2 < 1e-9) continue;
+      const inserts = [];
+      for(const s of grille.dansBoite(x1, y1, x2, y2)){
+        if(s.id === ids[i] || s.id === ids[i+1]) continue;
+        const t = ((s.x-a.x)*dx + (s.y-a.y)*dy) / long2;
+        if(t <= 0.0001 || t >= 0.9999) continue;
+        const px = a.x + t*dx, py = a.y + t*dy;
+        if(Math.hypot(s.x-px, s.y-py) <= TOL) inserts.push({t, id:s.id});
+      }
+      inserts.sort((u,v) => u.t - v.t);
+      let dernier = -1;
+      inserts.forEach(o => { if(o.id !== dernier){ sortie.push(o.id); dernier = o.id; } });
+    }
+    sortie.push(ids[ids.length-1]);
+    return sortie;
+  }));
+
+  // 3. limites communes : une arête portée par deux parcelles différentes
+  const aretes = new Map();         // "a-b" -> {longueur, parcelles:Set}
+  anneauxDenses.forEach((anneaux, ip) => anneaux.forEach(ids => {
+    for(let i = 0; i < ids.length - 1; i++){
+      const a = ids[i], b = ids[i+1];
+      if(a === b) continue;
+      const k = Math.min(a,b) + "-" + Math.max(a,b);
+      let e = aretes.get(k);
+      if(!e){
+        e = {longueur: Math.hypot(sommets[a].x-sommets[b].x, sommets[a].y-sommets[b].y), parcelles: new Set()};
+        aretes.set(k, e);
+      }
+      e.parcelles.add(ip);
+    }
+  }));
+
+  const partage = new Map();        // "ip1-ip2" -> longueur cumulée
+  aretes.forEach(e => {
+    if(e.parcelles.size < 2) return;
+    const liste = [...e.parcelles];
+    for(let i = 0; i < liste.length; i++) for(let j = i+1; j < liste.length; j++){
+      const k = liste[i] + "-" + liste[j];
+      partage.set(k, (partage.get(k) || 0) + e.longueur);
+    }
+  });
+
+  const adj = etat.parcelles.map(() => new Set());
+  partage.forEach((longueur, k) => {
+    if(longueur < minCommun) return;     // coin unique ou contact négligeable
+    const [a, b] = k.split("-").map(Number);
+    adj[a].add(b);
+    adj[b].add(a);
+  });
+  etat.adjacence = adj;
+}
+
+/* ---------- composantes connexes ---------- */
+function composantes(sousEnsemble){
+  const restant = new Set(sousEnsemble);
+  const blocs = [];
+  while(restant.size){
+    const depart = restant.values().next().value;
+    const bloc = new Set([depart]);
+    const pile = [depart];
+    restant.delete(depart);
+    while(pile.length){
+      const courant = pile.pop();
+      etat.adjacence[courant].forEach(v => {
+        if(restant.has(v)){ restant.delete(v); bloc.add(v); pile.push(v); }
+      });
+    }
+    blocs.push(bloc);
+  }
+  return blocs;
+}
+
+function numeroterGroupe(membres){
+  etat.compteurGroupe++;
+  return {num: etat.compteurGroupe, membres, coche:false};
+}
+
+function regrouperAutomatiquement(){
+  const minCommun = parseFloat(document.getElementById("mini").value) || 0;
+  calculerAdjacence(minCommun);
+  etat.compteurGroupe = 0;
+  etat.groupes = composantes(etat.parcelles.map(p => p.i))
+    .sort((a,b) => b.size - a.size)
+    .map(numeroterGroupe);
+  etat.ouvert = etat.groupes.length ? etat.groupes[0].num : null;
+}
+
+/* ---------- affinage ---------- */
+function retirerDuGroupe(numGroupe, indexParcelles){
+  const g = etat.groupes.find(x => x.num === numGroupe);
+  if(!g) return;
+  indexParcelles.forEach(i => g.membres.delete(i));
+  // le reliquat du groupe d'origine peut lui-même se scinder
+  const reste = composantes([...g.membres]);
+  const nouveaux = composantes(indexParcelles);
+  const position = etat.groupes.indexOf(g);
+  const remplacement = [];
+  reste.forEach(b => remplacement.push(numeroterGroupe(b)));
+  nouveaux.forEach(b => remplacement.push(numeroterGroupe(b)));
+  etat.groupes.splice(position, 1, ...remplacement);
+  etat.groupes = etat.groupes.filter(x => x.membres.size);
+  if(!etat.groupes.some(x => x.num === etat.ouvert)){
+    etat.ouvert = remplacement.length ? remplacement[0].num : null;
+  }
+}
+
+function fusionnerCoches(){
+  const coches = etat.groupes.filter(g => g.coche);
+  if(coches.length < 2) return;
+  const membres = new Set();
+  coches.forEach(g => g.membres.forEach(i => membres.add(i)));
+  const position = etat.groupes.indexOf(coches[0]);
+  etat.groupes = etat.groupes.filter(g => !g.coche);
+  const nouveau = numeroterGroupe(membres);
+  etat.groupes.splice(Math.min(position, etat.groupes.length), 0, nouveau);
+  etat.ouvert = nouveau.num;
+}
+
+/* ---------- carte ---------- */
+let carte, coucheParcelles;
+function initCarte(){
+  carte = L.map("carte", {zoomControl:true, attributionControl:true});
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 20, attribution: "© OpenStreetMap"
+  }).addTo(carte);
+  carte.setView([46.6, 2.5], 6);
+  coucheParcelles = L.layerGroup().addTo(carte);
+}
+
+function dessiner(){
+  if(!coucheParcelles) return;
+  coucheParcelles.clearLayers();
+  if(!etat.parcelles.length) return;
+
+  const groupeOuvert = etat.groupes.find(g => g.num === etat.ouvert);
+  const retenues = groupeOuvert ? groupeOuvert.membres : new Set();
+  const rayon = parseFloat(document.getElementById("rayon").value) || 0;
+
+  // parcelles de la société situées dans le rayon autour de l'unité retenue
+  const proches = new Set();
+  if(rayon > 0 && retenues.size){
+    etat.parcelles.forEach(p => {
+      if(retenues.has(p.i)) return;
+      for(const j of retenues){
+        if(distanceBoites(p.bbox, etat.parcelles[j].bbox) <= rayon){ proches.add(p.i); break; }
+      }
+    });
+  }
+
+  etat.parcelles.forEach(p => {
+    const retenue = retenues.has(p.i);
+    const proche = proches.has(p.i);
+    const couleur = retenue ? "#A01040" : proche ? "#1F7A4D" : "#8C97A3";
+    const latlngs = p.anneaux.map(pts => pts.map(pt => {
+      const c = deprojeter(pt[0], pt[1], etat.lat0);
+      return [c[1], c[0]];
+    }));
+    const forme = L.polygon(latlngs, {
+      color: couleur,
+      weight: retenue ? 2.2 : 1.2,
+      fillColor: couleur,
+      fillOpacity: retenue ? 0.42 : proche ? 0.22 : 0.10
+    });
+    forme.bindTooltip(p.ref + " — " + formatSurface(p.surface), {sticky:true});
+    forme.on("click", () => { basculerParcelle(p.i); });
+    coucheParcelles.addLayer(forme);
+  });
+
+  if(!dessiner.cadre){
+    const b = L.latLngBounds([]);
+    etat.parcelles.forEach(p => p.anneaux[0].forEach(pt => {
+      const c = deprojeter(pt[0], pt[1], etat.lat0);
+      b.extend([c[1], c[0]]);
+    }));
+    if(b.isValid()) carte.fitBounds(b, {padding:[30,30]});
+    dessiner.cadre = true;
+  }
+}
+
+function distanceBoites(a, b){
+  const dx = Math.max(0, Math.max(a.x1 - b.x2, b.x1 - a.x2));
+  const dy = Math.max(0, Math.max(a.y1 - b.y2, b.y1 - a.y2));
+  return Math.hypot(dx, dy);
+}
+
+function basculerParcelle(i){
+  const g = etat.groupes.find(x => x.membres.has(i));
+  if(!g) return;
+  if(g.num === etat.ouvert){
+    if(g.membres.size === 1){ signaler("Ce groupe ne compte qu'une parcelle : rien à détacher."); return; }
+    retirerDuGroupe(g.num, [i]);
+  }else{
+    etat.ouvert = g.num;
+  }
+  rendre();
+}
+
+/* ---------- rendu du panneau ---------- */
+function formatSurface(m2){
+  if(m2 >= 10000) return (m2/10000).toLocaleString("fr-FR",{maximumFractionDigits:2}) + " ha";
+  return Math.round(m2).toLocaleString("fr-FR") + " m²";
+}
+
+function rendre(){
+  const liste = document.getElementById("liste");
+  liste.innerHTML = "";
+
+  if(!etat.parcelles.length){
+    liste.innerHTML = '<p class="vide">Aucune parcelle chargée. Déposez un GeoJSON, ou ouvrez le jeu d\'essai pour voir le regroupement à l\'œuvre.</p>';
+  }else{
+    etat.groupes.forEach(g => {
+      const membres = [...g.membres].map(i => etat.parcelles[i])
+        .sort((a,b) => a.ref.localeCompare(b.ref,"fr",{numeric:true}));
+      const surface = membres.reduce((s,p) => s + p.surface, 0);
+
+      const bloc = document.createElement("div");
+      bloc.className = "groupe" + (g.num === etat.ouvert ? " ouvert" : "");
+
+      const tete = document.createElement("button");
+      tete.className = "groupe-tete";
+      tete.type = "button";
+      tete.innerHTML =
+        '<input type="checkbox" ' + (g.coche ? "checked" : "") + ' aria-label="Sélectionner le groupe ' + g.num + '">' +
+        '<span class="num">G' + g.num + '</span>' +
+        '<span class="info">' + membres.length + ' parcelle' + (membres.length>1?"s":"") + ' · ' + formatSurface(surface) + '</span>' +
+        '<span class="pastille" style="background:' + (g.num === etat.ouvert ? "#A01040" : "#8C97A3") + '"></span>';
+      tete.addEventListener("click", (e) => {
+        if(e.target.type === "checkbox"){
+          g.coche = e.target.checked;
+          majBoutons();
+          e.stopPropagation();
+          return;
+        }
+        etat.ouvert = (etat.ouvert === g.num) ? null : g.num;
+        rendre();
+      });
+      bloc.appendChild(tete);
+
+      if(g.num === etat.ouvert){
+        const ul = document.createElement("ul");
+        ul.className = "parcelles";
+        membres.forEach(p => {
+          const li = document.createElement("li");
+          const id = "p" + p.i;
+          li.innerHTML =
+            '<input type="checkbox" id="' + id + '" checked>' +
+            '<label for="' + id + '">' + p.ref + '</label>' +
+            '<span class="surf">' + formatSurface(p.surface) + '</span>';
+          li.querySelector("input").addEventListener("change", () => {
+            if(g.membres.size === 1){ signaler("Ce groupe ne compte qu'une parcelle : rien à détacher."); rendre(); return; }
+            retirerDuGroupe(g.num, [p.i]);
+            rendre();
+          });
+          li.addEventListener("mouseenter", () => surligner(p.i, true));
+          li.addEventListener("mouseleave", () => surligner(p.i, false));
+          ul.appendChild(li);
+        });
+        bloc.appendChild(ul);
+
+        if(membres.length > 1){
+          const actions = document.createElement("div");
+          actions.className = "groupe-actions";
+          const btn = document.createElement("button");
+          btn.className = "btn danger";
+          btn.textContent = "Détacher les parcelles décochées";
+          btn.addEventListener("click", () => {
+            const aRetirer = [...ul.querySelectorAll("input:not(:checked)")]
+              .map(x => Number(x.id.slice(1)));
+            if(!aRetirer.length){ signaler("Décochez d'abord au moins une parcelle."); return; }
+            if(aRetirer.length === membres.length){ signaler("Impossible de vider entièrement un groupe."); return; }
+            retirerDuGroupe(g.num, aRetirer);
+            rendre();
+          });
+          actions.appendChild(btn);
+          bloc.appendChild(actions);
+        }
+      }
+      liste.appendChild(bloc);
+    });
+  }
+
+  document.getElementById("c-parcelles").textContent = etat.parcelles.length;
+  document.getElementById("c-groupes").textContent = etat.groupes.length;
+  document.getElementById("c-surface").textContent =
+    formatSurface(etat.parcelles.reduce((s,p) => s + p.surface, 0));
+
+  majBoutons();
+  dessiner();
+}
+
+function surligner(){ /* réservé : mise en avant au survol */ }
+
+function majBoutons(){
+  const charge = etat.parcelles.length > 0;
+  document.getElementById("btn-recalculer").disabled = !charge;
+  document.getElementById("btn-export").disabled = !charge;
+  document.getElementById("btn-fusionner").disabled =
+    etat.groupes.filter(g => g.coche).length < 2;
+}
+
+let minuteurMessage;
+function signaler(texte, alerte){
+  const ancien = document.querySelector(".message");
+  if(ancien) ancien.remove();
+  const d = document.createElement("div");
+  d.className = "message" + (alerte ? " alerte" : "");
+  d.textContent = texte;
+  document.querySelector(".carte-zone").appendChild(d);
+  clearTimeout(minuteurMessage);
+  minuteurMessage = setTimeout(() => d.remove(), 4200);
+}
+
+/* ---------- entrées ---------- */
+function traiterTexte(texte){
+  let objet;
+  try{ objet = JSON.parse(texte); }
+  catch(e){ signaler("Fichier illisible : ce n'est pas du JSON valide.", true); return; }
+  try{
+    chargerGeoJSON(objet);
+    dessiner.cadre = false;
+    regrouperAutomatiquement();
+    rendre();
+    signaler(etat.parcelles.length + " parcelles chargées, " + etat.groupes.length + " unités foncières détectées.");
+  }catch(e){
+    signaler(e.message, true);
+  }
+}
+
+function brancher(){
+  const depose = document.getElementById("depose");
+  const champ = document.getElementById("fichier");
+  const zone = document.getElementById("zone-coller");
+
+  document.getElementById("btn-fichier").addEventListener("click", () => champ.click());
+  champ.addEventListener("change", () => {
+    const f = champ.files[0];
+    if(!f) return;
+    f.text().then(traiterTexte);
+  });
+
+  document.getElementById("btn-coller").addEventListener("click", () => {
+    zone.classList.toggle("visible");
+    if(zone.classList.contains("visible")) zone.focus();
+  });
+  zone.addEventListener("keydown", e => {
+    if(e.key === "Enter" && (e.ctrlKey || e.metaKey)) traiterTexte(zone.value);
+  });
+
+  document.getElementById("btn-essai").addEventListener("click", () => traiterTexte(JSON.stringify(jeuEssai())));
+
+  ["dragenter","dragover"].forEach(ev => depose.addEventListener(ev, e => {
+    e.preventDefault(); depose.classList.add("actif");
+  }));
+  ["dragleave","drop"].forEach(ev => depose.addEventListener(ev, e => {
+    e.preventDefault(); depose.classList.remove("actif");
+  }));
+  depose.addEventListener("drop", e => {
+    const f = e.dataTransfer.files[0];
+    if(f) f.text().then(traiterTexte);
+  });
+
+  const rayon = document.getElementById("rayon");
+  rayon.addEventListener("input", () => {
+    document.getElementById("rayon-val").textContent = rayon.value + " m";
+    dessiner();
+  });
+
+  document.getElementById("mini").addEventListener("change", () => {
+    if(etat.parcelles.length){ regrouperAutomatiquement(); rendre(); }
+  });
+
+  document.getElementById("btn-recalculer").addEventListener("click", () => {
+    regrouperAutomatiquement(); rendre();
+    signaler("Regroupement automatique rétabli : " + etat.groupes.length + " unités foncières.");
+  });
+
+  document.getElementById("btn-fusionner").addEventListener("click", () => {
+    fusionnerCoches(); rendre();
+  });
+
+  document.getElementById("btn-export").addEventListener("click", exporter);
+}
+
+function exporter(){
+  const sortie = {
+    genere: new Date().toISOString(),
+    parametres: {
+      limiteCommuneMinimale_m: parseFloat(document.getElementById("mini").value),
+      voisinageAffiche_m: parseFloat(document.getElementById("rayon").value)
+    },
+    groupes: etat.groupes.map(g => ({
+      numero: g.num,
+      parcelles: [...g.membres].map(i => ({
+        reference: etat.parcelles[i].ref,
+        surface_m2: Math.round(etat.parcelles[i].surface)
+      })),
+      surface_m2: Math.round([...g.membres].reduce((s,i) => s + etat.parcelles[i].surface, 0))
+    }))
+  };
+  const blob = new Blob([JSON.stringify(sortie, null, 2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "fusion-groupes.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* ---------- jeu d'essai ---------- */
+function jeuEssai(){
+  // Trois situations de contrôle :
+  //  A. quatre parcelles jointives -> une seule unité foncière
+  //  B. une parcelle qui ne touche A que par un coin -> unité distincte
+  //  C. deux parcelles jointives séparées de A par une voie -> unité distincte
+  const lon0 = 2.3400, lat0 = 48.8600;
+  const m = 1/111320, mx = m/Math.cos(lat0*Math.PI/180);
+  const rect = (x, y, l, h, ref) => ({
+    type:"Feature",
+    properties:{section:"AB", numero:ref, commune:"75108"},
+    geometry:{type:"Polygon",coordinates:[[
+      [lon0+x*mx, lat0+y*m],
+      [lon0+(x+l)*mx, lat0+y*m],
+      [lon0+(x+l)*mx, lat0+(y+h)*m],
+      [lon0+x*mx, lat0+(y+h)*m],
+      [lon0+x*mx, lat0+y*m]
+    ]]}
+  });
+  return {type:"FeatureCollection", features:[
+    rect(0,   0,  40, 30, "0012"),
+    rect(40,  0,  35, 30, "0013"),
+    rect(0,  30,  40, 25, "0014"),
+    rect(40, 30,  35, 25, "0015"),
+    rect(75, 55,  30, 25, "0021"),          // contact par un coin seul
+    rect(95,  0,  30, 30, "0031"),          // au-delà d'une voie de 20 m
+    rect(95, 30,  30, 25, "0032")
+  ]};
+}
+
+initCarte();
+brancher();
+rendre();
+</script>
+</body>
+</html>
