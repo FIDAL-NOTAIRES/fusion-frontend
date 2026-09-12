@@ -1,0 +1,10 @@
+{
+  "name": "fusion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "FUSION — traitement par société : unités foncières, effet relatif, origine de propriété.",
+  "engines": {
+    "node": "22.x"
+  }
+}

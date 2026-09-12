@@ -124,6 +124,23 @@
   @media (prefers-reduced-motion:no-preference){
     .message{transition:opacity .2s}
   }
+  .societe{margin-bottom:10px}
+  .societe>label{display:block;font-family:Georgia,serif;font-size:15px;margin-bottom:5px}
+  .societe-ligne{display:flex;gap:8px}
+  .societe-ligne input{
+    flex:1;padding:7px 9px;border:1px solid var(--trait);border-radius:3px;font-size:14px
+  }
+  .societe-etat{font-size:12.5px;color:var(--gris);margin-top:6px;min-height:1em;line-height:1.5}
+  .societe-etat b{color:var(--nuit);font-weight:600}
+  .societe-etat .alerte{color:var(--carmin)}
+  .candidats{list-style:none;margin:6px 0 0;padding:0}
+  .candidats li{margin-top:4px}
+  .candidats button{
+    width:100%;text-align:left;border:1px solid var(--trait);background:#fff;
+    padding:6px 9px;border-radius:3px
+  }
+  .candidats button:hover{border-color:var(--canard);background:#F6FAFB}
+  .candidats .sir{color:var(--canard);font-variant-numeric:tabular-nums;margin-left:6px}
   textarea.coller{
     width:100%;height:90px;margin-top:9px;border:1px solid var(--trait);border-radius:3px;
     padding:7px;font-family:Consolas,monospace;font-size:12px;display:none
@@ -148,8 +165,17 @@
     <section class="panneau">
 
       <div class="source">
+        <div class="societe">
+          <label for="societe-saisie">Société</label>
+          <div class="societe-ligne">
+            <input type="text" id="societe-saisie" placeholder="SIREN ou dénomination" autocomplete="off">
+            <button class="btn plein" id="btn-societe">Chercher</button>
+          </div>
+          <div class="societe-etat" id="societe-etat"></div>
+          <ul class="candidats" id="candidats"></ul>
+        </div>
         <div class="depose" id="depose">
-          <p>Déposez ici le GeoJSON des parcelles de la société</p>
+          <p>ou déposez un GeoJSON de parcelles</p>
           <div class="ligne-boutons">
             <button class="btn" id="btn-fichier">Choisir un fichier</button>
             <button class="btn" id="btn-coller">Coller du texte</button>
@@ -218,7 +244,8 @@ const etat = {
   adjacence: [],      // Set<int> par parcelle
   ouvert: null,       // num du groupe déplié
   compteurGroupe: 0,
-  lat0: 0
+  lat0: 0,
+  sansGeometrie: []      // références au relevé mais absentes du plan (REDPAR)
 };
 
 /* ---------- projection locale (mètres) ---------- */
@@ -716,7 +743,90 @@ function traiterTexte(texte){
   }
 }
 
+/* ---------- recherche par société (via /api/redpar → REDPAR) ---------- */
+function afficherEtatSociete(html){ document.getElementById("societe-etat").innerHTML = html; }
+
+async function chercherSociete(saisie){
+  const brut = (saisie || "").trim();
+  if(!brut){ afficherEtatSociete('<span class="alerte">Saisissez un SIREN ou une dénomination.</span>'); return; }
+  const chiffres = brut.replace(/\s+/g, "");
+  const param = /^\d{9}$/.test(chiffres) ? "siren=" + chiffres : "nom=" + encodeURIComponent(brut);
+
+  const bouton = document.getElementById("btn-societe");
+  bouton.disabled = true;
+  document.getElementById("candidats").innerHTML = "";
+  afficherEtatSociete("Interrogation de REDPAR — références puis contours, commune par commune…");
+
+  try{
+    const r = await fetch("/api/redpar?" + param, {headers:{Accept:"application/json"}});
+    const d = await r.json();
+    if(!r.ok){ throw new Error(d.erreur || ("HTTP " + r.status)); }
+
+    // Homonymes : on propose de choisir avant toute chose
+    if(!d.avecGeometrie && Array.isArray(d.candidats) && d.candidats.length > 1){
+      afficherEtatSociete("Plusieurs sociétés correspondent — choisissez :");
+      const ul = document.getElementById("candidats");
+      d.candidats.forEach(c => {
+        const nom = c.denomination || c.nom || c.raison_sociale || "(sans dénomination)";
+        const sir = c.siren || c.numero_siren || "";
+        const li = document.createElement("li");
+        const b = document.createElement("button");
+        b.type = "button";
+        b.innerHTML = nom + (sir ? '<span class="sir">' + sir + "</span>" : "");
+        b.addEventListener("click", () => {
+          document.getElementById("societe-saisie").value = sir || nom;
+          chercherSociete(sir || nom);
+        });
+        li.appendChild(b);
+        ul.appendChild(li);
+      });
+      return;
+    }
+
+    if(!d.geojson || !d.geojson.features.length){
+      afficherEtatSociete('<span class="alerte">Aucune parcelle dessinable pour cette société.</span>'
+        + (d.total ? " " + d.total + " référence(s) au relevé, aucune géométrie trouvée." : ""));
+      return;
+    }
+
+    chargerGeoJSON(d.geojson);
+    dessiner.cadre = false;
+    regrouperAutomatiquement();
+    rendre();
+
+    const s = d.societe || {};
+    let texte = "<b>" + (s.denomination || brut) + "</b>" + (s.siren ? " — SIREN " + s.siren : "")
+      + (d.millesime ? " — matrice " + d.millesime : "")
+      + "<br>" + d.avecGeometrie + " parcelle" + (d.avecGeometrie > 1 ? "s" : "") + " dessinée"
+      + (d.avecGeometrie > 1 ? "s" : "");
+    if(d.sansGeometrie && d.sansGeometrie.length){
+      texte += ', <span class="alerte">' + d.sansGeometrie.length + " sans géométrie</span>"
+        + " (au relevé mais absente" + (d.sansGeometrie.length > 1 ? "s" : "") + " du plan)";
+      etat.sansGeometrie = d.sansGeometrie;
+    }else{
+      etat.sansGeometrie = [];
+    }
+    if(d.indisponible && d.indisponible.length){
+      texte += '<br><span class="alerte">Plan indisponible pour ' + d.indisponible.length + " commune"
+        + (d.indisponible.length > 1 ? "s" : "") + " : " + d.indisponible.map(x => x.commune).join(", ") + "</span>";
+    }
+    if(d.tronque) texte += '<br><span class="alerte">Résultat tronqué par REDPAR.</span>';
+    afficherEtatSociete(texte);
+    signaler(etat.parcelles.length + " parcelles chargées, " + etat.groupes.length + " unités foncières détectées.");
+  }catch(e){
+    afficherEtatSociete('<span class="alerte">' + (e.message || "Recherche impossible") + "</span>");
+  }finally{
+    bouton.disabled = false;
+  }
+}
+
 function brancher(){
+  document.getElementById("btn-societe").addEventListener("click", () =>
+    chercherSociete(document.getElementById("societe-saisie").value));
+  document.getElementById("societe-saisie").addEventListener("keydown", e => {
+    if(e.key === "Enter") chercherSociete(e.target.value);
+  });
+
   const depose = document.getElementById("depose");
   const champ = document.getElementById("fichier");
   const zone = document.getElementById("zone-coller");
@@ -778,6 +888,7 @@ function exporter(){
       limiteCommuneMinimale_m: parseFloat(document.getElementById("mini").value),
       voisinageAffiche_m: parseFloat(document.getElementById("rayon").value)
     },
+    sansGeometrie: etat.sansGeometrie || [],
     groupes: etat.groupes.map(g => ({
       numero: g.num,
       parcelles: [...g.membres].map(i => ({
