@@ -12,11 +12,18 @@
 // est nommée dans `indisponible` ; une référence sans géométrie est listée
 // dans `sansGeometrie` : elle existe au relevé, elle n'est pas dessinable.
 //
-// Paramètres :
-//   ?siren=123456789       (l'un des deux requis)
-//   ?nom=LOGIS METROPOLE
+// DEUX ÉTAPES pilotées par le navigateur (v2, 12/09/2026) — une seule fonction
+// à actions, pour ne pas entamer les douze du plan Hobby :
+//   ?etape=references&siren=…|nom=…   → la société, ses références, la liste des
+//                                        communes ; rapide, une seule requête REDPAR
+//   ?etape=contours&insee=…&ids=…      → les contours d'UNE commune (lots de 150
+//     [&cible=AAAA-MM-JJ]                 références) ; le navigateur enchaîne les
+//                                        communes et affiche « 12 sur 47 », ce qui
+//                                        alimente ATTENTE et évite le plafond de 60 s
+//                                        sur les gros portefeuilles (LOGIS : 47 communes)
+//   sans etape                          → tout d'un coup (petites sociétés, tests)
 //
-// Réponse :
+// Réponse complète (sans etape) :
 //   { societe, candidats, millesime, total, avecGeometrie, sansGeometrie: [...],
 //     indisponible: [...], geojson: FeatureCollection }
 
@@ -70,7 +77,25 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'GET') return res.status(405).json({ erreur: 'Méthode non autorisée' });
 
-  const { siren, nom } = req.query || {};
+  const { siren, nom, etape } = req.query || {};
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+
+  // ---- étape « contours » : une commune, un lot de références ----
+  if (etape === 'contours') {
+    const { insee, ids, cible: cibleQ } = req.query;
+    if (!insee || !ids) return res.status(400).json({ erreur: 'Paramètres insee et ids requis' });
+    const params = { insee, ids, contours: 1 };
+    const c = cibleMillesime(cibleQ);
+    if (c) params.cible = c;
+    try {
+      const G = await volet('/api/geo', params);
+      res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate=604800');
+      return res.status(200).json({ insee, geo: G.geo || {}, manquants: G.manquants || [], millesimes_essayes: G.millesimes_essayes || [] });
+    } catch (e) {
+      return res.status(502).json({ erreur: 'Plan indisponible pour la commune ' + insee, motif: String(e && e.message || e) });
+    }
+  }
+
   if (!siren && !nom) return res.status(400).json({ erreur: 'Paramètre siren ou nom requis' });
   const cible = siren ? { siren: String(siren).replace(/\s+/g, '') } : { nom };
 
@@ -91,6 +116,29 @@ export default async function handler(req, res) {
   };
   const candidats = (P.resolution && P.resolution.candidats) || [];
   const millesime = P.millesime || null;
+
+  if (etape === 'references') {
+    const communes = new Map();
+    for (const p of parcelles) {
+      const ref = String(p.code_parcelle || '');
+      if (ref.length !== 14) continue;
+      const insee = p.code_insee || ref.slice(0, 5);
+      if (!communes.has(insee)) communes.set(insee, { insee, nom_commune: p.nom_commune || null, references: [] });
+      communes.get(insee).references.push({
+        idu: ref, nom_commune: p.nom_commune || null,
+        contenance: Number(p.contenance_parcelle || p.contenance || 0) || null,
+        droit: p.code_droit || null, nature: p.nature_culture || null, adresse: p.adresse || null,
+      });
+    }
+    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+    return res.status(200).json({
+      societe, candidats, millesime, cible: cibleMillesime(millesime),
+      total: P.total ?? parcelles.length, tronque: Boolean(P.tronque),
+      avertissement: P.avertissement || null,
+      communes: [...communes.values()].sort((a, b) => b.references.length - a.references.length),
+      lotReferences: LOT_IDS,
+    });
+  }
 
   if (!parcelles.length) {
     return res.status(200).json({
@@ -162,7 +210,6 @@ export default async function handler(req, res) {
 
   const indisponible = [...communesEnEchec].map(([insee, motif]) => ({ commune: insee, motif }));
 
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
   return res.status(200).json({
     societe, candidats, millesime,
