@@ -223,8 +223,14 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script defer src="https://attente.vercel.app/attente.js"></script>
 <script>
 "use strict";
+
+/* Seuil au-delà duquel ATTENTE prend le relais de l'indicateur discret
+   (règle de la suite, décision du 02/09 : 30 s ; abaisser à 2 000 pendant
+   les tests, remettre à 30 000 une fois la greffe validée). */
+const ATTENTE_SEUIL_MS = 30000;
 
 /* ============================================================
    FUSION — moteur de regroupement par unité foncière
@@ -755,18 +761,35 @@ async function chercherSociete(saisie){
   const bouton = document.getElementById("btn-societe");
   bouton.disabled = true;
   document.getElementById("candidats").innerHTML = "";
-  afficherEtatSociete("Interrogation de REDPAR — références puis contours, commune par commune…");
+
+  // Sablier textuel : ATTENTE le relit toutes les 400 ms (« 12 sur 47 »)
+  const sablier = { texte: "Recherche des références…" };
+  const poserSablier = (t) => { sablier.texte = t; afficherEtatSociete(t); };
+  poserSablier(sablier.texte);
+
+  let attenteOuverte = false;
+  const relais = setTimeout(() => {
+    if(!window.ATTENTE) return;
+    attenteOuverte = true;
+    window.ATTENTE.demarrer({
+      titre: "FUSION",
+      sousTitre: "Lecture du parcellaire de la société — " + brut,
+      source: () => sablier.texte
+    });
+  }, ATTENTE_SEUIL_MS);
+  const fermer = () => { clearTimeout(relais); if(attenteOuverte && window.ATTENTE) window.ATTENTE.terminer(); };
 
   try{
-    const r = await fetch("/api/redpar?" + param, {headers:{Accept:"application/json"}});
-    const d = await r.json();
-    if(!r.ok){ throw new Error(d.erreur || ("HTTP " + r.status)); }
+    // ---- étape 1 : la société et ses références, par commune ----
+    const r1 = await fetch("/api/redpar?etape=references&" + param, {headers:{Accept:"application/json"}});
+    const d1 = await r1.json();
+    if(!r1.ok) throw new Error(d1.erreur || ("HTTP " + r1.status));
 
-    // Homonymes : on propose de choisir avant toute chose
-    if(!d.avecGeometrie && Array.isArray(d.candidats) && d.candidats.length > 1){
+    if((!d1.communes || !d1.communes.length) && Array.isArray(d1.candidats) && d1.candidats.length > 1){
+      fermer();
       afficherEtatSociete("Plusieurs sociétés correspondent — choisissez :");
       const ul = document.getElementById("candidats");
-      d.candidats.forEach(c => {
+      d1.candidats.forEach(c => {
         const nom = c.denomination || c.nom || c.raison_sociale || "(sans dénomination)";
         const sir = c.siren || c.numero_siren || "";
         const li = document.createElement("li");
@@ -782,38 +805,93 @@ async function chercherSociete(saisie){
       });
       return;
     }
-
-    if(!d.geojson || !d.geojson.features.length){
-      afficherEtatSociete('<span class="alerte">Aucune parcelle dessinable pour cette société.</span>'
-        + (d.total ? " " + d.total + " référence(s) au relevé, aucune géométrie trouvée." : ""));
+    if(!d1.communes || !d1.communes.length){
+      fermer();
+      afficherEtatSociete('<span class="alerte">Aucune parcelle au relevé pour cette société.</span>');
       return;
     }
 
-    chargerGeoJSON(d.geojson);
+    // ---- étape 2 : les contours, commune par commune, quatre à la fois ----
+    const communes = d1.communes;
+    const lot = d1.lotReferences || 150;
+    const taches = [];
+    communes.forEach(c => {
+      for(let d = 0; d < c.references.length; d += lot){
+        taches.push({insee: c.insee, refs: c.references.slice(d, d + lot)});
+      }
+    });
+    const features = [], sansGeometrie = [], indisponible = new Map();
+    let faites = 0;
+    const totalRefs = communes.reduce((n,c) => n + c.references.length, 0);
+    poserSablier("Contours : 0 sur " + communes.length + " communes");
+
+    const communesFaites = new Set();
+    let curseur = 0;
+    async function ouvrier(){
+      while(curseur < taches.length){
+        const t = taches[curseur++];
+        let geo = {}, erreur = null;
+        try{
+          const u = "/api/redpar?etape=contours&insee=" + t.insee + "&ids=" + t.refs.map(x => x.idu).join(",")
+                  + (d1.cible ? "&cible=" + d1.cible : "");
+          const r2 = await fetch(u, {headers:{Accept:"application/json"}});
+          const d2 = await r2.json();
+          if(!r2.ok) throw new Error(d2.erreur || ("HTTP " + r2.status));
+          geo = d2.geo || {};
+        }catch(e){ erreur = e.message || "plan indisponible"; indisponible.set(t.insee, erreur); }
+
+        t.refs.forEach(x => {
+          const g = geo[x.idu];
+          const props = {
+            idu: x.idu, commune: t.insee, nom_commune: x.nom_commune,
+            prefixe: x.idu.slice(5,8), section: x.idu.slice(8,10).trim(), numero: x.idu.slice(10,14),
+            contenance: x.contenance, droit: x.droit, nature: x.nature, adresse: x.adresse,
+            millesime_plan: g ? g.millesime_plan || null : null
+          };
+          if(g && g.contour) features.push({type:"Feature", properties:props, geometry:g.contour});
+          else sansGeometrie.push({...props, motif: erreur ? "plan indisponible" : "absente de tous les millésimes essayés"});
+        });
+        faites += t.refs.length;
+        communesFaites.add(t.insee);
+        poserSablier("Contours : " + communesFaites.size + " sur " + communes.length + " communes — "
+          + faites + " / " + totalRefs + " références");
+      }
+    }
+    await Promise.all(Array.from({length: Math.min(4, taches.length)}, ouvrier));
+
+    if(!features.length){
+      fermer();
+      afficherEtatSociete('<span class="alerte">Aucune parcelle dessinable : ' + totalRefs
+        + " référence(s) au relevé, aucune géométrie trouvée.</span>");
+      return;
+    }
+
+    chargerGeoJSON({type:"FeatureCollection", features});
     dessiner.cadre = false;
     regrouperAutomatiquement();
+    etat.sansGeometrie = sansGeometrie;
     rendre();
+    fermer();
 
-    const s = d.societe || {};
+    const s = d1.societe || {};
     let texte = "<b>" + (s.denomination || brut) + "</b>" + (s.siren ? " — SIREN " + s.siren : "")
-      + (d.millesime ? " — matrice " + d.millesime : "")
-      + "<br>" + d.avecGeometrie + " parcelle" + (d.avecGeometrie > 1 ? "s" : "") + " dessinée"
-      + (d.avecGeometrie > 1 ? "s" : "");
-    if(d.sansGeometrie && d.sansGeometrie.length){
-      texte += ', <span class="alerte">' + d.sansGeometrie.length + " sans géométrie</span>"
-        + " (au relevé mais absente" + (d.sansGeometrie.length > 1 ? "s" : "") + " du plan)";
-      etat.sansGeometrie = d.sansGeometrie;
-    }else{
-      etat.sansGeometrie = [];
+      + (d1.millesime ? " — matrice " + d1.millesime : "")
+      + "<br>" + features.length + " parcelle" + (features.length > 1 ? "s" : "") + " dessinée" + (features.length > 1 ? "s" : "")
+      + " sur " + communes.length + " commune" + (communes.length > 1 ? "s" : "");
+    if(sansGeometrie.length){
+      texte += ', <span class="alerte">' + sansGeometrie.length + " sans géométrie</span>"
+        + " (au relevé mais absente" + (sansGeometrie.length > 1 ? "s" : "") + " du plan)";
     }
-    if(d.indisponible && d.indisponible.length){
-      texte += '<br><span class="alerte">Plan indisponible pour ' + d.indisponible.length + " commune"
-        + (d.indisponible.length > 1 ? "s" : "") + " : " + d.indisponible.map(x => x.commune).join(", ") + "</span>";
+    if(indisponible.size){
+      texte += '<br><span class="alerte">Plan indisponible pour ' + indisponible.size + " commune"
+        + (indisponible.size > 1 ? "s" : "") + " : " + [...indisponible.keys()].join(", ") + "</span>";
     }
-    if(d.tronque) texte += '<br><span class="alerte">Résultat tronqué par REDPAR.</span>';
+    if(d1.tronque) texte += '<br><span class="alerte">Résultat tronqué par REDPAR.</span>';
     afficherEtatSociete(texte);
     signaler(etat.parcelles.length + " parcelles chargées, " + etat.groupes.length + " unités foncières détectées.");
   }catch(e){
+    if(attenteOuverte && window.ATTENTE) window.ATTENTE.echec(e.message || "recherche impossible");
+    setTimeout(fermer, 2500);
     afficherEtatSociete('<span class="alerte">' + (e.message || "Recherche impossible") + "</span>");
   }finally{
     bouton.disabled = false;
