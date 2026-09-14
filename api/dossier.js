@@ -164,7 +164,7 @@ async function groupes(res, corps) {
     sql`UPDATE fusion_parcelle p SET groupe = x.groupe
         FROM jsonb_to_recordset(${JSON.stringify(appartenance)}::jsonb) AS x(idu text, groupe integer)
         WHERE p.dossier_id = ${d.id} AND p.idu = x.idu`,
-    sql`UPDATE fusion_dossier SET etat = ${JSON.stringify(etat)}::jsonb, modifie_le = now() WHERE id = ${d.id}`,
+    sql`UPDATE fusion_dossier SET etat = jsonb_strip_nulls(etat || ${JSON.stringify(etat)}::jsonb), modifie_le = now() WHERE id = ${d.id}`,
   ]);
   if (corps.quoi) await journaliser(sql, d.id, String(corps.quoi), corps.detail || {});
   return res.status(200).json({ ok: true, groupes: lignesGroupes.length, parcelles: appartenance.length });
