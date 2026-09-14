@@ -24,6 +24,9 @@
 //     initialiser { siren, denomination, millesime, etat }        → crée ou vide le dossier
 //     parcelles   { siren, parcelles:[{idu, props, contour, groupe}] } → ajoute un lot (≤ 500)
 //     groupes     { siren, groupes:[{numero, manuel, idus[]}], etat } → réécrit le découpage
+//     renumeroter { siren, concordance:[{ancien, nouveau}] }        → renumérotation complète (géographique)
+//     drive       { siren, dossier?:{...}, groupes?:[{numero, drive}] } → identifiants Drive
+//     document    { siren, document:{drive_id, groupe, nom, type, …} }  → dépôt ou requalification d'une pièce
 //     journal     { siren, quoi, detail }                          → trace libre
 //
 // Toutes les tables portent le préfixe fusion_ : base partagée avec MATRICE,
@@ -46,7 +49,7 @@ function sirenPropre(v) {
 }
 
 async function dossierParSiren(sql, siren) {
-  const [d] = await sql`SELECT id, siren, denomination, millesime, etat, cree_le, modifie_le FROM fusion_dossier WHERE siren = ${siren}`;
+  const [d] = await sql`SELECT id, siren, denomination, millesime, etat, drive, cree_le, modifie_le FROM fusion_dossier WHERE siren = ${siren}`;
   return d || null;
 }
 
@@ -72,12 +75,14 @@ async function charger(res, siren) {
   const sql = db();
   const d = await dossierParSiren(sql, siren);
   if (!d) return res.status(404).json({ erreur: 'Aucun dossier FUSION pour ce SIREN', siren });
-  const groupes = await sql`SELECT numero, manuel FROM fusion_groupe WHERE dossier_id = ${d.id} ORDER BY numero`;
+  const groupes = await sql`SELECT numero, manuel, drive FROM fusion_groupe WHERE dossier_id = ${d.id} ORDER BY numero`;
   const parcelles = await sql`SELECT idu, props, contour, groupe FROM fusion_parcelle WHERE dossier_id = ${d.id} ORDER BY idu`;
+  const documents = await sql`SELECT id, groupe, drive_id, drive_parent, nom, nom_origine, type, code, piece, date_doc, date_sure, empreinte, taille, mime, couche_texte, statut, depose_le
+                              FROM fusion_document WHERE dossier_id = ${d.id} ORDER BY groupe, nom`;
   const journal = await sql`SELECT quand, quoi, detail FROM fusion_journal WHERE dossier_id = ${d.id} ORDER BY quand DESC LIMIT 50`;
   return res.status(200).json({
-    dossier: { siren: d.siren, denomination: d.denomination, millesime: d.millesime, etat: d.etat, cree_le: d.cree_le, modifie_le: d.modifie_le },
-    groupes, parcelles, journal,
+    dossier: { siren: d.siren, denomination: d.denomination, millesime: d.millesime, etat: d.etat, drive: d.drive || {}, cree_le: d.cree_le, modifie_le: d.modifie_le },
+    groupes, parcelles, documents, journal,
   });
 }
 
@@ -146,11 +151,15 @@ async function groupes(res, corps) {
   liste.forEach((g) => (g.idus || []).forEach((idu) => appartenance.push({ idu, groupe: g.numero })));
 
   const etat = corps.etat && typeof corps.etat === 'object' ? corps.etat : d.etat;
+  // les identifiants Drive déjà connus survivent à la réécriture du découpage
+  const anciens = await sql`SELECT numero, drive FROM fusion_groupe WHERE dossier_id = ${d.id}`;
+  const driveParNumero = new Map(anciens.map((g) => [g.numero, g.drive || {}]));
+  const lignesAvecDrive = lignesGroupes.map((g) => ({ ...g, drive: driveParNumero.get(g.numero) || {} }));
   await sql.transaction([
     sql`DELETE FROM fusion_groupe WHERE dossier_id = ${d.id}`,
-    sql`INSERT INTO fusion_groupe (dossier_id, numero, manuel)
-        SELECT ${d.id}, x.numero, x.manuel
-        FROM jsonb_to_recordset(${JSON.stringify(lignesGroupes)}::jsonb) AS x(numero integer, manuel boolean)`,
+    sql`INSERT INTO fusion_groupe (dossier_id, numero, manuel, drive)
+        SELECT ${d.id}, x.numero, x.manuel, x.drive
+        FROM jsonb_to_recordset(${JSON.stringify(lignesAvecDrive)}::jsonb) AS x(numero integer, manuel boolean, drive jsonb)`,
     sql`UPDATE fusion_parcelle SET groupe = NULL WHERE dossier_id = ${d.id}`,
     sql`UPDATE fusion_parcelle p SET groupe = x.groupe
         FROM jsonb_to_recordset(${JSON.stringify(appartenance)}::jsonb) AS x(idu text, groupe integer)
@@ -159,6 +168,79 @@ async function groupes(res, corps) {
   ]);
   if (corps.quoi) await journaliser(sql, d.id, String(corps.quoi), corps.detail || {});
   return res.status(200).json({ ok: true, groupes: lignesGroupes.length, parcelles: appartenance.length });
+}
+
+// Renumérotation complète : ancien → nouveau sur groupes, parcelles et documents,
+// en une transaction, avec le tableau de concordance au journal. Les fichiers
+// Drive sont renommés PAR LE NAVIGATEUR (il détient le jeton) ; ici on ne
+// touche qu'à la base. Passage par des numéros négatifs pour éviter toute
+// collision de clé pendant la permutation.
+async function renumeroter(res, corps) {
+  const sql = db();
+  const siren = sirenPropre(corps.siren);
+  if (!siren) return res.status(400).json({ erreur: 'siren invalide' });
+  const conc = Array.isArray(corps.concordance) ? corps.concordance.filter((c) => Number.isInteger(c.ancien) && Number.isInteger(c.nouveau)) : [];
+  if (!conc.length) return res.status(400).json({ erreur: 'concordance vide' });
+  const d = await dossierParSiren(sql, siren);
+  if (!d) return res.status(404).json({ erreur: 'dossier inconnu' });
+  const j = JSON.stringify(conc);
+  await sql.transaction([
+    sql`UPDATE fusion_groupe g SET numero = -x.nouveau FROM jsonb_to_recordset(${j}::jsonb) AS x(ancien integer, nouveau integer) WHERE g.dossier_id = ${d.id} AND g.numero = x.ancien`,
+    sql`UPDATE fusion_parcelle p SET groupe = -x.nouveau FROM jsonb_to_recordset(${j}::jsonb) AS x(ancien integer, nouveau integer) WHERE p.dossier_id = ${d.id} AND p.groupe = x.ancien`,
+    sql`UPDATE fusion_document doc SET groupe = -x.nouveau FROM jsonb_to_recordset(${j}::jsonb) AS x(ancien integer, nouveau integer) WHERE doc.dossier_id = ${d.id} AND doc.groupe = x.ancien`,
+    sql`UPDATE fusion_groupe SET numero = -numero WHERE dossier_id = ${d.id} AND numero < 0`,
+    sql`UPDATE fusion_parcelle SET groupe = -groupe WHERE dossier_id = ${d.id} AND groupe < 0`,
+    sql`UPDATE fusion_document SET groupe = -groupe WHERE dossier_id = ${d.id} AND groupe < 0`,
+    sql`UPDATE fusion_dossier SET etat = etat || ${JSON.stringify({ numerotation_definitive: new Date().toISOString() })}::jsonb, modifie_le = now() WHERE id = ${d.id}`,
+  ]);
+  await journaliser(sql, d.id, 'renumerotation', { concordance: conc, ordre: corps.ordre || 'SPF > commune > section' });
+  return res.status(200).json({ ok: true, groupes: conc.length });
+}
+
+async function drive(res, corps) {
+  const sql = db();
+  const siren = sirenPropre(corps.siren);
+  if (!siren) return res.status(400).json({ erreur: 'siren invalide' });
+  const d = await dossierParSiren(sql, siren);
+  if (!d) return res.status(404).json({ erreur: 'dossier inconnu' });
+  const requetes = [];
+  if (corps.dossier && typeof corps.dossier === 'object') {
+    requetes.push(sql`UPDATE fusion_dossier SET drive = drive || ${JSON.stringify(corps.dossier)}::jsonb, modifie_le = now() WHERE id = ${d.id}`);
+  }
+  const groupes = Array.isArray(corps.groupes) ? corps.groupes.filter((g) => Number.isInteger(g.numero) && g.drive && typeof g.drive === 'object') : [];
+  if (groupes.length) {
+    requetes.push(sql`UPDATE fusion_groupe g SET drive = g.drive || x.drive
+                      FROM jsonb_to_recordset(${JSON.stringify(groupes)}::jsonb) AS x(numero integer, drive jsonb)
+                      WHERE g.dossier_id = ${d.id} AND g.numero = x.numero`);
+  }
+  if (!requetes.length) return res.status(400).json({ erreur: 'rien à enregistrer' });
+  await sql.transaction(requetes);
+  if (corps.dossier && corps.dossier.societe) await journaliser(sql, d.id, 'drive-cree', { societe: corps.dossier.societe, nom: corps.dossier.nom || null });
+  return res.status(200).json({ ok: true, groupes: groupes.length });
+}
+
+async function document(res, corps) {
+  const sql = db();
+  const siren = sirenPropre(corps.siren);
+  if (!siren) return res.status(400).json({ erreur: 'siren invalide' });
+  const doc = corps.document;
+  if (!doc || !doc.drive_id || !Number.isInteger(doc.groupe) || !doc.nom || !doc.type) return res.status(400).json({ erreur: 'document incomplet (drive_id, groupe, nom, type)' });
+  const d = await dossierParSiren(sql, siren);
+  if (!d) return res.status(404).json({ erreur: 'dossier inconnu' });
+  const [existant] = await sql`SELECT id, nom, type, groupe FROM fusion_document WHERE drive_id = ${doc.drive_id}`;
+  const [r] = await sql`
+    INSERT INTO fusion_document (dossier_id, groupe, drive_id, drive_parent, nom, nom_origine, type, code, piece, date_doc, date_sure, empreinte, taille, mime, couche_texte, statut)
+    VALUES (${d.id}, ${doc.groupe}, ${doc.drive_id}, ${doc.drive_parent || null}, ${doc.nom}, ${doc.nom_origine || null}, ${doc.type}, ${doc.code || null}, ${doc.piece || null},
+            ${doc.date_doc || null}, ${Boolean(doc.date_sure)}, ${doc.empreinte || null}, ${Number.isInteger(doc.taille) ? doc.taille : null}, ${doc.mime || null},
+            ${typeof doc.couche_texte === 'boolean' ? doc.couche_texte : null}, ${doc.statut || 'depose'})
+    ON CONFLICT (drive_id) DO UPDATE SET
+      groupe = EXCLUDED.groupe, drive_parent = EXCLUDED.drive_parent, nom = EXCLUDED.nom, type = EXCLUDED.type, code = EXCLUDED.code, piece = EXCLUDED.piece,
+      date_doc = EXCLUDED.date_doc, date_sure = EXCLUDED.date_sure, statut = EXCLUDED.statut, modifie_le = now()
+    RETURNING id`;
+  await journaliser(sql, d.id, existant ? 'requalification' : 'depot',
+    existant ? { document: r.id, groupe: doc.groupe, ancien_nom: existant.nom, nouveau_nom: doc.nom, ancien_type: existant.type, nouveau_type: doc.type }
+             : { document: r.id, groupe: doc.groupe, nom: doc.nom, nom_origine: doc.nom_origine || null, type: doc.type, drive_id: doc.drive_id });
+  return res.status(200).json({ ok: true, id: r.id, cree: !existant });
 }
 
 async function journal(res, corps) {
@@ -188,8 +270,11 @@ export default async function handler(req, res) {
       case 'initialiser': return await initialiser(res, corps);
       case 'parcelles':   return await parcelles(res, corps);
       case 'groupes':     return await groupes(res, corps);
+      case 'renumeroter': return await renumeroter(res, corps);
+      case 'drive':       return await drive(res, corps);
+      case 'document':    return await document(res, corps);
       case 'journal':     return await journal(res, corps);
-      default:            return res.status(400).json({ erreur: 'action inconnue', actions: ['initialiser', 'parcelles', 'groupes', 'journal'] });
+      default:            return res.status(400).json({ erreur: 'action inconnue', actions: ['initialiser', 'parcelles', 'groupes', 'renumeroter', 'drive', 'document', 'journal'] });
     }
   } catch (e) {
     const motif = String((e && e.message) || e);
