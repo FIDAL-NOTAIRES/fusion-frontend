@@ -1111,6 +1111,16 @@ async function driveRenommer(id, nom){ return driveRenommerDeplacer(id, nom, nul
 /* ---------- plan de nommage ---------- */
 function sansAccent(t){ return String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
 function numeroGroupe4(n){ return String(n).padStart(4, "0"); }
+// Dates de pièce : toujours en HEURE LOCALE, jamais via toISOString (qui bascule en UTC
+// et fait reculer d'un jour toute date de minuit heure de Paris).
+function dateISOlocale(d){
+  if(!(d instanceof Date) || isNaN(d)) return null;
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+function dateDepuisISO(t){
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(t || ""));
+  return m ? new Date(+m[1], +m[2]-1, +m[3]) : null;
+}
 function dateAAAAMMJJ(d){
   if(!(d instanceof Date) || isNaN(d)) return "00000000";
   return d.getFullYear() + String(d.getMonth()+1).padStart(2,"0") + String(d.getDate()).padStart(2,"0");
@@ -1155,7 +1165,7 @@ async function numerotationDefinitive(){
     // les pièces déjà déposées portent l'ancien numéro : on les renomme sur le Drive
     for(const doc of documentsARenommer){
       const nouveau = table.get(doc.groupe);
-      const nom = composerNomPiece(nouveau, doc.type, doc.date_doc ? new Date(doc.date_doc) : null, extensionDe(doc.nom));
+      const nom = composerNomPiece(nouveau, doc.type, dateDepuisISO(doc.date_doc), extensionDe(doc.nom));
       await driveRenommer(doc.drive_id, nom);
       doc.groupe = nouveau; doc.nom = nom;
       await appelDossier({action:"document", siren: etat.dossier.siren, document: doc});
@@ -1348,7 +1358,7 @@ async function deposerFichiers(g, fichiers){
       const envoye = await driveEnvoyerFichier(f, nom, parent);
       const doc = {
         drive_id: envoye.id, drive_parent: parent, groupe: g.num, nom, nom_origine: f.name, type: a.type, code: t.code, piece: t.piece,
-        date_doc: a.date ? a.date.toISOString().slice(0,10) : null, date_sure: a.date_sure, empreinte: a.empreinte, taille: f.size, mime: f.type || null,
+        date_doc: dateISOlocale(a.date), date_sure: a.date_sure, empreinte: a.empreinte, taille: f.size, mime: f.type || null,
         couche_texte: a.couche_texte, statut: a.type === "AQ" ? "a_qualifier" : (a.couche_texte === false ? "scan" : "depose"),
         lecture: {references: a.citees.references, groupes: a.citees.groupes}
       };
@@ -1372,12 +1382,12 @@ async function requalifierDocument(doc, nouveauType, nouvelleDate){
   try{
     await assurerDriveGroupe(g);
     const t = TYPES_PIECE[nouveauType] || TYPES_PIECE.AQ;
-    const date = nouvelleDate ? new Date(nouvelleDate) : (doc.date_doc ? new Date(doc.date_doc) : null);
+    const date = nouvelleDate ? dateDepuisISO(nouvelleDate) : dateDepuisISO(doc.date_doc);
     const nom = composerNomPiece(doc.groupe, nouveauType, date, extensionDe(doc.nom));
     const parent = g.drive[t.cle];
     await driveRenommerDeplacer(doc.drive_id, nom, doc.drive_parent, parent);
     Object.assign(doc, {nom, type: nouveauType, code: t.code, piece: t.piece, drive_parent: parent,
-      date_doc: date ? date.toISOString().slice(0,10) : null, date_sure: Boolean(nouvelleDate) || doc.date_sure,
+      date_doc: dateISOlocale(date), date_sure: Boolean(nouvelleDate) || doc.date_sure,
       statut: nouveauType === "AQ" ? "a_qualifier" : (doc.couche_texte === false ? "scan" : "depose")});
     await appelDossier({action:"document", siren: etat.dossier.siren, document: doc});
     rendre();
@@ -1457,7 +1467,7 @@ async function deplacerDocument(doc, versNum){
   try{
     await assurerDriveGroupe(g);
     const t = TYPES_PIECE[doc.type] || TYPES_PIECE.AQ;
-    const nom = composerNomPiece(versNum, doc.type, doc.date_doc ? new Date(doc.date_doc) : null, extensionDe(doc.nom));
+    const nom = composerNomPiece(versNum, doc.type, dateDepuisISO(doc.date_doc), extensionDe(doc.nom));
     const parent = g.drive[t.cle];
     await driveRenommerDeplacer(doc.drive_id, nom, doc.drive_parent, parent);
     const ancien = doc.groupe;
@@ -1475,7 +1485,7 @@ async function copierDocument(doc, versNum){
   try{
     await assurerDriveGroupe(g);
     const t = TYPES_PIECE[doc.type] || TYPES_PIECE.AQ;
-    const nom = composerNomPiece(versNum, doc.type, doc.date_doc ? new Date(doc.date_doc) : null, extensionDe(doc.nom));
+    const nom = composerNomPiece(versNum, doc.type, dateDepuisISO(doc.date_doc), extensionDe(doc.nom));
     const parent = g.drive[t.cle];
     const c = await driveCopier(doc.drive_id, nom, parent);
     const copie = Object.assign({}, doc, {id: undefined, drive_id: c.id, drive_parent: parent, nom, groupe: versNum, statut: "copie", lecture: doc.lecture});
@@ -1869,7 +1879,7 @@ function ouvrirDepuisBase(d){
   const manuels = new Set(d.groupes.filter(g => g.manuel).map(g => g.numero));
   const driveParNumero = new Map(d.groupes.map(g => [g.numero, g.drive || {}]));
   etat.groupes = [...parNumero.entries()].sort((a,b) => a[0]-b[0]).map(([num, membres]) => ({num, membres, coche:false, manuel: manuels.has(num), drive: driveParNumero.get(num) || {}}));
-  etat.documents = (d.documents || []).map(x => Object.assign({}, x));
+  etat.documents = (d.documents || []).map(x => Object.assign({}, x, {date_doc: x.date_doc ? String(x.date_doc).slice(0,10) : null}));
   etat.driveSociete = (d.dossier.drive && d.dossier.drive.societe) ? d.dossier.drive : null;
   etat.numerotationFaite = Boolean(d.dossier.etat && d.dossier.etat.numerotation_definitive);
   etat.compteurGroupe = etat.groupes.reduce((m,g) => Math.max(m, g.num), 0);
