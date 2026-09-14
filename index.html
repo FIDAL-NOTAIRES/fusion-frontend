@@ -259,6 +259,11 @@
           <input type="number" id="mini" min="0" max="20" step="0.5" value="1">
           <span class="val">m</span>
         </div>
+        <div class="reglage">
+          <label for="tolerance">Tolérance de contact entre contours</label>
+          <input type="number" id="tolerance" min="0" max="3" step="0.1" value="0.5">
+          <span class="val">m</span>
+        </div>
       </div>
 
       <div class="liste" id="liste">
@@ -520,8 +525,39 @@ function creerGrille(pas){
 }
 
 /* ---------- calcul de l'adjacence ---------- */
+// Longueur de la limite de A qui court à moins de `tol` de la limite de B.
+// Échantillonnage des arêtes de A tous les `pas` mètres ; un contact par un
+// coin donne ~0, deux limites qui se longent donnent leur longueur commune.
+function longueurLimiteProche(A, B, tol, pas){
+  let total = 0;
+  for(const ring of A.anneaux){
+    for(let i = 0; i < ring.length-1; i++){
+      const ax = ring[i][0], ay = ring[i][1], bx = ring[i+1][0], by = ring[i+1][1];
+      const L = Math.hypot(bx-ax, by-ay); if(L === 0) continue;
+      // pré-filtre : boîte de l'arête élargie de tol contre la boîte de B
+      if(Math.min(ax,bx) - tol > B.bbox.x2 || Math.max(ax,bx) + tol < B.bbox.x1 ||
+         Math.min(ay,by) - tol > B.bbox.y2 || Math.max(ay,by) + tol < B.bbox.y1) continue;
+      const n = Math.max(1, Math.ceil(L / pas));
+      let dedans = 0;
+      for(let k = 0; k <= n; k++){
+        const t = k/n, px = ax + t*(bx-ax), py = ay + t*(by-ay);
+        let d = Infinity;
+        for(const r2 of B.anneaux) for(let j = 0; j < r2.length-1 && d > tol; j++){
+          const v = distanceSegmentPoint(px, py, r2[j][0], r2[j][1], r2[j+1][0], r2[j+1][1]);
+          if(v < d) d = v;
+        }
+        if(d <= tol) dedans++;
+      }
+      total += L * dedans / (n+1);
+    }
+  }
+  return total;
+}
+
 function calculerAdjacence(minCommun){
   const TOL = 0.20;                 // fusion des sommets quasi confondus (20 cm)
+  const TOL_CONTACT = parseFloat((document.getElementById("tolerance")||{}).value);
+  const tolContact = Number.isFinite(TOL_CONTACT) ? TOL_CONTACT : 0.5;
   const grille = creerGrille(Math.max(TOL, 0.5));
   const sommets = [];               // {x,y}
 
@@ -602,6 +638,38 @@ function calculerAdjacence(minCommun){
     adj[a].add(b);
     adj[b].add(a);
   });
+
+  // 4. second test, pour les contours décalés entre feuilles ou sections : deux
+  //    parcelles dont les limites se longent à moins de tolContact sur au moins
+  //    minCommun mètres sont contiguës, même sans aucun sommet en commun.
+  if(tolContact > 0){
+    const P = etat.parcelles;
+    const pas = Math.max(0.25, Math.min(1, minCommun / 2 || 0.5));
+    // index des boîtes pour ne comparer que les voisines
+    const cell = 50, cases = new Map();
+    const cle = (x,y) => Math.floor(x/cell) + "|" + Math.floor(y/cell);
+    P.forEach(p => {
+      for(let cx = Math.floor(p.bbox.x1/cell); cx <= Math.floor(p.bbox.x2/cell); cx++)
+        for(let cy = Math.floor(p.bbox.y1/cell); cy <= Math.floor(p.bbox.y2/cell); cy++){
+          const k = cx + "|" + cy; if(!cases.has(k)) cases.set(k, []); cases.get(k).push(p.i);
+        }
+    });
+    const vus = new Set();
+    P.forEach(p => {
+      const cand = new Set();
+      for(let cx = Math.floor((p.bbox.x1-tolContact)/cell); cx <= Math.floor((p.bbox.x2+tolContact)/cell); cx++)
+        for(let cy = Math.floor((p.bbox.y1-tolContact)/cell); cy <= Math.floor((p.bbox.y2+tolContact)/cell); cy++)
+          (cases.get(cx + "|" + cy) || []).forEach(j => { if(j !== p.i) cand.add(j); });
+      cand.forEach(j => {
+        if(adj[p.i].has(j)) return;
+        const pk = Math.min(p.i,j) + "-" + Math.max(p.i,j); if(vus.has(pk)) return; vus.add(pk);
+        const q = P[j];
+        if(distanceBoites(p.bbox, q.bbox) > tolContact) return;
+        const l = longueurLimiteProche(p, q, tolContact, pas);
+        if(l >= minCommun){ adj[p.i].add(j); adj[j].add(p.i); }
+      });
+    });
+  }
   etat.adjacence = adj;
 }
 
@@ -1082,7 +1150,8 @@ function etatPersistable(){
     seuils: {
       limiteCommuneMinimale_m: parseFloat(document.getElementById("mini").value) || 0,
       rapprochement_m: parseFloat(document.getElementById("rapproch").value) || 0,
-      voisinage_m: parseFloat(document.getElementById("rayon").value) || 0
+      voisinage_m: parseFloat(document.getElementById("rayon").value) || 0,
+      toleranceContact_m: parseFloat(document.getElementById("tolerance").value) || 0
     },
     sansGeometrie: (etat.sansGeometrie || []).map(x => x.idu).filter(Boolean)
   };
@@ -1172,6 +1241,7 @@ function ouvrirDepuisBase(d){
   if(e.seuils){
     if(e.seuils.rapprochement_m != null){ document.getElementById("rapproch").value = e.seuils.rapprochement_m; document.getElementById("rapproch-val").textContent = e.seuils.rapprochement_m + " m"; }
     if(e.seuils.voisinage_m != null){ document.getElementById("rayon").value = e.seuils.voisinage_m; document.getElementById("rayon-val").textContent = e.seuils.voisinage_m + " m"; }
+    if(e.seuils.toleranceContact_m != null){ document.getElementById("tolerance").value = e.seuils.toleranceContact_m; }
   }
   etat.sansGeometrie = sans.map(p => ({...(p.props||{}), idu: p.idu, motif: "absente du plan au dernier relevé"}));
   etat.ouvert = null;
@@ -1471,6 +1541,13 @@ function brancher(){
   const rapproch = document.getElementById("rapproch");
   rapproch.addEventListener("input", () => { document.getElementById("rapproch-val").textContent = rapproch.value + " m"; });
   rapproch.addEventListener("change", () => { if(etat.parcelles.length){ proposerRapprochements(); rendre(); marquerModifie("seuil-rapprochement", {m: rapproch.value}); } });
+
+  document.getElementById("tolerance").addEventListener("change", () => {
+    if(!etat.parcelles.length) return;
+    if(etat.groupes.some(g => g.manuel) && !confirm("Changer la tolérance recalcule le découpage et efface les retouches manuelles. Continuer ?")) return;
+    etat.ignores = new Set(); regrouperAutomatiquement(); etat.ouvert = null; rendre();
+    marquerModifie("recalcul", {groupes: etat.groupes.length, tolerance_m: document.getElementById("tolerance").value});
+  });
 
   document.getElementById("mini").addEventListener("change", () => {
     if(etat.parcelles.length){ regrouperAutomatiquement(); rendre(); }
