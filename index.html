@@ -97,6 +97,7 @@
   .groupe-tete .num{
     font-family:Georgia,serif;font-size:15px;color:var(--nuit);min-width:34px
   }
+  .groupe-tete .num.manuel::after{content:"✎";font-size:11px;color:var(--orange);margin-left:3px;vertical-align:super}
   .groupe-tete .info{flex:1;min-width:0}
   .groupe-tete .lieu{display:block;font-size:12.5px;color:var(--nuit);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .groupe-tete .chiffres{display:block;font-size:12px;color:var(--gris);font-variant-numeric:tabular-nums}
@@ -522,21 +523,22 @@ function regrouperAutomatiquement(){
 
 /* ---------- affinage ---------- */
 function retirerDuGroupe(numGroupe, indexParcelles){
+  // RÈGLE : dès que l'utilisateur touche un groupe, c'est SON découpage qui
+  // fait foi, plus la géométrie. Le reliquat reste UN seul groupe et garde son
+  // numéro, même si le retrait a coupé la chaîne de contiguïté (rangée de
+  // maisons de ville : chaque parcelle ne touche que ses deux voisines). Seules
+  // les parcelles retirées partent dans un nouveau groupe, où les contiguës
+  // entre elles restent ensemble.
   const g = etat.groupes.find(x => x.num === numGroupe);
   if(!g) return;
-  indexParcelles.forEach(i => g.membres.delete(i));
-  // le reliquat du groupe d'origine peut lui-même se scinder
-  const reste = composantes([...g.membres]);
-  const nouveaux = composantes(indexParcelles);
+  const retirees = indexParcelles.filter(i => g.membres.has(i));
+  if(!retirees.length || retirees.length >= g.membres.size) return;
+  retirees.forEach(i => g.membres.delete(i));
+  g.manuel = true;
   const position = etat.groupes.indexOf(g);
-  const remplacement = [];
-  reste.forEach(b => remplacement.push(numeroterGroupe(b)));
-  nouveaux.forEach(b => remplacement.push(numeroterGroupe(b)));
-  etat.groupes.splice(position, 1, ...remplacement);
-  etat.groupes = etat.groupes.filter(x => x.membres.size);
-  if(!etat.groupes.some(x => x.num === etat.ouvert)){
-    etat.ouvert = remplacement.length ? remplacement[0].num : null;
-  }
+  const nouveaux = composantes(retirees).map(numeroterGroupe);
+  etat.groupes.splice(position + 1, 0, ...nouveaux);
+  etat.ouvert = g.num;                  // on reste sur le groupe qu'on est en train d'affiner
 }
 
 function fusionnerCoches(){
@@ -545,10 +547,12 @@ function fusionnerCoches(){
   const membres = new Set();
   coches.forEach(g => g.membres.forEach(i => membres.add(i)));
   const position = etat.groupes.indexOf(coches[0]);
+  const num = Math.min(...coches.map(g => g.num));
   etat.groupes = etat.groupes.filter(g => !g.coche);
-  const nouveau = numeroterGroupe(membres);
+  const nouveau = {num, membres, coche:false, manuel:true};
   etat.groupes.splice(Math.min(position, etat.groupes.length), 0, nouveau);
   etat.ouvert = nouveau.num;
+  etat.zoomSur = num;
 }
 
 /* ---------- carte ---------- */
@@ -673,7 +677,7 @@ function rendre(){
       tete.type = "button";
       tete.innerHTML =
         '<input type="checkbox" ' + (g.coche ? "checked" : "") + ' aria-label="Sélectionner le groupe ' + g.num + '">' +
-        '<span class="num">G' + g.num + '</span>' +
+        '<span class="num' + (g.manuel ? " manuel" : "") + '">G' + g.num + '</span>' +
         '<span class="info">' +
           (lieu ? '<span class="lieu">' + lieu + '</span>' : "") +
           '<span class="chiffres">' + membres.length + ' parcelle' + (membres.length>1?"s":"") + ' · ' + formatSurface(surface) + '</span>' +
@@ -713,23 +717,6 @@ function rendre(){
         });
         bloc.appendChild(ul);
 
-        if(membres.length > 1){
-          const actions = document.createElement("div");
-          actions.className = "groupe-actions";
-          const btn = document.createElement("button");
-          btn.className = "btn danger";
-          btn.textContent = "Détacher les parcelles décochées";
-          btn.addEventListener("click", () => {
-            const aRetirer = [...ul.querySelectorAll("input:not(:checked)")]
-              .map(x => Number(x.id.slice(1)));
-            if(!aRetirer.length){ signaler("Décochez d'abord au moins une parcelle."); return; }
-            if(aRetirer.length === membres.length){ signaler("Impossible de vider entièrement un groupe."); return; }
-            retirerDuGroupe(g.num, aRetirer);
-            rendre();
-          });
-          actions.appendChild(btn);
-          bloc.appendChild(actions);
-        }
       }
       liste.appendChild(bloc);
     });
