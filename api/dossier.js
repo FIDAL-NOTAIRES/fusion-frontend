@@ -77,7 +77,7 @@ async function charger(res, siren) {
   if (!d) return res.status(404).json({ erreur: 'Aucun dossier FUSION pour ce SIREN', siren });
   const groupes = await sql`SELECT numero, manuel, drive FROM fusion_groupe WHERE dossier_id = ${d.id} ORDER BY numero`;
   const parcelles = await sql`SELECT idu, props, contour, groupe FROM fusion_parcelle WHERE dossier_id = ${d.id} ORDER BY idu`;
-  const documents = await sql`SELECT id, groupe, drive_id, drive_parent, nom, nom_origine, type, code, piece, date_doc, date_sure, empreinte, taille, mime, couche_texte, statut, depose_le
+  const documents = await sql`SELECT id, groupe, drive_id, drive_parent, nom, nom_origine, type, code, piece, date_doc, date_sure, empreinte, taille, mime, couche_texte, statut, lecture, depose_le
                               FROM fusion_document WHERE dossier_id = ${d.id} ORDER BY groupe, nom`;
   const journal = await sql`SELECT quand, quoi, detail FROM fusion_journal WHERE dossier_id = ${d.id} ORDER BY quand DESC LIMIT 50`;
   return res.status(200).json({
@@ -229,13 +229,14 @@ async function document(res, corps) {
   if (!d) return res.status(404).json({ erreur: 'dossier inconnu' });
   const [existant] = await sql`SELECT id, nom, type, groupe FROM fusion_document WHERE drive_id = ${doc.drive_id}`;
   const [r] = await sql`
-    INSERT INTO fusion_document (dossier_id, groupe, drive_id, drive_parent, nom, nom_origine, type, code, piece, date_doc, date_sure, empreinte, taille, mime, couche_texte, statut)
+    INSERT INTO fusion_document (dossier_id, groupe, drive_id, drive_parent, nom, nom_origine, type, code, piece, date_doc, date_sure, empreinte, taille, mime, couche_texte, statut, lecture)
     VALUES (${d.id}, ${doc.groupe}, ${doc.drive_id}, ${doc.drive_parent || null}, ${doc.nom}, ${doc.nom_origine || null}, ${doc.type}, ${doc.code || null}, ${doc.piece || null},
             ${doc.date_doc || null}, ${Boolean(doc.date_sure)}, ${doc.empreinte || null}, ${Number.isInteger(doc.taille) ? doc.taille : null}, ${doc.mime || null},
-            ${typeof doc.couche_texte === 'boolean' ? doc.couche_texte : null}, ${doc.statut || 'depose'})
+            ${typeof doc.couche_texte === 'boolean' ? doc.couche_texte : null}, ${doc.statut || 'depose'}, ${JSON.stringify(doc.lecture && typeof doc.lecture === 'object' ? doc.lecture : {})}::jsonb)
     ON CONFLICT (drive_id) DO UPDATE SET
       groupe = EXCLUDED.groupe, drive_parent = EXCLUDED.drive_parent, nom = EXCLUDED.nom, type = EXCLUDED.type, code = EXCLUDED.code, piece = EXCLUDED.piece,
-      date_doc = EXCLUDED.date_doc, date_sure = EXCLUDED.date_sure, statut = EXCLUDED.statut, modifie_le = now()
+      date_doc = EXCLUDED.date_doc, date_sure = EXCLUDED.date_sure, statut = EXCLUDED.statut,
+      lecture = CASE WHEN EXCLUDED.lecture = '{}'::jsonb THEN fusion_document.lecture ELSE EXCLUDED.lecture END, modifie_le = now()
     RETURNING id`;
   await journaliser(sql, d.id, existant ? 'requalification' : 'depot',
     existant ? { document: r.id, groupe: doc.groupe, ancien_nom: existant.nom, nouveau_nom: doc.nom, ancien_type: existant.type, nouveau_type: doc.type }
