@@ -14,6 +14,11 @@
 //
 // DEUX ÉTAPES pilotées par le navigateur (v2, 12/09/2026) — une seule fonction
 // à actions, pour ne pas entamer les douze du plan Hobby :
+//   ?etape=societes&q=…                → les sociétés candidates (annuaire officiel
+//                                        via REDPAR /api/search) : dénomination, forme
+//                                        juridique, Active/Cessée, SIREN, création,
+//                                        siège, APE, dirigeants — à choisir AVANT toute
+//                                        recherche cadastrale (même réflexe que REDPAR)
 //   ?etape=references&siren=…|nom=…   → la société, ses références, la liste des
 //                                        communes ; rapide, une seule requête REDPAR
 //   ?etape=contours&insee=…&ids=…      → les contours d'UNE commune (lots de 150
@@ -79,6 +84,19 @@ export default async function handler(req, res) {
 
   const { siren, nom, etape } = req.query || {};
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
+
+  // ---- étape « societes » : cartes de l'annuaire officiel, via REDPAR ----
+  if (etape === 'societes') {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.status(400).json({ erreur: 'Paramètre q requis (2 caractères minimum)' });
+    try {
+      const S = await volet('/api/search', { q });
+      res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate=604800');
+      return res.status(200).json({ q, societes: S.results || [] });
+    } catch (e) {
+      return res.status(502).json({ erreur: 'REDPAR indisponible — annuaire des entreprises inaccessible', motif: String(e && e.message || e) });
+    }
+  }
 
   // ---- étape « contours » : une commune, un lot de références ----
   if (etape === 'contours') {
