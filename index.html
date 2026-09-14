@@ -110,6 +110,26 @@
   .parcelles input[type=checkbox]{accent-color:var(--carmin)}
   .groupe-actions{padding:0 14px 10px 30px;display:flex;gap:8px;flex-wrap:wrap}
 
+  /* ---- rapprochements proposés ---- */
+  .sugg{border-bottom:1px solid var(--trait);background:#FFF8EE}
+  .sugg-tete{
+    display:flex;align-items:center;gap:8px;padding:8px 14px;
+    font-family:Georgia,serif;font-size:14px;color:var(--nuit)
+  }
+  .sugg-tete .n{color:var(--orange);font-weight:600}
+  .sugg-tete .aide{font-family:"Segoe UI",system-ui,sans-serif;font-size:11.5px;color:var(--gris);margin-left:auto}
+  .sugg ul{list-style:none;margin:0;padding:0 0 6px}
+  .sugg li{display:flex;align-items:center;gap:8px;padding:5px 14px;font-size:12.5px}
+  .sugg li:hover{background:#FDEFD9}
+  .sugg .paire{font-family:Georgia,serif;color:var(--nuit);min-width:88px}
+  .sugg .motif{flex:1;color:#4A5561;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sugg .btn{padding:2px 8px;font-size:12px}
+  .sugg .plus{padding:4px 14px 8px;font-size:12px;color:var(--gris)}
+  .tete-tri{
+    padding:7px 14px 4px;font-size:11px;letter-spacing:.6px;text-transform:uppercase;
+    color:var(--canard);background:#F4F8F9;border-bottom:1px solid var(--trait)
+  }
+
   /* ---- pied ---- */
   .pied{padding:10px 14px;border-top:1px solid var(--trait);background:#FAFBFC;display:flex;gap:8px;flex-wrap:wrap}
 
@@ -205,6 +225,11 @@
           <span class="val" id="rayon-val">100 m</span>
         </div>
         <div class="reglage">
+          <label for="rapproch">Rapprochements proposés jusqu'à</label>
+          <input type="range" id="rapproch" min="0" max="80" step="5" value="30">
+          <span class="val" id="rapproch-val">30 m</span>
+        </div>
+        <div class="reglage">
           <label for="mini">Longueur minimale de limite commune</label>
           <input type="number" id="mini" min="0" max="20" step="0.5" value="1">
           <span class="val">m</span>
@@ -229,6 +254,7 @@
         <div><i style="background:#A01040"></i>Unité foncière retenue</div>
         <div><i style="background:#1F7A4D"></i>Parcelles de la société à proximité</div>
         <div><i style="background:#8C97A3"></i>Autres parcelles de la société</div>
+        <div><i style="background:#FF982D"></i>Rapprochement survolé</div>
       </div>
     </section>
   </main>
@@ -243,6 +269,68 @@
    (règle de la suite, décision du 02/09 : 30 s ; abaisser à 2 000 pendant
    les tests, remettre à 30 000 une fois la greffe validée). */
 const ATTENTE_SEUIL_MS = 30000;
+
+/* ---- Services de la publicité foncière — PREMIÈRE CLÉ DE TRI des groupes ----
+   Source : annuaire de l'administration (DILA, service-public.fr, licence ouverte),
+   relevé le 14/09/2026 via l'API api-lannuaire — 127 services de type « hypotheque »
+   (SPF, SPFE, livres fonciers de Moselle, CPI de Mayotte). L'annuaire donne le
+   SIÈGE de chaque service, pas son ressort communal : la table est donc sûre pour
+   les 75 départements qui n'ont plus qu'UN service, et reste à compléter commune
+   par commune pour les 23 départements à ressort multiple (dont le Nord). Tant
+   qu'une commune de ces départements n'est pas renseignée, le groupe s'affiche
+   sous « SPF à préciser ». Mise à jour : rejouer l'extraction DILA, un service
+   modifié y porte sa date. */
+const SPF = {
+  // Départements à service unique : département → service
+  departement: {
+    "01":"Nantua","02":"Laon","03":"Yzeure","04":"Digne-les-Bains","05":"Gap","07":"Privas",
+    "08":"Charleville-Mézières","09":"Foix","10":"Troyes","11":"Carcassonne","12":"Rodez",
+    "14":"Caen","15":"Aurillac","16":"Angoulême","18":"Cher (Bourges)","19":"Tulle","21":"Dijon",
+    "22":"Saint-Brieuc","23":"Guéret","24":"Périgueux","26":"Valence","27":"Évreux","28":"Chartres",
+    "2A":"Ajaccio","2B":"Bastia","30":"Nîmes","32":"Auch","35":"Rennes","36":"Châteauroux",
+    "37":"Tours","39":"Jura (Lons-le-Saunier)","40":"Mont-de-Marsan","41":"Blois","43":"Le Puy-en-Velay",
+    "45":"Orléans","46":"Cahors","47":"Lot-et-Garonne (Agen)","48":"Mende","49":"Angers",
+    "50":"Coutances","51":"Reims","52":"Chaumont","53":"Laval","54":"Nancy","55":"Bar-le-Duc",
+    "58":"Nevers","61":"Alençon","63":"Clermont-Ferrand","65":"Tarbes","66":"Perpignan",
+    "70":"Vesoul","71":"Mâcon","72":"Sarthe (Le Mans)","73":"Chambéry","78":"Versailles",
+    "79":"Niort","80":"Abbeville","81":"Castres","82":"Tarn-et-Garonne (Montauban)","84":"Avignon",
+    "85":"La Roche-sur-Yon","86":"Poitiers","87":"Limoges","88":"Épinal","89":"Auxerre",
+    "90":"Belfort","91":"Essonne (Évry)","93":"Seine-Saint-Denis (Bobigny)","94":"Créteil",
+    "95":"Saint-Leu-la-Forêt","971":"Les Abymes","972":"Fort-de-France","973":"Cayenne",
+    "974":"Saint-Denis de La Réunion","976":"Mamoudzou (CPI)"
+  },
+  // Départements à ressort multiple : les services en présence, le ressort communal étant à fournir
+  multiples: {
+    "06":["Antibes","Nice"],"13":["Aix-en-Provence","Marseille"],"17":["La Rochelle","Saintes"],
+    "25":["Besançon","Montbéliard"],"29":["Brest","Quimper"],"31":["Muret","Toulouse"],
+    "33":["Bordeaux","Libourne"],"34":["Béziers","Montpellier"],"38":["Grenoble","Vienne"],
+    "42":["Roanne","Saint-Étienne"],"44":["Nantes","Saint-Nazaire"],"56":["Lorient","Vannes"],
+    "57":["Metz (livre foncier)","Sarreguemines (livre foncier)","Thionville (livre foncier)"],
+    "59":["Dunkerque","Lille","Valenciennes"],"60":["Beauvais","Senlis"],
+    "62":["Arras","Béthune","Boulogne-sur-Mer"],"64":["Bayonne","Pau"],"69":["Lyon 1","Lyon 3"],
+    "74":["Annecy","Bonneville"],"75":["Paris 1","Paris 2"],"76":["Le Havre","Rouen"],
+    "77":["Coulommiers","Meaux","Melun"],"83":["Draguignan","Toulon"],"92":["Nanterre","Vanves"]
+  },
+  // Ressort communal connu : code INSEE → service. Paris est réglé par arrondissement
+  // (le ressort figure dans l'intitulé même des deux services).
+  commune: {
+    "75101":"Paris 1","75102":"Paris 1","75103":"Paris 1","75104":"Paris 1","75108":"Paris 1","75109":"Paris 1",
+    "75110":"Paris 1","75117":"Paris 1","75118":"Paris 1","75119":"Paris 1","75120":"Paris 1",
+    "75105":"Paris 2","75106":"Paris 2","75107":"Paris 2","75111":"Paris 2","75112":"Paris 2","75113":"Paris 2",
+    "75114":"Paris 2","75115":"Paris 2","75116":"Paris 2"
+  }
+};
+function departementDe(insee){
+  const c = String(insee || "");
+  return c.startsWith("97") ? c.slice(0,3) : c.slice(0,2);
+}
+function spfDe(insee){
+  if(!insee) return null;
+  if(SPF.commune[insee]) return SPF.commune[insee];
+  const d = departementDe(insee);
+  if(SPF.departement[d]) return SPF.departement[d];
+  return null;                                  // département à ressort multiple non renseigné
+}
 
 /* ============================================================
    FUSION — moteur de regroupement par unité foncière
@@ -264,7 +352,9 @@ const etat = {
   compteurGroupe: 0,
   lat0: 0,
   sansGeometrie: [],     // références au relevé mais absentes du plan (REDPAR)
-  zoomSur: null          // groupe sur lequel caler la carte au prochain rendu
+  zoomSur: null,         // groupe sur lequel caler la carte au prochain rendu
+  suggestions: [],       // rapprochements proposés {a, b, distance, motifs}
+  ignores: new Set()     // paires écartées par l'utilisateur (clé stable par parcelles)
 };
 
 /* ---------- projection locale (mètres) ---------- */
@@ -519,6 +609,96 @@ function regrouperAutomatiquement(){
     .sort((a,b) => b.size - a.size)
     .map(numeroterGroupe);
   etat.ouvert = etat.groupes.length ? etat.groupes[0].num : null;
+  proposerRapprochements();
+}
+
+/* ---------- rapprochements : FUSION propose, l'humain valide ---------- */
+function voieDe(adresse){
+  // « 0031 RUE BLANCHE BANNIERE », « 9001 RUE DE L EUROPE », « RUE DE VERDUN »
+  return String(adresse || "").replace(/^\d{4}\s?[A-Z]?\s+/, "").trim();
+}
+function distanceSegmentPoint(px, py, ax, ay, bx, by){
+  const dx = bx-ax, dy = by-ay, l2 = dx*dx + dy*dy;
+  let t = l2 ? ((px-ax)*dx + (py-ay)*dy)/l2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t*dx), py - (ay + t*dy));
+}
+function distanceContours(p, q){
+  // plus courte distance entre les deux contours (sommets de l'un → arêtes de l'autre, et inversement)
+  let d = Infinity;
+  const passe = (A, B) => {
+    for(const pts of A.anneaux) for(const s of pts){
+      for(const ring of B.anneaux) for(let i = 0; i < ring.length-1; i++){
+        const v = distanceSegmentPoint(s[0], s[1], ring[i][0], ring[i][1], ring[i+1][0], ring[i+1][1]);
+        if(v < d) d = v;
+        if(d === 0) return;
+      }
+    }
+  };
+  passe(p, q); if(d > 0) passe(q, p);
+  return d;
+}
+function cleSuggestion(ga, gb){
+  const a = Math.min(...ga.membres), b = Math.min(...gb.membres);
+  return Math.min(a,b) + "|" + Math.max(a,b);
+}
+function proposerRapprochements(){
+  const seuil = parseFloat(document.getElementById("rapproch").value) || 0;
+  etat.suggestions = [];
+  if(!seuil || etat.groupes.length < 2) return;
+
+  // bbox et commune par groupe
+  const infos = etat.groupes.map(g => {
+    const membres = [...g.membres].map(i => etat.parcelles[i]);
+    let x1=Infinity,y1=Infinity,x2=-Infinity,y2=-Infinity;
+    membres.forEach(p => { x1=Math.min(x1,p.bbox.x1); y1=Math.min(y1,p.bbox.y1); x2=Math.max(x2,p.bbox.x2); y2=Math.max(y2,p.bbox.y2); });
+    return {g, membres, bbox:{x1,y1,x2,y2},
+      communes: new Set(membres.map(p => p.props.commune).filter(Boolean)),
+      voies: new Set(membres.map(p => voieDe(p.props.adresse)).filter(v => v && !/^(LE |LA |LES |L )/.test(v) && v.length > 3))};
+  });
+
+  for(let i = 0; i < infos.length; i++) for(let j = i+1; j < infos.length; j++){
+    const A = infos[i], B = infos[j];
+    if(distanceBoites(A.bbox, B.bbox) > seuil) continue;
+    const memeCommune = [...A.communes].some(c => B.communes.has(c));
+    if(!memeCommune) continue;                 // un SPF et un plan par commune : on ne rapproche pas au-delà
+    const cle = cleSuggestion(A.g, B.g);
+    if(etat.ignores.has(cle)) continue;
+
+    // distance réelle entre contours, sur les seules paires de parcelles dont les boîtes sont proches
+    let d = Infinity;
+    for(const p of A.membres){
+      for(const q of B.membres){
+        if(distanceBoites(p.bbox, q.bbox) > seuil) continue;
+        const v = distanceContours(p, q);
+        if(v < d) d = v;
+      }
+      if(d === 0) break;
+    }
+    if(d > seuil) continue;
+
+    const motifs = [];
+    const voiesCommunes = [...A.voies].filter(v => B.voies.has(v));
+    if(voiesCommunes.length) motifs.push("même voie : " + voiesCommunes[0]);
+    motifs.push(d < 1 ? "quasi jointifs" : Math.round(d) + " m d'écart");
+    etat.suggestions.push({a: A.g.num, b: B.g.num, distance: d, motifs, memeVoie: voiesCommunes.length > 0, cle});
+  }
+  // les plus convaincants d'abord : même voie, puis distance croissante
+  etat.suggestions.sort((u,v) => (v.memeVoie - u.memeVoie) || (u.distance - v.distance));
+}
+
+function fusionnerNums(nums){
+  const cibles = etat.groupes.filter(g => nums.includes(g.num));
+  if(cibles.length < 2) return;
+  const membres = new Set();
+  cibles.forEach(g => g.membres.forEach(i => membres.add(i)));
+  const position = etat.groupes.indexOf(cibles[0]);
+  const num = Math.min(...cibles.map(g => g.num));
+  etat.groupes = etat.groupes.filter(g => !nums.includes(g.num));
+  const nouveau = {num, membres, coche:false, manuel:true};
+  etat.groupes.splice(Math.min(position, etat.groupes.length), 0, nouveau);
+  etat.ouvert = num;
+  etat.zoomSur = num;
 }
 
 /* ---------- affinage ---------- */
@@ -542,17 +722,9 @@ function retirerDuGroupe(numGroupe, indexParcelles){
 }
 
 function fusionnerCoches(){
-  const coches = etat.groupes.filter(g => g.coche);
-  if(coches.length < 2) return;
-  const membres = new Set();
-  coches.forEach(g => g.membres.forEach(i => membres.add(i)));
-  const position = etat.groupes.indexOf(coches[0]);
-  const num = Math.min(...coches.map(g => g.num));
-  etat.groupes = etat.groupes.filter(g => !g.coche);
-  const nouveau = {num, membres, coche:false, manuel:true};
-  etat.groupes.splice(Math.min(position, etat.groupes.length), 0, nouveau);
-  etat.ouvert = nouveau.num;
-  etat.zoomSur = num;
+  const nums = etat.groupes.filter(g => g.coche).map(g => g.num);
+  if(nums.length < 2) return;
+  fusionnerNums(nums);
 }
 
 /* ---------- carte ---------- */
@@ -586,19 +758,24 @@ function dessiner(){
     });
   }
 
+  const surlignes = etat.surlignes ? new Set([...etat.surlignes].flatMap(n => {
+    const g = etat.groupes.find(x => x.num === n); return g ? [...g.membres] : [];
+  })) : null;
+
   etat.parcelles.forEach(p => {
     const retenue = retenues.has(p.i);
     const proche = proches.has(p.i);
-    const couleur = retenue ? "#A01040" : proche ? "#1F7A4D" : "#8C97A3";
+    const enSugg = surlignes && surlignes.has(p.i);
+    const couleur = enSugg ? "#FF982D" : retenue ? "#A01040" : proche ? "#1F7A4D" : "#8C97A3";
     const latlngs = p.anneaux.map(pts => pts.map(pt => {
       const c = deprojeter(pt[0], pt[1], etat.lat0);
       return [c[1], c[0]];
     }));
     const forme = L.polygon(latlngs, {
       color: couleur,
-      weight: retenue ? 2.2 : 1.2,
+      weight: (retenue || enSugg) ? 2.2 : 1.2,
       fillColor: couleur,
-      fillOpacity: retenue ? 0.42 : proche ? 0.22 : 0.10
+      fillOpacity: enSugg ? 0.5 : retenue ? 0.42 : proche ? 0.22 : 0.10
     });
     forme.bindTooltip(p.ref + " — " + formatSurface(p.surface), {sticky:true});
     forme.on("click", () => { basculerParcelle(p.i); });
@@ -659,7 +836,59 @@ function rendre(){
   if(!etat.parcelles.length){
     liste.innerHTML = '<p class="vide">Aucune parcelle chargée. Déposez un GeoJSON, ou ouvrez le jeu d\'essai pour voir le regroupement à l\'œuvre.</p>';
   }else{
-    etat.groupes.forEach(g => {
+    // ---- rapprochements proposés ----
+    if(etat.suggestions.length){
+      const bloc = document.createElement("div");
+      bloc.className = "sugg";
+      const MAX = 40;
+      let html = '<div class="sugg-tete"><span class="n">' + etat.suggestions.length + '</span> rapprochement'
+        + (etat.suggestions.length > 1 ? "s proposés" : " proposé")
+        + '<span class="aide">à valider un par un</span></div><ul>';
+      etat.suggestions.slice(0, MAX).forEach((sg, k) => {
+        html += '<li data-k="' + k + '"><span class="paire">G' + sg.a + ' + G' + sg.b + '</span>'
+          + '<span class="motif">' + sg.motifs.join(" · ") + '</span>'
+          + '<button class="btn plein" data-act="fusionner">Fusionner</button>'
+          + '<button class="btn" data-act="ignorer">Ignorer</button></li>';
+      });
+      html += '</ul>' + (etat.suggestions.length > MAX ? '<div class="plus">… et ' + (etat.suggestions.length - MAX) + ' autres, visibles après traitement des premiers</div>' : '');
+      bloc.innerHTML = html;
+      bloc.addEventListener("click", e => {
+        const btn = e.target.closest("button[data-act]"); if(!btn) return;
+        const li = btn.closest("li"); const sg = etat.suggestions[Number(li.dataset.k)]; if(!sg) return;
+        if(btn.dataset.act === "fusionner"){ fusionnerNums([sg.a, sg.b]); proposerRapprochements(); rendre(); }
+        else { etat.ignores.add(sg.cle); proposerRapprochements(); rendre(); }
+      });
+      bloc.addEventListener("mouseover", e => {
+        const li = e.target.closest("li"); if(!li) return;
+        const sg = etat.suggestions[Number(li.dataset.k)]; if(sg) surlignerGroupes([sg.a, sg.b]);
+      });
+      bloc.addEventListener("mouseleave", () => surlignerGroupes(null));
+      liste.appendChild(bloc);
+    }
+
+    // ---- tri : SPF → commune → sections → numéro ----
+    const cleTri = (g) => {
+      const membres = [...g.membres].map(i => etat.parcelles[i]);
+      const communes = [...new Set(membres.map(p => p.props.nom_commune).filter(Boolean))].sort();
+      const insee = [...new Set(membres.map(p => p.props.commune).filter(Boolean))].sort();
+      const sections = [...new Set(membres.map(p => p.props.section).filter(Boolean))].sort();
+      const spf = insee.map(spfDe).filter(Boolean).sort()[0] || "";
+      const dep = insee.length ? departementDe(insee[0]) : "";
+      return {spf, dep, commune: communes[0] || "", sections: sections.join(" "), num: g.num};
+    };
+    const ordonnes = etat.groupes.map(g => ({g, k: cleTri(g)})).sort((u,v) =>
+      u.k.spf.localeCompare(v.k.spf, "fr") || u.k.commune.localeCompare(v.k.commune, "fr")
+      || u.k.sections.localeCompare(v.k.sections, "fr") || (u.k.num - v.k.num));
+
+    let teteCourante = null;
+    ordonnes.forEach(({g, k}) => {
+      const enTete = (k.spf ? "SPF " + k.spf
+                      : (SPF.multiples[k.dep] ? "SPF à préciser (" + SPF.multiples[k.dep].join(" / ") + ")" : "SPF inconnu"))
+                    + " — " + (k.commune || "Commune inconnue");
+      if(enTete !== teteCourante){
+        const h = document.createElement("div"); h.className = "tete-tri"; h.textContent = enTete;
+        liste.appendChild(h); teteCourante = enTete;
+      }
       const membres = [...g.membres].map(i => etat.parcelles[i])
         .sort((a,b) => a.ref.localeCompare(b.ref,"fr",{numeric:true}));
       const surface = membres.reduce((s,p) => s + p.surface, 0);
@@ -732,6 +961,10 @@ function rendre(){
 }
 
 function surligner(){ /* réservé : mise en avant au survol */ }
+function surlignerGroupes(nums){
+  etat.surlignes = nums ? new Set(nums) : null;
+  dessiner();
+}
 
 function majBoutons(){
   const charge = etat.parcelles.length > 0;
@@ -1005,6 +1238,10 @@ function brancher(){
     dessiner();
   });
 
+  const rapproch = document.getElementById("rapproch");
+  rapproch.addEventListener("input", () => { document.getElementById("rapproch-val").textContent = rapproch.value + " m"; });
+  rapproch.addEventListener("change", () => { if(etat.parcelles.length){ proposerRapprochements(); rendre(); } });
+
   document.getElementById("mini").addEventListener("change", () => {
     if(etat.parcelles.length){ regrouperAutomatiquement(); rendre(); }
   });
@@ -1052,6 +1289,7 @@ function jeuEssai(){
   //  A. quatre parcelles jointives -> une seule unité foncière
   //  B. une parcelle qui ne touche A que par un coin -> unité distincte
   //  C. deux parcelles jointives séparées de A par une voie -> unité distincte
+  //  Attendu : 3 groupes ; rapprochements proposés A+B (coin, 0 m) et A+C (voie)
   const lon0 = 2.3400, lat0 = 48.8600;
   const m = 1/111320, mx = m/Math.cos(lat0*Math.PI/180);
   const rect = (x, y, l, h, ref) => ({
@@ -1070,9 +1308,9 @@ function jeuEssai(){
     rect(40,  0,  35, 30, "0013"),
     rect(0,  30,  40, 25, "0014"),
     rect(40, 30,  35, 25, "0015"),
-    rect(75, 55,  30, 25, "0021"),          // contact par un coin seul
-    rect(95,  0,  30, 30, "0031"),          // au-delà d'une voie de 20 m
-    rect(95, 30,  30, 25, "0032")
+    rect(75, 55,  30, 25, "0021"),          // ne touche 0015 que par le coin (75,55)
+    rect(110, 0,  30, 30, "0031"),          // au-delà d'une voie de 35 m
+    rect(110,30,  30, 25, "0032")
   ]};
 }
 
