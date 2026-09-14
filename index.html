@@ -145,6 +145,9 @@
   .sugg .motif{grid-area:motif;color:#4A5561;font-size:12px;line-height:1.35}
   .sugg .motif .voie{color:var(--nuit)}
   .sugg .extra{color:var(--orange);font-weight:600}
+  .sugg .piece{color:var(--carmin);font-weight:600}
+  .sugg .piece a{color:var(--carmin)}
+  .sugg li.par-piece{background:#FBEAEF}
   .sugg .aide-carte{display:block;font-family:"Segoe UI",system-ui,sans-serif;font-size:11px;color:var(--gris);font-style:italic}
   .sugg button[data-act="fusionner"]{grid-area:fus}
   .sugg button[data-act="ignorer"]{grid-area:ign}
@@ -714,8 +717,10 @@ function calculerAdjacence(minCommun){
         const pk = Math.min(p.i,j) + "-" + Math.max(p.i,j); if(vus.has(pk)) return; vus.add(pk);
         const q = P[j];
         if(distanceBoites(p.bbox, q.bbox) > tolContact) return;
+        // Un simple coin cumule à lui seul ~2×tol de « limite proche » (les points à moins de
+        // tol du sommet, sur les deux arêtes) : on l'écarte en exigeant minCommun AU-DELÀ de cet effet.
         const l = longueurLimiteProche(p, q, tolContact, pas);
-        if(l >= minCommun){ adj[p.i].add(j); adj[j].add(p.i); }
+        if(l >= minCommun + 2 * tolContact){ adj[p.i].add(j); adj[j].add(p.i); }
       });
     });
   }
@@ -791,7 +796,7 @@ function cleSuggestion(ga, gb){
 function proposerRapprochements(){
   const seuil = parseFloat(document.getElementById("rapproch").value) || 0;
   etat.suggestions = [];
-  if(!seuil || etat.groupes.length < 2) return;
+  if(etat.groupes.length < 2) return;
 
   // bbox et commune par groupe
   const infos = etat.groupes.map(g => {
@@ -803,7 +808,7 @@ function proposerRapprochements(){
       voies: new Set(membres.map(p => voieDe(p.props.adresse)).filter(v => v && !/^(LE |LA |LES |L )/.test(v) && v.length > 3))};
   });
 
-  for(let i = 0; i < infos.length; i++) for(let j = i+1; j < infos.length; j++){
+  for(let i = 0; seuil > 0 && i < infos.length; i++) for(let j = i+1; j < infos.length; j++){
     const A = infos[i], B = infos[j];
     if(distanceBoites(A.bbox, B.bbox) > seuil) continue;
     const memeCommune = [...A.communes].some(c => B.communes.has(c));
@@ -829,8 +834,32 @@ function proposerRapprochements(){
     motifs.push(d < 1 ? "quasi jointifs" : Math.round(d) + " m d'écart");
     etat.suggestions.push({a: A.g.num, b: B.g.num, distance: d, motifs, memeVoie: voiesCommunes.length > 0, cle});
   }
-  // les plus convaincants d'abord : même voie, puis distance croissante
-  etat.suggestions.sort((u,v) => (v.memeVoie - u.memeVoie) || (u.distance - v.distance));
+  // Le motif le plus solide vient du fichier immobilier lui-même : une pièce
+  // (état hypothécaire ou titre) qui cite des parcelles de deux groupes les
+  // relie, quelle que soit la distance. Ces paires passent en tête.
+  const parPaire = new Map();
+  (etat.documents || []).forEach(doc => {
+    const gs = (doc.lecture && Array.isArray(doc.lecture.groupes)) ? [...new Set(doc.lecture.groupes)].filter(n => etat.groupes.some(g => g.num === n)) : [];
+    for(let i = 0; i < gs.length; i++) for(let j = i+1; j < gs.length; j++){
+      const k = Math.min(gs[i],gs[j]) + "-" + Math.max(gs[i],gs[j]);
+      if(!parPaire.has(k)) parPaire.set(k, []);
+      parPaire.get(k).push(doc);
+    }
+  });
+  parPaire.forEach((docs, k) => {
+    const [a, b] = k.split("-").map(Number);
+    const ga = etat.groupes.find(g => g.num === a), gb = etat.groupes.find(g => g.num === b);
+    if(!ga || !gb) return;
+    const cle = cleSuggestion(ga, gb);
+    if(etat.ignores.has(cle)) return;
+    const libelle = docs.length === 1 ? (docs[0].type === "EHF" ? "même état hypothécaire" : "même titre") + " : " + docs[0].nom
+                                      : docs.length + " pièces communes";
+    const existante = etat.suggestions.find(x => x.cle === cle);
+    if(existante){ existante.motifs.unshift(libelle); existante.piece = true; existante.docs = docs; }
+    else etat.suggestions.push({a, b, distance: Infinity, motifs:[libelle], memeVoie:false, piece:true, docs, cle});
+  });
+  // les plus convaincants d'abord : pièce commune, puis même voie, puis distance croissante
+  etat.suggestions.sort((u,v) => ((v.piece?1:0) - (u.piece?1:0)) || (v.memeVoie - u.memeVoie) || (u.distance - v.distance));
 }
 
 function fusionnerNums(nums){
@@ -1365,6 +1394,7 @@ async function deposerFichiers(g, fichiers){
       const r = await appelDossier({action:"document", siren: etat.dossier.siren, document: doc});
       doc.id = r.id; doc.depose_le = new Date().toISOString();
       etat.documents = (etat.documents || []).filter(x => x.drive_id !== doc.drive_id).concat([doc]);
+      proposerRapprochements();
       rendre();
     }
     dire("");
@@ -1512,6 +1542,7 @@ function rattachementHtml(d, g){
   if(!autres.length) return '<span class="ratt ok">✓ cite ' + (l.references||[]).length + ' parcelle' + ((l.references||[]).length>1?"s":"") + ' de ce groupe</span>';
   const ici = cites.includes(g.num);
   let h = '<span class="ratt alerte">' + (ici ? "cite aussi " : "ne cite pas ce groupe mais ") + autres.map(n => "G" + n).join(", ") + '</span><span class="ratt-actions">';
+  if(autres.length > 1) h += '<button type="button" class="btn plein" data-ratt="copier-tous" data-vers="' + autres.join(",") + '">Copier dans les ' + autres.length + '</button>';
   autres.forEach(n => {
     h += '<button type="button" class="btn" data-ratt="copier" data-vers="' + n + '">Copier dans G' + n + '</button>';
     if(!ici) h += '<button type="button" class="btn" data-ratt="deplacer" data-vers="' + n + '">Déplacer vers G' + n + '</button>';
@@ -1555,6 +1586,10 @@ function rendreDepot(g){
     const vers = Number(b.dataset.vers);
     if(b.dataset.ratt === "deplacer") deplacerDocument(doc, vers);
     else if(b.dataset.ratt === "copier") copierDocument(doc, vers);
+    else if(b.dataset.ratt === "copier-tous"){
+      const nums = b.dataset.vers.split(",").map(Number).filter(Number.isInteger);
+      (async () => { for(const n of nums) await copierDocument(doc, n); doc.lecture = Object.assign({}, doc.lecture, {rattachement_confirme: true}); await appelDossier({action:"document", siren: etat.dossier.siren, document: doc}); rendre(); })();
+    }
     else if(b.dataset.ratt === "laisser"){ doc.lecture = Object.assign({}, doc.lecture, {rattachement_confirme: true}); appelDossier({action:"document", siren: etat.dossier.siren, document: doc}); rendre(); }
   }));
 
@@ -1598,10 +1633,13 @@ function rendre(){
       etat.suggestions.slice(0, MAX).forEach((sg, k) => {
         const actif = etat.suggActive === sg.cle;
         const extras = actif ? [...etat.suggExtras] : [];
-        html += '<li data-k="' + k + '" tabindex="0"' + (actif ? ' class="active"' : '') + '><span class="paire">G' + sg.a + ' + G' + sg.b
+        html += '<li data-k="' + k + '" tabindex="0" class="' + (actif ? 'active ' : '') + (sg.piece ? 'par-piece' : '') + '"><span class="paire">G' + sg.a + ' + G' + sg.b
           + extras.map(n => ' <span class="extra">+ G' + n + '</span>').join("")
           + (actif ? '<span class="aide-carte">cliquez une parcelle sur la carte pour l\'ajouter</span>' : "") + '</span>'
-          + '<span class="motif">' + sg.motifs.map(m => m.startsWith("même voie : ") ? 'même voie : <span class="voie">' + echap(m.slice(12)) + '</span>' : echap(m)).join(" · ") + '</span>'
+          + '<span class="motif">' + sg.motifs.map(m =>
+              m.startsWith("même voie : ") ? 'même voie : <span class="voie">' + echap(m.slice(12)) + '</span>'
+            : (sg.piece && sg.docs && (m.startsWith("même état") || m.startsWith("même titre"))) ? '<span class="piece">' + echap(m.split(" : ")[0]) + ' : <a href="https://drive.google.com/file/d/' + sg.docs[0].drive_id + '/view" target="_blank" rel="noopener">' + echap(sg.docs[0].nom) + '</a></span>'
+            : echap(m)).join(" · ") + '</span>'
           + '<button class="btn plein" data-act="fusionner">Fusionner' + (extras.length ? " (" + (2 + extras.length) + ")" : "") + '</button>'
           + '<button class="btn" data-act="ignorer">Ignorer</button></li>';
       });
@@ -1882,6 +1920,7 @@ function ouvrirDepuisBase(d){
   etat.documents = (d.documents || []).map(x => Object.assign({}, x, {date_doc: x.date_doc ? String(x.date_doc).slice(0,10) : null}));
   etat.driveSociete = (d.dossier.drive && d.dossier.drive.societe) ? d.dossier.drive : null;
   etat.numerotationFaite = Boolean(d.dossier.etat && d.dossier.etat.numerotation_definitive);
+  etat.documents.forEach(x => { if(typeof x.lecture === "string"){ try{ x.lecture = JSON.parse(x.lecture); }catch(e){ x.lecture = {}; } } });
   etat.compteurGroupe = etat.groupes.reduce((m,g) => Math.max(m, g.num), 0);
   // parcelles orphelines (sans groupe en base) : un groupe chacune, plutôt que de les perdre
   const groupees = new Set(); etat.groupes.forEach(g => g.membres.forEach(i => groupees.add(i)));
