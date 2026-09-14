@@ -97,7 +97,9 @@
   .groupe-tete .num{
     font-family:Georgia,serif;font-size:15px;color:var(--nuit);min-width:34px
   }
-  .groupe-tete .info{flex:1;font-size:12.5px;color:var(--gris)}
+  .groupe-tete .info{flex:1;min-width:0}
+  .groupe-tete .lieu{display:block;font-size:12.5px;color:var(--nuit);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .groupe-tete .chiffres{display:block;font-size:12px;color:var(--gris);font-variant-numeric:tabular-nums}
   .groupe-tete .pastille{width:11px;height:11px;border-radius:50%;border:1px solid rgba(0,0,0,.18)}
   .parcelles{list-style:none;margin:0;padding:2px 0 8px;background:#FBFCFD}
   .parcelles li{display:flex;align-items:center;gap:9px;padding:3px 14px 3px 30px}
@@ -133,14 +135,23 @@
   .societe-etat{font-size:12.5px;color:var(--gris);margin-top:6px;min-height:1em;line-height:1.5}
   .societe-etat b{color:var(--nuit);font-weight:600}
   .societe-etat .alerte{color:var(--carmin)}
-  .candidats{list-style:none;margin:6px 0 0;padding:0}
-  .candidats li{margin-top:4px}
+  .candidats{list-style:none;margin:8px 0 0;padding:0;max-height:46vh;overflow:auto}
+  .candidats li{margin-top:6px}
   .candidats button{
-    width:100%;text-align:left;border:1px solid var(--trait);background:#fff;
-    padding:6px 9px;border-radius:3px
+    width:100%;text-align:left;border:1.5px solid var(--trait);background:#fff;
+    padding:9px 11px;border-radius:4px;line-height:1.45
   }
   .candidats button:hover{border-color:var(--canard);background:#F6FAFB}
-  .candidats .sir{color:var(--canard);font-variant-numeric:tabular-nums;margin-left:6px}
+  .candidats .nom{font-family:Georgia,serif;font-size:14.5px;color:var(--nuit);display:block;margin-bottom:3px}
+  .candidats .badge{
+    display:inline-block;font-size:11px;padding:1px 7px;border-radius:9px;margin:0 4px 3px 0;
+    background:#EEF1F4;color:#4A5561;border:1px solid var(--trait)
+  }
+  .candidats .badge.actif{background:#E8F4EC;color:#1F7A4D;border-color:#BFE0CB}
+  .candidats .badge.cesse{background:#FBEAEF;color:var(--carmin);border-color:#EFC3D0}
+  .candidats .det{font-size:12px;color:#4A5561;display:block}
+  .candidats .det b{color:var(--nuit);font-weight:600;font-variant-numeric:tabular-nums}
+  .candidats .src{font-size:11.5px;color:var(--gris);margin:6px 0 0}
   textarea.coller{
     width:100%;height:90px;margin-top:9px;border:1px solid var(--trait);border-radius:3px;
     padding:7px;font-family:Consolas,monospace;font-size:12px;display:none
@@ -251,7 +262,8 @@ const etat = {
   ouvert: null,       // num du groupe déplié
   compteurGroupe: 0,
   lat0: 0,
-  sansGeometrie: []      // références au relevé mais absentes du plan (REDPAR)
+  sansGeometrie: [],     // références au relevé mais absentes du plan (REDPAR)
+  zoomSur: null          // groupe sur lequel caler la carte au prochain rendu
 };
 
 /* ---------- projection locale (mètres) ---------- */
@@ -598,6 +610,18 @@ function dessiner(){
     if(b.isValid()) carte.fitBounds(b, {padding:[30,30]});
     dessiner.cadre = true;
   }
+
+  // Ouverture d'un groupe : la carte se cale dessus, avec assez de marge pour
+  // voir le voisinage vert autour
+  if(etat.zoomSur != null && groupeOuvert){
+    const b = L.latLngBounds([]);
+    groupeOuvert.membres.forEach(i => etat.parcelles[i].anneaux[0].forEach(pt => {
+      const c = deprojeter(pt[0], pt[1], etat.lat0);
+      b.extend([c[1], c[0]]);
+    }));
+    if(b.isValid()) carte.fitBounds(b.pad(1.2), {maxZoom: 18});
+    etat.zoomSur = null;
+  }
 }
 
 function distanceBoites(a, b){
@@ -639,13 +663,21 @@ function rendre(){
       const bloc = document.createElement("div");
       bloc.className = "groupe" + (g.num === etat.ouvert ? " ouvert" : "");
 
+      const communes = [...new Set(membres.map(p => p.props.nom_commune).filter(Boolean))];
+      const sections = [...new Set(membres.map(p => p.props.section).filter(Boolean))].sort();
+      const lieu = (communes.length ? communes.join(" / ") : "") +
+                   (sections.length ? " · " + sections.slice(0,4).join(" ") + (sections.length > 4 ? " …" : "") : "");
+
       const tete = document.createElement("button");
       tete.className = "groupe-tete";
       tete.type = "button";
       tete.innerHTML =
         '<input type="checkbox" ' + (g.coche ? "checked" : "") + ' aria-label="Sélectionner le groupe ' + g.num + '">' +
         '<span class="num">G' + g.num + '</span>' +
-        '<span class="info">' + membres.length + ' parcelle' + (membres.length>1?"s":"") + ' · ' + formatSurface(surface) + '</span>' +
+        '<span class="info">' +
+          (lieu ? '<span class="lieu">' + lieu + '</span>' : "") +
+          '<span class="chiffres">' + membres.length + ' parcelle' + (membres.length>1?"s":"") + ' · ' + formatSurface(surface) + '</span>' +
+        '</span>' +
         '<span class="pastille" style="background:' + (g.num === etat.ouvert ? "#A01040" : "#8C97A3") + '"></span>';
       tete.addEventListener("click", (e) => {
         if(e.target.type === "checkbox"){
@@ -655,6 +687,7 @@ function rendre(){
           return;
         }
         etat.ouvert = (etat.ouvert === g.num) ? null : g.num;
+        etat.zoomSur = etat.ouvert;      // la carte se cale sur le groupe qu'on ouvre
         rendre();
       });
       bloc.appendChild(tete);
@@ -752,11 +785,72 @@ function traiterTexte(texte){
 /* ---------- recherche par société (via /api/redpar → REDPAR) ---------- */
 function afficherEtatSociete(html){ document.getElementById("societe-etat").innerHTML = html; }
 
+/* ---------- étape 0 : l'annuaire officiel, une carte par société ---------- */
+function echap(t){ return String(t == null ? "" : t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function formaterDate(d){
+  if(!d || !/^\d{4}-\d{2}-\d{2}/.test(d)) return d || "N/C";
+  return d.slice(8,10) + "/" + d.slice(5,7) + "/" + d.slice(0,4);
+}
+
 async function chercherSociete(saisie){
   const brut = (saisie || "").trim();
   if(!brut){ afficherEtatSociete('<span class="alerte">Saisissez un SIREN ou une dénomination.</span>'); return; }
   const chiffres = brut.replace(/\s+/g, "");
-  const param = /^\d{9}$/.test(chiffres) ? "siren=" + chiffres : "nom=" + encodeURIComponent(brut);
+  document.getElementById("candidats").innerHTML = "";
+
+  // Un SIREN saisi directement part tout de suite au cadastre
+  if(/^\d{9}$/.test(chiffres)){ chercherParcelles(chiffres, null); return; }
+
+  const bouton = document.getElementById("btn-societe");
+  bouton.disabled = true;
+  afficherEtatSociete("Recherche dans l'annuaire officiel des entreprises…");
+  try{
+    const r = await fetch("/api/redpar?etape=societes&q=" + encodeURIComponent(brut), {headers:{Accept:"application/json"}});
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.erreur || ("HTTP " + r.status));
+    const liste = d.societes || [];
+    if(!liste.length){
+      afficherEtatSociete('<span class="alerte">Aucune société trouvée pour « ' + echap(brut) + ' ».</span>');
+      return;
+    }
+    afficherEtatSociete(liste.length + " société" + (liste.length > 1 ? "s trouvées" : " trouvée")
+      + " — choisissez celle à traiter :");
+    const ul = document.getElementById("candidats");
+    liste.forEach(c => {
+      const active = c.statut === "Active";
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.type = "button";
+      b.innerHTML =
+        '<span class="nom">' + echap(c.nom) + '</span>' +
+        '<span class="badge">' + echap(c.formeJuridique) + '</span>' +
+        '<span class="badge ' + (active ? "actif" : "cesse") + '">' + echap(c.statut) + '</span>' +
+        '<span class="det">SIREN <b>' + echap(c.siren) + '</b> · créée le ' + echap(formaterDate(c.dateCreation)) + '</span>' +
+        '<span class="det">' + echap(c.adresse) + '</span>' +
+        '<span class="det">APE ' + echap(c.codeApe) + '</span>' +
+        (c.dirigeants && c.dirigeants.length ? '<span class="det">Dirigeants : ' + echap(c.dirigeants.join(", ")) + '</span>' : "");
+      b.addEventListener("click", () => {
+        document.getElementById("societe-saisie").value = c.nom;
+        ul.innerHTML = "";
+        chercherParcelles(c.siren, c.nom);
+      });
+      li.appendChild(b);
+      ul.appendChild(li);
+    });
+    const src = document.createElement("p");
+    src.className = "src";
+    src.textContent = "Source : annuaire officiel des entreprises (gouv.fr)";
+    ul.appendChild(src);
+  }catch(e){
+    afficherEtatSociete('<span class="alerte">' + echap(e.message || "Annuaire inaccessible") + "</span>");
+  }finally{
+    bouton.disabled = false;
+  }
+}
+
+async function chercherParcelles(siren, libelle){
+  const brut = libelle || siren;
+  const param = "siren=" + siren;
 
   const bouton = document.getElementById("btn-societe");
   bouton.disabled = true;
@@ -785,26 +879,6 @@ async function chercherSociete(saisie){
     const d1 = await r1.json();
     if(!r1.ok) throw new Error(d1.erreur || ("HTTP " + r1.status));
 
-    if((!d1.communes || !d1.communes.length) && Array.isArray(d1.candidats) && d1.candidats.length > 1){
-      fermer();
-      afficherEtatSociete("Plusieurs sociétés correspondent — choisissez :");
-      const ul = document.getElementById("candidats");
-      d1.candidats.forEach(c => {
-        const nom = c.denomination || c.nom || c.raison_sociale || "(sans dénomination)";
-        const sir = c.siren || c.numero_siren || "";
-        const li = document.createElement("li");
-        const b = document.createElement("button");
-        b.type = "button";
-        b.innerHTML = nom + (sir ? '<span class="sir">' + sir + "</span>" : "");
-        b.addEventListener("click", () => {
-          document.getElementById("societe-saisie").value = sir || nom;
-          chercherSociete(sir || nom);
-        });
-        li.appendChild(b);
-        ul.appendChild(li);
-      });
-      return;
-    }
     if(!d1.communes || !d1.communes.length){
       fermer();
       afficherEtatSociete('<span class="alerte">Aucune parcelle au relevé pour cette société.</span>');
@@ -869,6 +943,7 @@ async function chercherSociete(saisie){
     chargerGeoJSON({type:"FeatureCollection", features});
     dessiner.cadre = false;
     regrouperAutomatiquement();
+    etat.ouvert = null;                 // vue d'ensemble d'abord : les groupes repliés
     etat.sansGeometrie = sansGeometrie;
     rendre();
     fermer();
