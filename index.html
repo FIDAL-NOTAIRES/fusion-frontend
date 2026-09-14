@@ -45,6 +45,23 @@
   .bandeau .sous{color:var(--cyan);font-size:12.5px}
   .bandeau .compteurs{margin-left:auto;display:flex;gap:16px;font-size:12.5px;color:#C9D3DE}
   .bandeau .compteurs b{color:var(--jaune-texte);font-weight:600}
+  .persist{color:#C9D3DE;font-size:12px;padding-left:12px;border-left:1px solid rgba(255,255,255,.18)}
+  .persist.ok{color:var(--cyan)}
+  .persist.alerte{color:var(--orange)}
+  .persist:empty{display:none}
+  .dossiers{margin-top:10px}
+  .dossiers h3{font-family:Georgia,serif;font-size:13.5px;margin:0 0 5px;color:var(--nuit)}
+  .dossiers ul{list-style:none;margin:0;padding:0}
+  .dossiers li{margin-top:4px}
+  .dossiers button{
+    width:100%;text-align:left;border:1px solid var(--trait);background:#fff;
+    padding:6px 9px;border-radius:3px;display:flex;gap:8px;align-items:baseline
+  }
+  .dossiers button:hover{border-color:var(--canard);background:#F6FAFB}
+  .dossiers .d-nom{flex:1;color:var(--nuit);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dossiers .d-inf{font-size:11.5px;color:var(--gris);white-space:nowrap}
+  .dossiers .d-inf b{color:var(--orange);font-weight:600}
+  .reinit{margin-top:6px}
 
   main{flex:1;display:flex;min-height:0}
   .panneau{
@@ -190,6 +207,7 @@
       <span>Parcelles <b id="c-parcelles">0</b></span>
       <span>Groupes <b id="c-groupes">0</b></span>
       <span>Surface <b id="c-surface">0 ha</b></span>
+      <span id="persist" class="persist"></span>
     </div>
   </header>
 
@@ -205,6 +223,7 @@
           </div>
           <div class="societe-etat" id="societe-etat"></div>
           <ul class="candidats" id="candidats"></ul>
+          <div class="dossiers" id="dossiers"></div>
         </div>
         <div class="depose" id="depose">
           <p>ou déposez un GeoJSON de parcelles</p>
@@ -354,7 +373,9 @@ const etat = {
   sansGeometrie: [],     // références au relevé mais absentes du plan (REDPAR)
   zoomSur: null,         // groupe sur lequel caler la carte au prochain rendu
   suggestions: [],       // rapprochements proposés {a, b, distance, motifs}
-  ignores: new Set()     // paires écartées par l'utilisateur (clé stable par parcelles)
+  ignores: new Set(),    // paires écartées par l'utilisateur (clé stable par parcelles)
+  dossier: null,         // {siren, denomination, millesime} quand le travail est persisté dans Neon
+  persist: {actif:false, minuteur:null, enCours:false, quoi:null, detail:null}
 };
 
 /* ---------- projection locale (mètres) ---------- */
@@ -416,6 +437,7 @@ function chargerGeoJSON(objet){
       i: parcelles.length,
       ref: referenceParcelle(t.properties) || ("Parcelle " + (idx+1)),
       props: t.properties || {},
+      geometrie: g,                       // telle que servie, pour la persistance
       anneaux,
       surface: surfaceAnneaux(anneaux),
       centre: centreAnneaux(anneaux),
@@ -699,6 +721,7 @@ function fusionnerNums(nums){
   etat.groupes.splice(Math.min(position, etat.groupes.length), 0, nouveau);
   etat.ouvert = num;
   etat.zoomSur = num;
+  marquerModifie("fusion", {groupes: nums.slice().sort((a,b)=>a-b), resultat: num});
 }
 
 /* ---------- affinage ---------- */
@@ -719,6 +742,7 @@ function retirerDuGroupe(numGroupe, indexParcelles){
   const nouveaux = composantes(retirees).map(numeroterGroupe);
   etat.groupes.splice(position + 1, 0, ...nouveaux);
   etat.ouvert = g.num;                  // on reste sur le groupe qu'on est en train d'affiner
+  marquerModifie("detachement", {groupe: g.num, parcelles: retirees.map(i => etat.parcelles[i].props.idu || etat.parcelles[i].ref)});
 }
 
 function fusionnerCoches(){
@@ -856,7 +880,7 @@ function rendre(){
         const btn = e.target.closest("button[data-act]"); if(!btn) return;
         const li = btn.closest("li"); const sg = etat.suggestions[Number(li.dataset.k)]; if(!sg) return;
         if(btn.dataset.act === "fusionner"){ fusionnerNums([sg.a, sg.b]); proposerRapprochements(); rendre(); }
-        else { etat.ignores.add(sg.cle); proposerRapprochements(); rendre(); }
+        else { etat.ignores.add(sg.cle); marquerModifie("rapprochement-ecarte", {groupes:[sg.a, sg.b]}); proposerRapprochements(); rendre(); }
       });
       bloc.addEventListener("mouseover", e => {
         const li = e.target.closest("li"); if(!li) return;
@@ -994,6 +1018,8 @@ function traiterTexte(texte){
   try{
     chargerGeoJSON(objet);
     dessiner.cadre = false;
+    etat.dossier = null; etat.persist.actif = false; etat.ignores = new Set();
+    afficherPersist("Jeu local — non enregistré");
     regrouperAutomatiquement();
     rendre();
     signaler(etat.parcelles.length + " parcelles chargées, " + etat.groupes.length + " unités foncières détectées.");
@@ -1004,6 +1030,158 @@ function traiterTexte(texte){
 
 /* ---------- recherche par société (via /api/redpar → REDPAR) ---------- */
 function afficherEtatSociete(html){ document.getElementById("societe-etat").innerHTML = html; }
+
+/* ---------- persistance Neon (via /api/dossier) ---------- */
+function afficherPersist(texte, classe){
+  const el = document.getElementById("persist");
+  el.textContent = texte || "";
+  el.className = "persist" + (classe ? " " + classe : "");
+}
+function etatPersistable(){
+  return {
+    ignores: [...etat.ignores],
+    seuils: {
+      limiteCommuneMinimale_m: parseFloat(document.getElementById("mini").value) || 0,
+      rapprochement_m: parseFloat(document.getElementById("rapproch").value) || 0,
+      voisinage_m: parseFloat(document.getElementById("rayon").value) || 0
+    },
+    sansGeometrie: (etat.sansGeometrie || []).map(x => x.idu).filter(Boolean)
+  };
+}
+function groupesPersistables(){
+  return etat.groupes.map(g => ({numero: g.num, manuel: Boolean(g.manuel), idus: [...g.membres].map(i => etat.parcelles[i].props.idu).filter(Boolean)}));
+}
+async function appelDossier(corps){
+  const r = await fetch("/api/dossier", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(corps)});
+  const d = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(d.erreur || ("HTTP " + r.status));
+  return d;
+}
+
+// Enregistrement complet après un relevé REDPAR : dossier, puis parcelles par lots, puis découpage.
+async function sauverInitial(){
+  if(!etat.dossier) return;
+  afficherPersist("Enregistrement du dossier…");
+  try{
+    await appelDossier({action:"initialiser", siren: etat.dossier.siren, denomination: etat.dossier.denomination,
+                        millesime: etat.dossier.millesime, etat: etatPersistable()});
+    const lignes = etat.parcelles.map(p => ({idu: p.props.idu, props: p.props, contour: p.geometrie, groupe: null}))
+      .concat((etat.sansGeometrie || []).map(x => ({idu: x.idu, props: x, contour: null, groupe: null})))
+      .filter(x => x.idu);
+    for(let d = 0; d < lignes.length; d += 400){
+      await appelDossier({action:"parcelles", siren: etat.dossier.siren, parcelles: lignes.slice(d, d+400)});
+      afficherPersist("Enregistrement… " + Math.min(d+400, lignes.length) + " / " + lignes.length + " parcelles");
+    }
+    await appelDossier({action:"groupes", siren: etat.dossier.siren, groupes: groupesPersistables(), etat: etatPersistable(),
+                        quoi: "decoupage-automatique", detail:{groupes: etat.groupes.length}});
+    etat.persist.actif = true;
+    afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), "ok");
+  }catch(e){
+    etat.persist.actif = false;
+    afficherPersist("Non enregistré — " + (e.message || "base indisponible"), "alerte");
+  }
+}
+
+// Après chaque geste sur le découpage : enregistrement différé de 800 ms (les gestes rapides se regroupent).
+function marquerModifie(quoi, detail){
+  if(!etat.dossier || !etat.persist.actif) return;
+  etat.persist.quoi = quoi; etat.persist.detail = detail || {};
+  afficherPersist("Modifié…");
+  clearTimeout(etat.persist.minuteur);
+  etat.persist.minuteur = setTimeout(sauverGroupes, 800);
+}
+async function sauverGroupes(){
+  if(!etat.dossier || etat.persist.enCours){ if(etat.persist.enCours) etat.persist.minuteur = setTimeout(sauverGroupes, 500); return; }
+  etat.persist.enCours = true;
+  afficherPersist("Enregistrement…");
+  try{
+    await appelDossier({action:"groupes", siren: etat.dossier.siren, groupes: groupesPersistables(), etat: etatPersistable(),
+                        quoi: etat.persist.quoi, detail: etat.persist.detail});
+    afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), "ok");
+  }catch(e){
+    afficherPersist("Non enregistré — " + (e.message || "base indisponible"), "alerte");
+  }finally{
+    etat.persist.enCours = false;
+  }
+}
+
+// Réouverture d'un dossier depuis la base : parcelles, contours et découpage tels qu'ils ont été laissés.
+function ouvrirDepuisBase(d){
+  const avec = d.parcelles.filter(p => p.contour);
+  const sans = d.parcelles.filter(p => !p.contour);
+  chargerGeoJSON({type:"FeatureCollection", features: avec.map(p => ({type:"Feature", properties: p.props, geometry: p.contour}))});
+  dessiner.cadre = false;
+  calculerAdjacence(parseFloat(document.getElementById("mini").value) || 0);
+
+  const indexParIdu = new Map(etat.parcelles.map(p => [p.props.idu, p.i]));
+  const parNumero = new Map();
+  avec.forEach(p => {
+    if(!Number.isInteger(p.groupe)) return;
+    const i = indexParIdu.get(p.idu); if(i == null) return;
+    if(!parNumero.has(p.groupe)) parNumero.set(p.groupe, new Set());
+    parNumero.get(p.groupe).add(i);
+  });
+  const manuels = new Set(d.groupes.filter(g => g.manuel).map(g => g.numero));
+  etat.groupes = [...parNumero.entries()].sort((a,b) => a[0]-b[0]).map(([num, membres]) => ({num, membres, coche:false, manuel: manuels.has(num)}));
+  etat.compteurGroupe = etat.groupes.reduce((m,g) => Math.max(m, g.num), 0);
+  // parcelles orphelines (sans groupe en base) : un groupe chacune, plutôt que de les perdre
+  const groupees = new Set(); etat.groupes.forEach(g => g.membres.forEach(i => groupees.add(i)));
+  etat.parcelles.forEach(p => { if(!groupees.has(p.i)) etat.groupes.push(numeroterGroupe(new Set([p.i]))); });
+
+  const e = d.dossier.etat || {};
+  etat.ignores = new Set(e.ignores || []);
+  if(e.seuils){
+    if(e.seuils.rapprochement_m != null){ document.getElementById("rapproch").value = e.seuils.rapprochement_m; document.getElementById("rapproch-val").textContent = e.seuils.rapprochement_m + " m"; }
+    if(e.seuils.voisinage_m != null){ document.getElementById("rayon").value = e.seuils.voisinage_m; document.getElementById("rayon-val").textContent = e.seuils.voisinage_m + " m"; }
+  }
+  etat.sansGeometrie = sans.map(p => ({...(p.props||{}), idu: p.idu, motif: "absente du plan au dernier relevé"}));
+  etat.ouvert = null;
+  etat.dossier = {siren: d.dossier.siren, denomination: d.dossier.denomination, millesime: d.dossier.millesime};
+  etat.persist.actif = true;
+  proposerRapprochements();
+  rendre();
+
+  const quand = d.dossier.modifie_le ? new Date(d.dossier.modifie_le).toLocaleString("fr-FR",{dateStyle:"short", timeStyle:"short"}) : "";
+  afficherEtatSociete("<b>" + echap(d.dossier.denomination || d.dossier.siren) + "</b> — SIREN " + echap(d.dossier.siren)
+    + (d.dossier.millesime ? " — matrice " + echap(d.dossier.millesime) : "")
+    + "<br>Dossier rouvert depuis la base" + (quand ? ", dernière modification le " + quand : "")
+    + " : " + avec.length + " parcelles, " + etat.groupes.length + " groupes"
+    + (sans.length ? ', <span class="alerte">' + sans.length + " sans géométrie</span>" : "")
+    + '<div class="reinit"><button class="btn danger" id="btn-reinit">Réinitialiser depuis REDPAR</button></div>');
+  document.getElementById("btn-reinit").addEventListener("click", () => {
+    if(confirm("Repartir du relevé REDPAR efface le découpage enregistré pour cette société, y compris les groupes retouchés à la main. Continuer ?")){
+      chercherParcelles(etat.dossier.siren, etat.dossier.denomination, true);
+    }
+  });
+  afficherPersist("Enregistré (rouvert)", "ok");
+  signaler("Dossier rouvert : " + etat.parcelles.length + " parcelles, " + etat.groupes.length + " groupes.");
+}
+
+async function listerDossiers(){
+  const zone = document.getElementById("dossiers");
+  try{
+    const r = await fetch("/api/dossier?liste=1", {headers:{Accept:"application/json"}});
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.erreur || ("HTTP " + r.status));
+    if(!d.dossiers || !d.dossiers.length){ zone.innerHTML = ""; return; }
+    let html = "<h3>Dossiers enregistrés</h3><ul>";
+    d.dossiers.forEach(x => {
+      const quand = x.modifie_le ? new Date(x.modifie_le).toLocaleDateString("fr-FR") : "";
+      html += '<li><button type="button" data-siren="' + echap(x.siren) + '">'
+        + '<span class="d-nom">' + echap(x.denomination || x.siren) + '</span>'
+        + '<span class="d-inf">' + x.groupes + " groupe" + (x.groupes>1?"s":"") + (x.groupes_manuels ? " · <b>" + x.groupes_manuels + " ✎</b>" : "")
+        + " · " + quand + '</span></button></li>';
+    });
+    zone.innerHTML = html + "</ul>";
+    zone.querySelectorAll("button[data-siren]").forEach(b => b.addEventListener("click", () => {
+      document.getElementById("societe-saisie").value = b.querySelector(".d-nom").textContent;
+      chercherParcelles(b.dataset.siren, b.querySelector(".d-nom").textContent, false);
+    }));
+  }catch(e){
+    zone.innerHTML = "";
+    afficherPersist("Base indisponible — travail non enregistré", "alerte");
+  }
+}
 
 /* ---------- étape 0 : l'annuaire officiel, une carte par société ---------- */
 function echap(t){ return String(t == null ? "" : t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
@@ -1068,9 +1246,18 @@ async function chercherSociete(saisie){
   }
 }
 
-async function chercherParcelles(siren, libelle){
+async function chercherParcelles(siren, libelle, forcer){
   const brut = libelle || siren;
   const param = "siren=" + siren;
+
+  // Un dossier déjà en base se rouvre tel quel : le relevé REDPAR n'écrase jamais un découpage sans demande explicite.
+  if(!forcer){
+    try{
+      const r0 = await fetch("/api/dossier?siren=" + siren, {headers:{Accept:"application/json"}});
+      if(r0.ok){ const d0 = await r0.json(); ouvrirDepuisBase(d0); return; }
+      if(r0.status !== 404){ const e0 = await r0.json().catch(() => ({})); afficherPersist("Base indisponible — " + (e0.erreur || "HTTP " + r0.status), "alerte"); }
+    }catch(e){ afficherPersist("Base indisponible — travail non enregistré", "alerte"); }
+  }
 
   const bouton = document.getElementById("btn-societe");
   bouton.disabled = true;
@@ -1162,11 +1349,14 @@ async function chercherParcelles(siren, libelle){
 
     chargerGeoJSON({type:"FeatureCollection", features});
     dessiner.cadre = false;
+    etat.ignores = new Set();
     regrouperAutomatiquement();
     etat.ouvert = null;                 // vue d'ensemble d'abord : les groupes repliés
     etat.sansGeometrie = sansGeometrie;
+    etat.dossier = {siren, denomination: (d1.societe && d1.societe.denomination) || libelle || null, millesime: d1.millesime || null};
     rendre();
     fermer();
+    sauverInitial().then(listerDossiers);
 
     const s = d1.societe || {};
     let texte = "<b>" + (s.denomination || brut) + "</b>" + (s.siren ? " — SIREN " + s.siren : "")
@@ -1240,14 +1430,17 @@ function brancher(){
 
   const rapproch = document.getElementById("rapproch");
   rapproch.addEventListener("input", () => { document.getElementById("rapproch-val").textContent = rapproch.value + " m"; });
-  rapproch.addEventListener("change", () => { if(etat.parcelles.length){ proposerRapprochements(); rendre(); } });
+  rapproch.addEventListener("change", () => { if(etat.parcelles.length){ proposerRapprochements(); rendre(); marquerModifie("seuil-rapprochement", {m: rapproch.value}); } });
 
   document.getElementById("mini").addEventListener("change", () => {
     if(etat.parcelles.length){ regrouperAutomatiquement(); rendre(); }
   });
 
   document.getElementById("btn-recalculer").addEventListener("click", () => {
-    regrouperAutomatiquement(); rendre();
+    if(etat.groupes.some(g => g.manuel) && !confirm("Recalculer efface les retouches manuelles du découpage. Continuer ?")) return;
+    etat.ignores = new Set();
+    regrouperAutomatiquement(); etat.ouvert = null; rendre();
+    marquerModifie("recalcul", {groupes: etat.groupes.length});
     signaler("Regroupement automatique rétabli : " + etat.groupes.length + " unités foncières.");
   });
 
@@ -1317,6 +1510,7 @@ function jeuEssai(){
 initCarte();
 brancher();
 rendre();
+listerDossiers();
 </script>
 </body>
 </html>

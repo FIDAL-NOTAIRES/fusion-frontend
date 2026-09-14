@@ -1,10 +1,13 @@
 {
   "name": "fusion",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "FUSION — traitement par société : unités foncières, effet relatif, origine de propriété.",
   "engines": {
     "node": "22.x"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4"
   }
 }

@@ -2,8 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["fra1"],
   "functions": {
-    "api/redpar.js": {
-      "maxDuration": 60
-    }
+    "api/redpar.js":  { "maxDuration": 60 },
+    "api/dossier.js": { "maxDuration": 30 }
   }
 }
