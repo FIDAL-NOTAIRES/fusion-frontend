@@ -136,13 +136,16 @@
   .sugg-tete .n{color:var(--orange);font-weight:600}
   .sugg-tete .aide{font-family:"Segoe UI",system-ui,sans-serif;font-size:11.5px;color:var(--gris);margin-left:auto}
   .sugg ul{list-style:none;margin:0;padding:0 0 6px}
-  .sugg li{display:flex;align-items:center;gap:8px;padding:5px 14px;font-size:12.5px}
-  .sugg li{cursor:pointer}
+  .sugg li{display:grid;grid-template-columns:1fr auto auto;grid-template-areas:"paire fus ign" "motif motif motif";
+    column-gap:8px;row-gap:2px;align-items:center;padding:6px 14px;font-size:12.5px;cursor:pointer}
   .sugg li:hover{background:#FDEFD9}
   .sugg li.active{background:#FBE3C2;box-shadow:inset 4px 0 0 var(--orange)}
   .sugg li:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
-  .sugg .paire{font-family:Georgia,serif;color:var(--nuit);min-width:88px}
-  .sugg .motif{flex:1;color:#4A5561;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sugg .paire{grid-area:paire;font-family:Georgia,serif;color:var(--nuit)}
+  .sugg .motif{grid-area:motif;color:#4A5561;font-size:12px;line-height:1.35}
+  .sugg .motif .voie{color:var(--nuit)}
+  .sugg button[data-act="fusionner"]{grid-area:fus}
+  .sugg button[data-act="ignorer"]{grid-area:ign}
   .sugg .btn{padding:2px 8px;font-size:12px}
   .sugg .plus{padding:4px 14px 8px;font-size:12px;color:var(--gris)}
   .tete-tri{
@@ -887,7 +890,7 @@ function rendre(){
         + '<span class="aide">à valider un par un</span></div><ul>';
       etat.suggestions.slice(0, MAX).forEach((sg, k) => {
         html += '<li data-k="' + k + '" tabindex="0"' + (etat.suggActive === sg.cle ? ' class="active"' : '') + '><span class="paire">G' + sg.a + ' + G' + sg.b + '</span>'
-          + '<span class="motif">' + sg.motifs.join(" · ") + '</span>'
+          + '<span class="motif">' + sg.motifs.map(m => m.startsWith("même voie : ") ? 'même voie : <span class="voie">' + echap(m.slice(12)) + '</span>' : echap(m)).join(" · ") + '</span>'
           + '<button class="btn plein" data-act="fusionner">Fusionner</button>'
           + '<button class="btn" data-act="ignorer">Ignorer</button></li>';
       });
@@ -1009,6 +1012,8 @@ function rendre(){
     });
   }
 
+  const vivant = document.getElementById("groupes-vivant");
+  if(vivant) vivant.textContent = etat.groupes.length + " groupe" + (etat.groupes.length > 1 ? "s" : "");
   document.getElementById("c-parcelles").textContent = etat.parcelles.length;
   document.getElementById("c-groupes").textContent = etat.groupes.length;
   document.getElementById("c-surface").textContent =
@@ -1179,7 +1184,7 @@ function ouvrirDepuisBase(d){
   afficherEtatSociete("<b>" + echap(d.dossier.denomination || d.dossier.siren) + "</b> — SIREN " + echap(d.dossier.siren)
     + (d.dossier.millesime ? " — matrice " + echap(d.dossier.millesime) : "")
     + "<br>Dossier rouvert depuis la base" + (quand ? ", dernière modification le " + quand : "")
-    + " : " + avec.length + " parcelles, " + etat.groupes.length + " groupes"
+    + " : " + avec.length + ' parcelles, <span id="groupes-vivant">' + etat.groupes.length + " groupes</span>"
     + (sans.length ? ', <span class="alerte">' + sans.length + " sans géométrie</span>" : "")
     + '<div class="reinit"><button class="btn danger" id="btn-reinit">Réinitialiser depuis REDPAR</button></div>');
   document.getElementById("btn-reinit").addEventListener("click", () => {
@@ -1396,7 +1401,8 @@ async function chercherParcelles(siren, libelle, forcer){
     let texte = "<b>" + (s.denomination || brut) + "</b>" + (s.siren ? " — SIREN " + s.siren : "")
       + (d1.millesime ? " — matrice " + d1.millesime : "")
       + "<br>" + features.length + " parcelle" + (features.length > 1 ? "s" : "") + " dessinée" + (features.length > 1 ? "s" : "")
-      + " sur " + communes.length + " commune" + (communes.length > 1 ? "s" : "");
+      + " sur " + communes.length + " commune" + (communes.length > 1 ? "s" : "")
+      + ', <span id="groupes-vivant">' + etat.groupes.length + " groupes</span>";
     if(sansGeometrie.length){
       texte += ', <span class="alerte">' + sansGeometrie.length + " sans géométrie</span>"
         + " (au relevé mais absente" + (sansGeometrie.length > 1 ? "s" : "") + " du plan)";
