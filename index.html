@@ -137,7 +137,10 @@
   .sugg-tete .aide{font-family:"Segoe UI",system-ui,sans-serif;font-size:11.5px;color:var(--gris);margin-left:auto}
   .sugg ul{list-style:none;margin:0;padding:0 0 6px}
   .sugg li{display:flex;align-items:center;gap:8px;padding:5px 14px;font-size:12.5px}
+  .sugg li{cursor:pointer}
   .sugg li:hover{background:#FDEFD9}
+  .sugg li.active{background:#FBE3C2;box-shadow:inset 4px 0 0 var(--orange)}
+  .sugg li:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
   .sugg .paire{font-family:Georgia,serif;color:var(--nuit);min-width:88px}
   .sugg .motif{flex:1;color:#4A5561;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sugg .btn{padding:2px 8px;font-size:12px}
@@ -273,7 +276,7 @@
         <div><i style="background:#A01040"></i>Unité foncière retenue</div>
         <div><i style="background:#1F7A4D"></i>Parcelles de la société à proximité</div>
         <div><i style="background:#8C97A3"></i>Autres parcelles de la société</div>
-        <div><i style="background:#FF982D"></i>Rapprochement survolé</div>
+        <div><i style="background:#FF982D"></i>Rapprochement examiné</div>
       </div>
     </section>
   </main>
@@ -373,6 +376,7 @@ const etat = {
   sansGeometrie: [],     // références au relevé mais absentes du plan (REDPAR)
   zoomSur: null,         // groupe sur lequel caler la carte au prochain rendu
   suggestions: [],       // rapprochements proposés {a, b, distance, motifs}
+  suggActive: null,      // clé du rapprochement épinglé (cliqué) : ses deux groupes restent allumés et la carte se cale dessus
   ignores: new Set(),    // paires écartées par l'utilisateur (clé stable par parcelles)
   dossier: null,         // {siren, denomination, millesime} quand le travail est persisté dans Neon
   persist: {actif:false, minuteur:null, enCours:false, quoi:null, detail:null}
@@ -816,6 +820,19 @@ function dessiner(){
     dessiner.cadre = true;
   }
 
+  // Rapprochement épinglé : la carte se cale sur les deux groupes ensemble
+  if(etat.zoomSurGroupes){
+    const b = L.latLngBounds([]);
+    etat.zoomSurGroupes.forEach(n => {
+      const g = etat.groupes.find(x => x.num === n); if(!g) return;
+      g.membres.forEach(i => etat.parcelles[i].anneaux[0].forEach(pt => {
+        const c = deprojeter(pt[0], pt[1], etat.lat0); b.extend([c[1], c[0]]);
+      }));
+    });
+    if(b.isValid()) carte.fitBounds(b.pad(0.6), {maxZoom: 19});
+    etat.zoomSurGroupes = null;
+  }
+
   // Ouverture d'un groupe : la carte se cale dessus, avec assez de marge pour
   // voir le voisinage vert autour
   if(etat.zoomSur != null && groupeOuvert){
@@ -869,24 +886,40 @@ function rendre(){
         + (etat.suggestions.length > 1 ? "s proposés" : " proposé")
         + '<span class="aide">à valider un par un</span></div><ul>';
       etat.suggestions.slice(0, MAX).forEach((sg, k) => {
-        html += '<li data-k="' + k + '"><span class="paire">G' + sg.a + ' + G' + sg.b + '</span>'
+        html += '<li data-k="' + k + '" tabindex="0"' + (etat.suggActive === sg.cle ? ' class="active"' : '') + '><span class="paire">G' + sg.a + ' + G' + sg.b + '</span>'
           + '<span class="motif">' + sg.motifs.join(" · ") + '</span>'
           + '<button class="btn plein" data-act="fusionner">Fusionner</button>'
           + '<button class="btn" data-act="ignorer">Ignorer</button></li>';
       });
       html += '</ul>' + (etat.suggestions.length > MAX ? '<div class="plus">… et ' + (etat.suggestions.length - MAX) + ' autres, visibles après traitement des premiers</div>' : '');
       bloc.innerHTML = html;
+      const epingler = (sg) => {
+        etat.suggActive = sg.cle;
+        etat.surlignes = new Set([sg.a, sg.b]);
+        etat.zoomSurGroupes = [sg.a, sg.b];
+        bloc.querySelectorAll("li").forEach(x => x.classList.toggle("active", etat.suggestions[Number(x.dataset.k)]?.cle === sg.cle));
+        dessiner();
+      };
       bloc.addEventListener("click", e => {
-        const btn = e.target.closest("button[data-act]"); if(!btn) return;
-        const li = btn.closest("li"); const sg = etat.suggestions[Number(li.dataset.k)]; if(!sg) return;
+        const li = e.target.closest("li"); if(!li) return;
+        const sg = etat.suggestions[Number(li.dataset.k)]; if(!sg) return;
+        const btn = e.target.closest("button[data-act]");
+        if(!btn){ epingler(sg); return; }                      // clic sur la ligne : on regarde avant de décider
+        etat.suggActive = null; etat.surlignes = null;
         if(btn.dataset.act === "fusionner"){ fusionnerNums([sg.a, sg.b]); proposerRapprochements(); rendre(); }
         else { etat.ignores.add(sg.cle); marquerModifie("rapprochement-ecarte", {groupes:[sg.a, sg.b]}); proposerRapprochements(); rendre(); }
       });
+      bloc.addEventListener("keydown", e => {
+        if(e.key !== "Enter" && e.key !== " ") return;
+        const li = e.target.closest("li"); if(!li || e.target.tagName === "BUTTON") return;
+        e.preventDefault(); const sg = etat.suggestions[Number(li.dataset.k)]; if(sg) epingler(sg);
+      });
       bloc.addEventListener("mouseover", e => {
+        if(etat.suggActive) return;                            // un rapprochement épinglé ne bouge pas au survol
         const li = e.target.closest("li"); if(!li) return;
         const sg = etat.suggestions[Number(li.dataset.k)]; if(sg) surlignerGroupes([sg.a, sg.b]);
       });
-      bloc.addEventListener("mouseleave", () => surlignerGroupes(null));
+      bloc.addEventListener("mouseleave", () => { if(!etat.suggActive) surlignerGroupes(null); });
       liste.appendChild(bloc);
     }
 
@@ -945,6 +978,7 @@ function rendre(){
         }
         etat.ouvert = (etat.ouvert === g.num) ? null : g.num;
         etat.zoomSur = etat.ouvert;      // la carte se cale sur le groupe qu'on ouvre
+        etat.suggActive = null; etat.surlignes = null;
         rendre();
       });
       bloc.appendChild(tete);
