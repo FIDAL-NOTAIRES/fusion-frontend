@@ -153,6 +153,39 @@
     color:var(--canard);background:#F4F8F9;border-bottom:1px solid var(--trait)
   }
 
+  /* ---- Drive et dépôt ---- */
+  .btn-drive{
+    margin-left:10px;border:1px solid var(--cyan);background:transparent;color:var(--cyan);
+    padding:3px 10px;border-radius:3px;font-size:12px
+  }
+  .btn-drive:hover{background:var(--cyan);color:var(--nuit)}
+  .btn-drive.ok{border-color:#7FD8A0;color:#7FD8A0}
+  .btn-drive.alerte{border-color:var(--orange);color:var(--orange)}
+  .depot{padding:6px 14px 10px 30px;background:#FBFCFD}
+  .depot-zone{
+    border:1.5px dashed var(--canard);border-radius:4px;padding:10px;text-align:center;
+    color:var(--canard);background:#F6FAFB;font-size:12.5px
+  }
+  .depot-zone.actif{background:#E6F3F4;border-color:var(--nuit)}
+  .depot-zone.inactif{border-color:var(--trait);color:var(--gris);background:#F7F8F9}
+  .depot-zone p{margin:0 0 6px}
+  .depot-etat{font-size:11.5px;color:var(--gris);margin-top:5px;min-height:1em}
+  .pieces{list-style:none;margin:8px 0 0;padding:0}
+  .pieces li{
+    display:grid;grid-template-columns:1fr auto auto;grid-template-areas:"nom type date" "orig tag tag";
+    column-gap:8px;row-gap:2px;align-items:center;padding:5px 8px;border:1px solid var(--trait);border-radius:3px;margin-top:4px;background:#fff;font-size:12px
+  }
+  .pieces li.aq{border-color:var(--orange);background:#FFF8EE}
+  .pieces li.scan{border-left:3px solid var(--jaune-texte)}
+  .pieces .nom{grid-area:nom;font-variant-numeric:tabular-nums;color:var(--nuit);text-decoration:none;font-weight:600}
+  .pieces .nom:hover{color:var(--canard);text-decoration:underline}
+  .pieces .orig{grid-area:orig;color:var(--gris);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pieces select{grid-area:type;font-size:11.5px;padding:2px 4px;border:1px solid var(--trait);border-radius:3px;max-width:190px}
+  .pieces input[type=date]{grid-area:date;font-size:11.5px;padding:2px 4px;border:1px solid var(--trait);border-radius:3px}
+  .pieces input.adate{border-color:var(--orange);background:#FFF8EE}
+  .pieces .tag{grid-area:tag;font-size:11px;color:#7A5A00;justify-self:end}
+  .pieces .tag.aq{color:var(--carmin)}
+
   /* ---- pied ---- */
   .pied{padding:10px 14px;border-top:1px solid var(--trait);background:#FAFBFC;display:flex;gap:8px;flex-wrap:wrap}
 
@@ -214,6 +247,7 @@
       <span>Groupes <b id="c-groupes">0</b></span>
       <span>Surface <b id="c-surface">0 ha</b></span>
       <span id="persist" class="persist"></span>
+      <button type="button" id="btn-drive" class="btn-drive">Connecter le Drive</button>
     </div>
   </header>
 
@@ -274,6 +308,7 @@
         <button class="btn plein" id="btn-fusionner" disabled>Fusionner les groupes cochés</button>
         <button class="btn" id="btn-recalculer" disabled>Recalculer</button>
         <button class="btn" id="btn-export" disabled>Exporter les groupes</button>
+        <button class="btn plein" id="btn-arbo" disabled title="Pose la numérotation définitive (SPF, commune, section) puis crée le dossier Drive de la société, un dossier par groupe et ses quatre sous-dossiers">Numéroter et créer le Drive</button>
       </div>
 
     </section>
@@ -292,6 +327,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script defer src="https://attente.vercel.app/attente.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 "use strict";
 
@@ -387,6 +423,9 @@ const etat = {
   suggActive: null,      // clé du rapprochement épinglé (cliqué) : ses deux groupes restent allumés et la carte se cale dessus
   ignores: new Set(),    // paires écartées par l'utilisateur (clé stable par parcelles)
   dossier: null,         // {siren, denomination, millesime} quand le travail est persisté dans Neon
+  documents: [],         // pièces déposées (miroir de fusion_document)
+  driveSociete: null,    // {racine, societe, nom, cree_le}
+  numerotationFaite: false,
   persist: {actif:false, minuteur:null, enCours:false, quoi:null, detail:null}
 };
 
@@ -792,7 +831,8 @@ function fusionnerNums(nums){
   const position = etat.groupes.indexOf(cibles[0]);
   const num = Math.min(...cibles.map(g => g.num));
   etat.groupes = etat.groupes.filter(g => !nums.includes(g.num));
-  const nouveau = {num, membres, coche:false, manuel:true};
+  const conserve = cibles.find(g => g.num === num);
+  const nouveau = {num, membres, coche:false, manuel:true, drive: (conserve && conserve.drive) || {}};
   etat.groupes.splice(Math.min(position, etat.groupes.length), 0, nouveau);
   etat.ouvert = num;
   etat.zoomSur = num;
@@ -815,6 +855,7 @@ function retirerDuGroupe(numGroupe, indexParcelles){
   g.manuel = true;
   const position = etat.groupes.indexOf(g);
   const nouveaux = composantes(retirees).map(numeroterGroupe);
+  nouveaux.forEach(n => { n.drive = {}; });
   etat.groupes.splice(position + 1, 0, ...nouveaux);
   etat.ouvert = g.num;                  // on reste sur le groupe qu'on est en train d'affiner
   marquerModifie("detachement", {groupe: g.num, parcelles: retirees.map(i => etat.parcelles[i].props.idu || etat.parcelles[i].ref)});
@@ -933,6 +974,436 @@ function basculerParcelle(i){
     etat.ouvert = g.num;
   }
   rendre();
+}
+
+/* ============================================================
+   DÉPÔT DES PIÈCES — Drive, plan de nommage, détection
+   ------------------------------------------------------------
+   Mécanisme repris de TRENTE : le collaborateur se connecte avec son compte
+   Google (projet OAuth « FIDAL - Apps », mode TEST, chaque utilisateur déclaré
+   testeur) et le NAVIGATEUR écrit lui-même dans le Drive. Aucun secret Google
+   côté Vercel ; la base ne garde que l'identifiant Drive, l'empreinte et le
+   nom composé — un seul exemplaire du fichier, celui du Drive.
+
+   Plan de nommage : celui de MARTEAU (fiche OUT.IA.2.1.1 v2), à l'identique :
+   GROUPE (4 chiffres) _ CODE (3 chiffres) _ PIÈCE _ DATE (AAAAMMJJ), tiret bas,
+   majuscules, sans accent. Le sous-dossier Drive se déduit du code.
+   ============================================================ */
+
+const OAUTH_CLIENT_ID = "82507767087-kr2q7r67r2m4llj6ftldgr4rc2n24gbu.apps.googleusercontent.com"; // même client que TRENTE
+const OAUTH_SCOPE = "https://www.googleapis.com/auth/drive";   // écriture : créer l'arborescence et déposer sous une racine existante
+const DRIVE_RACINE = "1WlORr95eHC9fVz-Fle4Vrq3QSnCX1anB";        // dossier Drive « FIDAL FUSION » : les dossiers société se créent dessous
+
+// Quatre sous-dossiers par groupe. Les trois premiers sont la structure DATA ROOM ;
+// « Notes de travail » reste interne au cabinet (documents déjà rédigés repris,
+// pièces à qualifier) et sera exclu de toute extraction vers un tiers.
+const TYPES_PIECE = {
+  EHF: {libelle:"État hypothécaire",              code:"051", piece:"EHF", dossier:"État hypothécaire",                cle:"ehf", data_room:true},
+  OP:  {libelle:"Titre de propriété (immédiat)",  code:"021", piece:"OP",  dossier:"Origine de propriété",             cle:"op",  data_room:true},
+  OPA: {libelle:"Titre antérieur (trentenaire)",  code:"022", piece:"OPA", dossier:"Origine de propriété antérieure",  cle:"opa", data_room:true},
+  NDT: {libelle:"Note de travail (déjà rédigé)",  code:"020", piece:"NDT", dossier:"Notes de travail",                 cle:"ndt", data_room:false},
+  AQ:  {libelle:"À qualifier",                    code:"020", piece:"AQ",  dossier:"Notes de travail",                 cle:"ndt", data_room:false}
+};
+const ANS_TRENTENAIRE = 30;
+
+/* ---------- connexion Google ---------- */
+etat.drive = {token:null, expire:0, client:null, courriel:null};
+
+function preparerOAuth(){
+  if(typeof google === "undefined" || !google.accounts){ setTimeout(preparerOAuth, 300); return; }
+  etat.drive.client = google.accounts.oauth2.initTokenClient({
+    client_id: OAUTH_CLIENT_ID, scope: OAUTH_SCOPE,
+    callback: r => {
+      if(r && r.access_token){
+        etat.drive.token = r.access_token;
+        etat.drive.expire = Date.now() + (Number(r.expires_in || 3600) - 60) * 1000;
+        majBoutonDrive("Drive connecté", "ok");
+        rendre();
+      }else{
+        majBoutonDrive("Drive : accès refusé", "alerte");
+      }
+    },
+    error_callback: e => {
+      majBoutonDrive("Drive : échec (" + (e && e.type ? e.type : "inconnu") + ")", "alerte");
+      signaler("Connexion Google impossible. Vérifier que l'origine " + location.origin + " est autorisée sur le client OAuth « FIDAL - Apps ».", true);
+    }
+  });
+}
+function majBoutonDrive(texte, classe){
+  const b = document.getElementById("btn-drive");
+  b.textContent = texte; b.className = "btn-drive" + (classe ? " " + classe : "");
+}
+function driveConnecte(){ return Boolean(etat.drive.token) && Date.now() < etat.drive.expire; }
+function exigerDrive(){
+  if(driveConnecte()) return true;
+  signaler("Connectez d'abord votre Drive (bouton en haut à droite).", true);
+  if(etat.drive.client) etat.drive.client.requestAccessToken();
+  return false;
+}
+
+/* ---------- appels Drive ---------- */
+async function driveFetch(url, options){
+  const o = Object.assign({}, options || {});
+  o.headers = Object.assign({Authorization: "Bearer " + etat.drive.token}, o.headers || {});
+  const r = await fetch(url, o);
+  if(r.status === 401){ etat.drive.token = null; majBoutonDrive("Drive : reconnecter", "alerte"); throw new Error("Session Google expirée — reconnectez le Drive"); }
+  if(!r.ok){
+    let m = "HTTP " + r.status;
+    try{ const j = await r.json(); m = (j.error && j.error.message) || m; }catch(e){}
+    throw new Error("Drive : " + m);
+  }
+  return r;
+}
+async function driveChercherDossier(nom, parent){
+  const q = "name = '" + nom.replace(/'/g, "\\'") + "' and '" + parent + "' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
+  const u = "https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(q) + "&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true&pageSize=5";
+  const j = await (await driveFetch(u)).json();
+  return (j.files && j.files[0]) ? j.files[0].id : null;
+}
+async function driveCreerDossier(nom, parent){
+  const r = await driveFetch("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({name: nom, mimeType: "application/vnd.google-apps.folder", parents:[parent]})
+  });
+  return (await r.json()).id;
+}
+async function driveAssurerDossier(nom, parent){
+  return (await driveChercherDossier(nom, parent)) || (await driveCreerDossier(nom, parent));
+}
+async function driveEnvoyerFichier(fichier, nom, parent){
+  const meta = {name: nom, parents:[parent]};
+  const corps = new FormData();
+  corps.append("metadata", new Blob([JSON.stringify(meta)], {type:"application/json"}));
+  corps.append("file", fichier);
+  const r = await driveFetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink,size", {method:"POST", body: corps});
+  return r.json();
+}
+async function driveRenommerDeplacer(id, nom, ancienParent, nouveauParent){
+  let u = "https://www.googleapis.com/drive/v3/files/" + id + "?supportsAllDrives=true&fields=id,name";
+  if(nouveauParent && nouveauParent !== ancienParent) u += "&addParents=" + nouveauParent + (ancienParent ? "&removeParents=" + ancienParent : "");
+  const r = await driveFetch(u, {method:"PATCH", headers:{"Content-Type":"application/json"}, body: JSON.stringify({name: nom})});
+  return r.json();
+}
+async function driveRenommer(id, nom){ return driveRenommerDeplacer(id, nom, null, null); }
+
+/* ---------- plan de nommage ---------- */
+function sansAccent(t){ return String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
+function numeroGroupe4(n){ return String(n).padStart(4, "0"); }
+function dateAAAAMMJJ(d){
+  if(!(d instanceof Date) || isNaN(d)) return "00000000";
+  return d.getFullYear() + String(d.getMonth()+1).padStart(2,"0") + String(d.getDate()).padStart(2,"0");
+}
+function composerNomPiece(groupe, type, date, extension){
+  const t = TYPES_PIECE[type] || TYPES_PIECE.AQ;
+  return [numeroGroupe4(groupe), t.code, t.piece, dateAAAAMMJJ(date)].join("_") + (extension ? "." + extension.toLowerCase() : "");
+}
+function nomDossierSociete(denomination, date){
+  const d = date instanceof Date ? date : new Date();
+  const iso = d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  const nom = String(denomination || "societe").trim().replace(/[\s'’"`,;:./\\|()\[\]-]+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+  return "fusion_" + nom + "_" + iso;
+}
+function extensionDe(nom){ const m = /\.([a-z0-9]{1,5})$/i.exec(nom || ""); return m ? m[1].toLowerCase() : ""; }
+
+/* ---------- numérotation définitive (SPF → commune → section) ---------- */
+function cleGeographique(g){
+  const membres = [...g.membres].map(i => etat.parcelles[i]);
+  const insee = [...new Set(membres.map(p => p.props.commune).filter(Boolean))].sort();
+  const communes = [...new Set(membres.map(p => p.props.nom_commune).filter(Boolean))].sort();
+  const sections = [...new Set(membres.map(p => p.props.section).filter(Boolean))].sort();
+  const spf = insee.map(spfDe).filter(Boolean).sort()[0] || "~";
+  return [spf, communes[0] || "~", sections.join(" "), String(g.num).padStart(6,"0")].join("|");
+}
+function calculerConcordanceGeographique(){
+  const ordre = etat.groupes.slice().sort((a,b) => cleGeographique(a).localeCompare(cleGeographique(b), "fr"));
+  return ordre.map((g, k) => ({ancien: g.num, nouveau: k+1})).filter(c => c.ancien !== c.nouveau);
+}
+async function numerotationDefinitive(){
+  if(!etat.dossier || !etat.persist.actif){ signaler("Le dossier doit être enregistré avant la numérotation définitive.", true); return false; }
+  const conc = calculerConcordanceGeographique();
+  if(!conc.length){ etat.numerotationFaite = true; return true; }
+  const documentsARenommer = (etat.documents || []).filter(d => conc.some(c => c.ancien === d.groupe));
+  if(documentsARenommer.length && !exigerDrive()) return false;
+  afficherPersist("Renumérotation…");
+  try{
+    await appelDossier({action:"renumeroter", siren: etat.dossier.siren, concordance: conc, ordre: "SPF > commune > section"});
+    const table = new Map(conc.map(c => [c.ancien, c.nouveau]));
+    etat.groupes.forEach(g => { if(table.has(g.num)) g.num = table.get(g.num); });
+    etat.compteurGroupe = etat.groupes.reduce((m,g) => Math.max(m, g.num), 0);
+    // les pièces déjà déposées portent l'ancien numéro : on les renomme sur le Drive
+    for(const doc of documentsARenommer){
+      const nouveau = table.get(doc.groupe);
+      const nom = composerNomPiece(nouveau, doc.type, doc.date_doc ? new Date(doc.date_doc) : null, extensionDe(doc.nom));
+      await driveRenommer(doc.drive_id, nom);
+      doc.groupe = nouveau; doc.nom = nom;
+      await appelDossier({action:"document", siren: etat.dossier.siren, document: doc});
+    }
+    // les identifiants Drive suivent leur groupe : en base la permutation a porté la colonne drive avec le numéro,
+    // à l'écran ils restent attachés à l'objet groupe — rien d'autre à faire
+    etat.numerotationFaite = true;
+    etat.ouvert = null;
+    rendre();
+    afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), "ok");
+    signaler("Numérotation définitive posée : " + conc.length + " groupe" + (conc.length > 1 ? "s renumérotés" : " renuméroté") + ", tableau de concordance au journal.");
+    return true;
+  }catch(e){
+    afficherPersist("Renumérotation non aboutie — " + e.message, "alerte");
+    return false;
+  }
+}
+
+/* ---------- arborescence Drive ---------- */
+async function assurerDriveSociete(){
+  if(!exigerDrive()) return null;
+  if(etat.driveSociete && etat.driveSociete.societe) return etat.driveSociete.societe;
+  const nom = (etat.driveSociete && etat.driveSociete.nom) || nomDossierSociete(etat.dossier.denomination, new Date());
+  const id = await driveAssurerDossier(nom, DRIVE_RACINE);
+  etat.driveSociete = {racine: DRIVE_RACINE, societe: id, nom, cree_le: new Date().toISOString()};
+  await appelDossier({action:"drive", siren: etat.dossier.siren, dossier: etat.driveSociete});
+  return id;
+}
+async function assurerDriveGroupe(g){
+  const societe = await assurerDriveSociete();
+  if(!societe) return null;
+  g.drive = g.drive || {};
+  if(!g.drive.dossier) g.drive.dossier = await driveAssurerDossier(numeroGroupe4(g.num), societe);
+  const manquants = [];
+  for(const t of Object.values(TYPES_PIECE)){
+    if(g.drive[t.cle]) continue;
+    g.drive[t.cle] = await driveAssurerDossier(t.dossier, g.drive.dossier);
+    manquants.push(t.cle);
+  }
+  await appelDossier({action:"drive", siren: etat.dossier.siren, groupes:[{numero: g.num, drive: g.drive}]});
+  return g.drive;
+}
+async function creerArborescenceDrive(){
+  if(!etat.dossier || !etat.persist.actif){ signaler("Le dossier doit être enregistré avant de créer son Drive.", true); return; }
+  if(!exigerDrive()) return;
+  if(!etat.numerotationFaite){
+    if(!confirm("Créer l'arborescence pose d'abord la numérotation définitive des groupes (service de publicité foncière, puis commune, puis section). Les numéros actuels changent. Continuer ?")) return;
+    if(!(await numerotationDefinitive())) return;
+  }
+  const bouton = document.getElementById("btn-arbo"); bouton.disabled = true;
+  const total = etat.groupes.length;
+  const sablier = {texte:"Dossier société…"};
+  let attenteOuverte = false;
+  const relais = setTimeout(() => { if(window.ATTENTE){ attenteOuverte = true; window.ATTENTE.demarrer({titre:"FUSION", sousTitre:"Création de l'arborescence Drive — " + (etat.dossier.denomination || ""), source: () => sablier.texte}); } }, ATTENTE_SEUIL_MS);
+  try{
+    await assurerDriveSociete();
+    let faits = 0;
+    const file = etat.groupes.slice();
+    async function ouvrier(){
+      while(file.length){
+        const g = file.shift();
+        await assurerDriveGroupe(g);
+        faits++; sablier.texte = "Arborescence : " + faits + " sur " + total + " groupes"; afficherPersist(sablier.texte);
+      }
+    }
+    await Promise.all(Array.from({length: 4}, ouvrier));
+    clearTimeout(relais); if(attenteOuverte && window.ATTENTE) window.ATTENTE.terminer();
+    afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), "ok");
+    signaler("Arborescence Drive créée : " + total + " groupes, quatre sous-dossiers chacun.");
+    rendre();
+  }catch(e){
+    clearTimeout(relais); if(attenteOuverte && window.ATTENTE) window.ATTENTE.echec(e.message);
+    afficherPersist("Arborescence incomplète — " + e.message, "alerte");
+    signaler(e.message, true);
+  }finally{ bouton.disabled = false; }
+}
+
+/* ---------- détection du type et de la date ---------- */
+let pdfjsPromesse = null;
+async function chargerPdfjs(){
+  if(!pdfjsPromesse){
+    pdfjsPromesse = import("https://unpkg.com/pdfjs-dist@4.6.82/build/pdf.min.mjs").then(m => {
+      m.GlobalWorkerOptions.workerSrc = "https://unpkg.com/pdfjs-dist@4.6.82/build/pdf.worker.min.mjs";
+      return m;
+    });
+  }
+  return pdfjsPromesse;
+}
+async function textePdf(fichier, maxPages){
+  try{
+    const pdfjs = await chargerPdfjs();
+    const doc = await pdfjs.getDocument({data: await fichier.arrayBuffer()}).promise;
+    const n = Math.min(doc.numPages, maxPages || 3);
+    let texte = "";
+    for(let i = 1; i <= n; i++){
+      const page = await doc.getPage(i);
+      const c = await page.getTextContent();
+      texte += c.items.map(x => x.str).join(" ") + "\n";
+    }
+    return {texte, pages: doc.numPages};
+  }catch(e){ return {texte:"", pages:0, erreur: e.message}; }
+}
+const MOIS = {janvier:1,fevrier:2,mars:3,avril:4,mai:5,juin:6,juillet:7,aout:8,septembre:9,octobre:10,novembre:11,decembre:12};
+function datesDans(texte){
+  const t = sansAccent(texte).toLowerCase();
+  const out = [];
+  let m;
+  const re1 = /(\b[0-3]?\d)[\/.\-]([01]?\d)[\/.\-]((?:19|20)\d\d)\b/g;
+  while((m = re1.exec(t))){ const d = new Date(+m[3], +m[2]-1, +m[1]); if(!isNaN(d) && d.getFullYear() >= 1900) out.push({d, i: m.index}); }
+  const re2 = /\b(1er|[0-3]?\d)\s+(janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre)\s+((?:19|20)\d\d)\b/g;
+  while((m = re2.exec(t))){ const j = m[1] === "1er" ? 1 : +m[1]; const d = new Date(+m[3], MOIS[m[2]]-1, j); if(!isNaN(d)) out.push({d, i: m.index}); }
+  return out;
+}
+function detecterPiece(nomFichier, texte){
+  const n = sansAccent(nomFichier).toLowerCase();
+  const t = sansAccent(texte || "").toLowerCase();
+  const ext = extensionDe(nomFichier);
+  const score = {EHF:0, OP:0, NDT:0};
+  // état hypothécaire
+  if(/etat hypothecaire|releve des formalites|relevé des formalites|service de la publicite fonciere|publicite fonciere|formalites publiees|fichier immobilier|certificat de depot|copie de fiche|hypotheques|inscription/.test(t)) score.EHF += 3;
+  if(/ehf|etat.?hyp|hypoth|spf|formalit/.test(n)) score.EHF += 2;
+  // titre
+  if(/par.devant|maitre|notaire|a recu le present acte|acte authentique|vente|acquisition|apport|donation|adjudication|echange|licitation|attestation.*propriete|origine de propriete/.test(t)) score.OP += 2;
+  if(/l'an .{1,30} le|comparu|ont comparu|soussigne/.test(t)) score.OP += 1;
+  if(/titre|acte|vente|acqui|donation|apport|op\b|opa\b/.test(n)) score.OP += 1;
+  // note de travail déjà rédigée
+  if(/^(docx?|rtf|odt)$/.test(ext)) score.NDT += 3;
+  if(/designation|origine de propriete|effet relatif/.test(t) && !/notaire|par devant/.test(t)) score.NDT += 2;
+  if(/note|designation|origine|fusion|travail/.test(n)) score.NDT += 1;
+  const meilleur = Object.entries(score).sort((a,b) => b[1]-a[1])[0];
+  if(!meilleur[1]) return {type:"AQ", confiance:0};
+  return {type: meilleur[0], confiance: meilleur[1]};
+}
+function dateProbable(type, texte){
+  const ds = datesDans(texte);
+  if(!ds.length) return null;
+  const t = sansAccent(texte).toLowerCase();
+  if(type === "EHF"){
+    // la date de délivrance / d'arrêté de l'état prime sur les dates des formalités
+    const k = t.search(/delivre le|delivrance|arrete au|situation au|etabli le|certifie le|date de l'etat|edite le/);
+    if(k >= 0){ const proche = ds.filter(x => Math.abs(x.i - k) < 160).sort((a,b) => Math.abs(a.i-k) - Math.abs(b.i-k))[0]; if(proche) return proche.d; }
+    return ds.slice().sort((a,b) => b.d - a.d)[0].d;          // sinon la plus récente
+  }
+  if(type === "OP" || type === "OPA"){
+    const k = t.search(/l'an |le present acte|recu le|en date du|a la date du/);
+    if(k >= 0){ const proche = ds.filter(x => x.i >= k && x.i - k < 200).sort((a,b) => a.i-b.i)[0]; if(proche) return proche.d; }
+    return ds[0].d;                                            // sinon la première du corps
+  }
+  return ds[0].d;
+}
+async function analyserFichier(fichier){
+  const ext = extensionDe(fichier.name);
+  let texte = "", pages = 0, couche = null;
+  if(ext === "pdf"){ const r = await textePdf(fichier, 3); texte = r.texte; pages = r.pages; couche = r.texte.replace(/\s+/g, "").length > 80; }
+  const det = detecterPiece(fichier.name, texte);
+  let type = det.type;
+  let date = texte ? dateProbable(type, texte) : null;
+  if(type === "OP" && date && (Date.now() - date.getTime()) > ANS_TRENTENAIRE * 365.25 * 86400000) type = "OPA";
+  const empreinte = await empreinteSha256(fichier);
+  return {type, confiance: det.confiance, date, date_sure: Boolean(date), couche_texte: couche, pages, empreinte, extension: ext};
+}
+async function empreinteSha256(fichier){
+  try{
+    const h = await crypto.subtle.digest("SHA-256", await fichier.arrayBuffer());
+    return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2,"0")).join("");
+  }catch(e){ return null; }
+}
+
+/* ---------- dépôt dans un groupe ---------- */
+async function deposerFichiers(g, fichiers){
+  if(!etat.dossier || !etat.persist.actif){ signaler("Le dossier doit être enregistré pour déposer des pièces.", true); return; }
+  if(!exigerDrive()) return;
+  if(!etat.numerotationFaite && !confirm("La numérotation définitive n'est pas posée : les pièces porteront le numéro provisoire du groupe et seront renommées à la numérotation. Déposer quand même ?")) return;
+  const liste = [...fichiers];
+  const zone = document.getElementById("depot-etat-" + g.num);
+  const dire = t => { if(zone) zone.textContent = t; afficherPersist(t); };
+  try{
+    dire("Préparation du dossier Drive du groupe…");
+    await assurerDriveGroupe(g);
+    let k = 0;
+    for(const f of liste){
+      k++;
+      dire("Analyse " + k + "/" + liste.length + " : " + f.name);
+      const a = await analyserFichier(f);
+      const t = TYPES_PIECE[a.type] || TYPES_PIECE.AQ;
+      const nom = composerNomPiece(g.num, a.type, a.date, a.extension);
+      dire("Envoi " + k + "/" + liste.length + " : " + nom);
+      const parent = g.drive[t.cle];
+      const envoye = await driveEnvoyerFichier(f, nom, parent);
+      const doc = {
+        drive_id: envoye.id, drive_parent: parent, groupe: g.num, nom, nom_origine: f.name, type: a.type, code: t.code, piece: t.piece,
+        date_doc: a.date ? a.date.toISOString().slice(0,10) : null, date_sure: a.date_sure, empreinte: a.empreinte, taille: f.size, mime: f.type || null,
+        couche_texte: a.couche_texte, statut: a.type === "AQ" ? "a_qualifier" : (a.couche_texte === false ? "scan" : "depose")
+      };
+      const r = await appelDossier({action:"document", siren: etat.dossier.siren, document: doc});
+      doc.id = r.id; doc.depose_le = new Date().toISOString();
+      etat.documents = (etat.documents || []).filter(x => x.drive_id !== doc.drive_id).concat([doc]);
+      rendre();
+    }
+    dire("");
+    afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), "ok");
+    signaler(liste.length + " pièce" + (liste.length > 1 ? "s déposées" : " déposée") + " dans le groupe G" + g.num + ".");
+  }catch(e){
+    dire("");
+    afficherPersist("Dépôt interrompu — " + e.message, "alerte");
+    signaler(e.message, true);
+  }
+}
+async function requalifierDocument(doc, nouveauType, nouvelleDate){
+  if(!exigerDrive()) return;
+  const g = etat.groupes.find(x => x.num === doc.groupe); if(!g) return;
+  try{
+    await assurerDriveGroupe(g);
+    const t = TYPES_PIECE[nouveauType] || TYPES_PIECE.AQ;
+    const date = nouvelleDate ? new Date(nouvelleDate) : (doc.date_doc ? new Date(doc.date_doc) : null);
+    const nom = composerNomPiece(doc.groupe, nouveauType, date, extensionDe(doc.nom));
+    const parent = g.drive[t.cle];
+    await driveRenommerDeplacer(doc.drive_id, nom, doc.drive_parent, parent);
+    Object.assign(doc, {nom, type: nouveauType, code: t.code, piece: t.piece, drive_parent: parent,
+      date_doc: date ? date.toISOString().slice(0,10) : null, date_sure: Boolean(nouvelleDate) || doc.date_sure,
+      statut: nouveauType === "AQ" ? "a_qualifier" : (doc.couche_texte === false ? "scan" : "depose")});
+    await appelDossier({action:"document", siren: etat.dossier.siren, document: doc});
+    rendre();
+    afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), "ok");
+  }catch(e){ signaler(e.message, true); }
+}
+
+/* ---------- rendu de la zone de dépôt d'un groupe ---------- */
+function rendreDepot(g){
+  const bloc = document.createElement("div");
+  bloc.className = "depot";
+  const docs = (etat.documents || []).filter(d => d.groupe === g.num).sort((a,b) => a.nom.localeCompare(b.nom));
+  const persistant = Boolean(etat.dossier && etat.persist.actif);
+  let html = '<div class="depot-zone' + (persistant ? "" : " inactif") + '" tabindex="0">'
+    + '<p>' + (persistant ? "Déposez ici les titres et états hypothécaires du groupe" : "Enregistrez le dossier pour déposer des pièces") + '</p>'
+    + '<button class="btn" type="button" data-act="choisir"' + (persistant ? "" : " disabled") + '>Choisir des fichiers</button>'
+    + '<input type="file" multiple hidden accept=".pdf,.doc,.docx,.rtf,.odt,.jpg,.jpeg,.png,.tif,.tiff">'
+    + '<div class="depot-etat" id="depot-etat-' + g.num + '"></div></div>';
+  if(docs.length){
+    html += '<ul class="pieces">';
+    docs.forEach(d => {
+      const t = TYPES_PIECE[d.type] || TYPES_PIECE.AQ;
+      const classe = d.type === "AQ" ? "aq" : (d.statut === "scan" ? "scan" : "");
+      html += '<li class="' + classe + '" data-id="' + d.drive_id + '">'
+        + '<a class="nom" href="https://drive.google.com/file/d/' + d.drive_id + '/view" target="_blank" rel="noopener" title="Ouvrir dans le Drive">' + echap(d.nom) + '</a>'
+        + '<span class="orig" title="Nom d\u2019origine">' + echap(d.nom_origine || "") + '</span>'
+        + '<select data-act="type" title="Type de pièce">' + Object.entries(TYPES_PIECE).map(([k,v]) => '<option value="' + k + '"' + (k === d.type ? " selected" : "") + '>' + echap(v.libelle) + '</option>').join("") + '</select>'
+        + '<input type="date" data-act="date" value="' + (d.date_doc || "") + '" title="' + (d.date_sure ? "Date lue dans la pièce" : "Date à confirmer") + '" class="' + (d.date_sure ? "" : "adate") + '">'
+        + (d.statut === "scan" ? '<span class="tag">scan — passe API</span>' : "")
+        + (d.type === "AQ" ? '<span class="tag aq">à qualifier</span>' : "")
+        + '</li>';
+    });
+    html += '</ul>';
+  }
+  bloc.innerHTML = html;
+
+  const zone = bloc.querySelector(".depot-zone");
+  const champ = bloc.querySelector('input[type="file"]');
+  bloc.querySelector('[data-act="choisir"]').addEventListener("click", e => { e.stopPropagation(); champ.click(); });
+  champ.addEventListener("change", () => { if(champ.files.length) deposerFichiers(g, champ.files); champ.value = ""; });
+  ["dragenter","dragover"].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zone.classList.add("actif"); }));
+  ["dragleave","drop"].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zone.classList.remove("actif"); }));
+  zone.addEventListener("drop", e => { if(persistant && e.dataTransfer.files.length) deposerFichiers(g, e.dataTransfer.files); });
+  bloc.querySelectorAll('select[data-act="type"]').forEach(sel => sel.addEventListener("change", e => {
+    const doc = (etat.documents || []).find(x => x.drive_id === e.target.closest("li").dataset.id); if(doc) requalifierDocument(doc, e.target.value, null);
+  }));
+  bloc.querySelectorAll('input[data-act="date"]').forEach(inp => inp.addEventListener("change", e => {
+    const doc = (etat.documents || []).find(x => x.drive_id === e.target.closest("li").dataset.id); if(doc && e.target.value) requalifierDocument(doc, doc.type, e.target.value);
+  }));
+  return bloc;
 }
 
 /* ---------- rendu du panneau ---------- */
@@ -1074,7 +1545,7 @@ function rendre(){
           ul.appendChild(li);
         });
         bloc.appendChild(ul);
-
+        bloc.appendChild(rendreDepot(g));
       }
       liste.appendChild(bloc);
     });
@@ -1103,6 +1574,7 @@ function majBoutons(){
   document.getElementById("btn-export").disabled = !charge;
   document.getElementById("btn-fusionner").disabled =
     etat.groupes.filter(g => g.coche).length < 2;
+  document.getElementById("btn-arbo").disabled = !(charge && etat.dossier && etat.persist.actif);
 }
 
 let minuteurMessage;
@@ -1126,6 +1598,7 @@ function traiterTexte(texte){
     chargerGeoJSON(objet);
     dessiner.cadre = false;
     etat.dossier = null; etat.persist.actif = false; etat.ignores = new Set();
+    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false;
     afficherPersist("Jeu local — non enregistré");
     regrouperAutomatiquement();
     rendre();
@@ -1230,7 +1703,11 @@ function ouvrirDepuisBase(d){
     parNumero.get(p.groupe).add(i);
   });
   const manuels = new Set(d.groupes.filter(g => g.manuel).map(g => g.numero));
-  etat.groupes = [...parNumero.entries()].sort((a,b) => a[0]-b[0]).map(([num, membres]) => ({num, membres, coche:false, manuel: manuels.has(num)}));
+  const driveParNumero = new Map(d.groupes.map(g => [g.numero, g.drive || {}]));
+  etat.groupes = [...parNumero.entries()].sort((a,b) => a[0]-b[0]).map(([num, membres]) => ({num, membres, coche:false, manuel: manuels.has(num), drive: driveParNumero.get(num) || {}}));
+  etat.documents = (d.documents || []).map(x => Object.assign({}, x));
+  etat.driveSociete = (d.dossier.drive && d.dossier.drive.societe) ? d.dossier.drive : null;
+  etat.numerotationFaite = Boolean(d.dossier.etat && d.dossier.etat.numerotation_definitive);
   etat.compteurGroupe = etat.groupes.reduce((m,g) => Math.max(m, g.num), 0);
   // parcelles orphelines (sans groupe en base) : un groupe chacune, plutôt que de les perdre
   const groupees = new Set(); etat.groupes.forEach(g => g.membres.forEach(i => groupees.add(i)));
@@ -1463,6 +1940,8 @@ async function chercherParcelles(siren, libelle, forcer){
     etat.ouvert = null;                 // vue d'ensemble d'abord : les groupes repliés
     etat.sansGeometrie = sansGeometrie;
     etat.dossier = {siren, denomination: (d1.societe && d1.societe.denomination) || libelle || null, millesime: d1.millesime || null};
+    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false;
+    etat.groupes.forEach(g => { g.drive = {}; });
     rendre();
     fermer();
     sauverInitial().then(listerDossiers);
@@ -1566,6 +2045,12 @@ function brancher(){
   });
 
   document.getElementById("btn-export").addEventListener("click", exporter);
+  document.getElementById("btn-arbo").addEventListener("click", creerArborescenceDrive);
+  document.getElementById("btn-drive").addEventListener("click", () => {
+    if(!etat.drive.client){ signaler("Le client Google n'est pas encore chargé, réessayez dans une seconde.", true); return; }
+    etat.drive.client.requestAccessToken();
+  });
+  preparerOAuth();
 }
 
 function exporter(){
