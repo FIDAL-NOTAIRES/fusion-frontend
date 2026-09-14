@@ -144,6 +144,8 @@
   .sugg .paire{grid-area:paire;font-family:Georgia,serif;color:var(--nuit)}
   .sugg .motif{grid-area:motif;color:#4A5561;font-size:12px;line-height:1.35}
   .sugg .motif .voie{color:var(--nuit)}
+  .sugg .extra{color:var(--orange);font-weight:600}
+  .sugg .aide-carte{display:block;font-family:"Segoe UI",system-ui,sans-serif;font-size:11px;color:var(--gris);font-style:italic}
   .sugg button[data-act="fusionner"]{grid-area:fus}
   .sugg button[data-act="ignorer"]{grid-area:ign}
   .sugg .btn{padding:2px 8px;font-size:12px}
@@ -421,6 +423,7 @@ const etat = {
   zoomSur: null,         // groupe sur lequel caler la carte au prochain rendu
   suggestions: [],       // rapprochements proposés {a, b, distance, motifs}
   suggActive: null,      // clé du rapprochement épinglé (cliqué) : ses deux groupes restent allumés et la carte se cale dessus
+  suggExtras: new Set(), // groupes ajoutés au rapprochement épinglé par clic sur la carte
   ignores: new Set(),    // paires écartées par l'utilisateur (clé stable par parcelles)
   dossier: null,         // {siren, denomination, millesime} quand le travail est persisté dans Neon
   documents: [],         // pièces déposées (miroir de fusion_document)
@@ -967,6 +970,18 @@ function distanceBoites(a, b){
 function basculerParcelle(i){
   const g = etat.groupes.find(x => x.membres.has(i));
   if(!g) return;
+  // Rapprochement épinglé : le clic ajoute le groupe de la parcelle à la fusion proposée (ou le retire s'il y était déjà).
+  // L'unité de fusion reste le groupe : si la parcelle appartient à un groupe de plusieurs parcelles, il vient en entier.
+  if(etat.suggActive){
+    const sg = etat.suggestions.find(x => x.cle === etat.suggActive);
+    if(sg && g.num !== sg.a && g.num !== sg.b){
+      if(etat.suggExtras.has(g.num)) etat.suggExtras.delete(g.num); else etat.suggExtras.add(g.num);
+      etat.surlignes = new Set([sg.a, sg.b, ...etat.suggExtras]);
+      rendre();
+      return;
+    }
+    if(sg) return;   // clic sur l'un des deux groupes de base : rien à faire
+  }
   if(g.num === etat.ouvert){
     if(g.membres.size === 1){ signaler("Ce groupe ne compte qu'une parcelle : rien à détacher."); return; }
     retirerDuGroupe(g.num, [i]);
@@ -1428,15 +1443,20 @@ function rendre(){
         + (etat.suggestions.length > 1 ? "s proposés" : " proposé")
         + '<span class="aide">à valider un par un</span></div><ul>';
       etat.suggestions.slice(0, MAX).forEach((sg, k) => {
-        html += '<li data-k="' + k + '" tabindex="0"' + (etat.suggActive === sg.cle ? ' class="active"' : '') + '><span class="paire">G' + sg.a + ' + G' + sg.b + '</span>'
+        const actif = etat.suggActive === sg.cle;
+        const extras = actif ? [...etat.suggExtras] : [];
+        html += '<li data-k="' + k + '" tabindex="0"' + (actif ? ' class="active"' : '') + '><span class="paire">G' + sg.a + ' + G' + sg.b
+          + extras.map(n => ' <span class="extra">+ G' + n + '</span>').join("")
+          + (actif ? '<span class="aide-carte">cliquez une parcelle sur la carte pour l\'ajouter</span>' : "") + '</span>'
           + '<span class="motif">' + sg.motifs.map(m => m.startsWith("même voie : ") ? 'même voie : <span class="voie">' + echap(m.slice(12)) + '</span>' : echap(m)).join(" · ") + '</span>'
-          + '<button class="btn plein" data-act="fusionner">Fusionner</button>'
+          + '<button class="btn plein" data-act="fusionner">Fusionner' + (extras.length ? " (" + (2 + extras.length) + ")" : "") + '</button>'
           + '<button class="btn" data-act="ignorer">Ignorer</button></li>';
       });
       html += '</ul>' + (etat.suggestions.length > MAX ? '<div class="plus">… et ' + (etat.suggestions.length - MAX) + ' autres, visibles après traitement des premiers</div>' : '');
       bloc.innerHTML = html;
       const epingler = (sg) => {
         etat.suggActive = sg.cle;
+        etat.suggExtras = new Set();
         etat.surlignes = new Set([sg.a, sg.b]);
         etat.zoomSurGroupes = [sg.a, sg.b];
         bloc.querySelectorAll("li").forEach(x => x.classList.toggle("active", etat.suggestions[Number(x.dataset.k)]?.cle === sg.cle));
@@ -1446,9 +1466,10 @@ function rendre(){
         const li = e.target.closest("li"); if(!li) return;
         const sg = etat.suggestions[Number(li.dataset.k)]; if(!sg) return;
         const btn = e.target.closest("button[data-act]");
-        if(!btn){ epingler(sg); return; }                      // clic sur la ligne : on regarde avant de décider
-        etat.suggActive = null; etat.surlignes = null;
-        if(btn.dataset.act === "fusionner"){ fusionnerNums([sg.a, sg.b]); proposerRapprochements(); rendre(); }
+        if(!btn){ if(etat.suggActive !== sg.cle) epingler(sg); return; }   // clic sur la ligne : on regarde avant de décider
+        const extras = etat.suggActive === sg.cle ? [...etat.suggExtras] : [];
+        etat.suggActive = null; etat.surlignes = null; etat.suggExtras = new Set();
+        if(btn.dataset.act === "fusionner"){ fusionnerNums([sg.a, sg.b, ...extras]); proposerRapprochements(); rendre(); }
         else { etat.ignores.add(sg.cle); marquerModifie("rapprochement-ecarte", {groupes:[sg.a, sg.b]}); proposerRapprochements(); rendre(); }
       });
       bloc.addEventListener("keydown", e => {
@@ -1520,7 +1541,7 @@ function rendre(){
         }
         etat.ouvert = (etat.ouvert === g.num) ? null : g.num;
         etat.zoomSur = etat.ouvert;      // la carte se cale sur le groupe qu'on ouvre
-        etat.suggActive = null; etat.surlignes = null;
+        etat.suggActive = null; etat.surlignes = null; etat.suggExtras = new Set();
         rendre();
       });
       bloc.appendChild(tete);
