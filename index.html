@@ -839,7 +839,7 @@ function proposerRapprochements(){
   // relie, quelle que soit la distance. Ces paires passent en tête.
   const parPaire = new Map();
   (etat.documents || []).forEach(doc => {
-    const gs = (doc.lecture && Array.isArray(doc.lecture.groupes)) ? [...new Set(doc.lecture.groupes)].filter(n => etat.groupes.some(g => g.num === n)) : [];
+    const gs = groupesDesReferences(doc.lecture && doc.lecture.references);
     for(let i = 0; i < gs.length; i++) for(let j = i+1; j < gs.length; j++){
       const k = Math.min(gs[i],gs[j]) + "-" + Math.max(gs[i],gs[j]);
       if(!parPaire.has(k)) parPaire.set(k, []);
@@ -1182,7 +1182,7 @@ function calculerConcordanceGeographique(){
 async function numerotationDefinitive(){
   if(!etat.dossier || !etat.persist.actif){ signaler("Le dossier doit être enregistré avant la numérotation définitive.", true); return false; }
   const conc = calculerConcordanceGeographique();
-  if(!conc.length){ etat.numerotationFaite = true; return true; }
+  if(!conc.length){ etat.numerotationFaite = true; etat.numerotationDate = new Date().toISOString(); await appelDossier({action:"groupes", siren: etat.dossier.siren, groupes: groupesPersistables(), etat: etatPersistable(), quoi:"numerotation-definitive", detail:{inchangee:true}}); return true; }
   const documentsARenommer = (etat.documents || []).filter(d => conc.some(c => c.ancien === d.groupe));
   if(documentsARenommer.length && !exigerDrive()) return false;
   afficherPersist("Renumérotation…");
@@ -1202,6 +1202,7 @@ async function numerotationDefinitive(){
     // les identifiants Drive suivent leur groupe : en base la permutation a porté la colonne drive avec le numéro,
     // à l'écran ils restent attachés à l'objet groupe — rien d'autre à faire
     etat.numerotationFaite = true;
+    etat.numerotationDate = new Date().toISOString();
     etat.ouvert = null;
     rendre();
     afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), "ok");
@@ -1529,9 +1530,15 @@ async function copierDocument(doc, versNum){
 }
 
 
+function groupesDesReferences(refs){
+  const idx = new Map(etat.parcelles.map(p => [p.props.idu, p.i]));
+  const nums = new Set();
+  (refs || []).forEach(idu => { const i = idx.get(idu); if(i == null) return; const g = etat.groupes.find(x => x.membres.has(i)); if(g) nums.add(g.num); });
+  return [...nums].sort((a,b) => a-b);
+}
 function rattachementHtml(d, g){
   const l = d.lecture || {};
-  const cites = Array.isArray(l.groupes) ? l.groupes : [];
+  const cites = groupesDesReferences(l.references);   // jamais les numéros figés au dépôt : une renumérotation ne les rendrait plus faux
   if(l.rattachement_confirme || d.statut === "copie") return "";
   if(!cites.length){
     if(d.couche_texte === false) return '<span class="ratt neutre">scan : parcelles non lues, rattachement au groupe de dépôt</span>';
@@ -1787,6 +1794,13 @@ function majBoutons(){
   document.getElementById("btn-fusionner").disabled =
     etat.groupes.filter(g => g.coche).length < 2;
   document.getElementById("btn-arbo").disabled = !(charge && etat.dossier && etat.persist.actif);
+  // Découpage GELÉ dès la numérotation définitive : les numéros nomment les dossiers Drive et les pièces,
+  // un recalcul sans table de concordance les rendrait tous faux. Repartir = Réinitialiser depuis REDPAR.
+  const gele = Boolean(etat.numerotationFaite);
+  const motif = gele ? "Découpage gelé : la numérotation définitive nomme les dossiers Drive et les pièces. Pour repartir, Réinitialiser depuis REDPAR." : "";
+  ["btn-recalculer", "tolerance", "mini"].forEach(id => { const el = document.getElementById(id); el.disabled = gele || (id === "btn-recalculer" ? !charge : false); el.title = motif; });
+  const arbo = document.getElementById("btn-arbo");
+  arbo.textContent = gele ? "Créer / compléter le Drive" : "Numéroter et créer le Drive";
 }
 
 let minuteurMessage;
@@ -1838,7 +1852,8 @@ function etatPersistable(){
       voisinage_m: parseFloat(document.getElementById("rayon").value) || 0,
       toleranceContact_m: parseFloat(document.getElementById("tolerance").value) || 0
     },
-    sansGeometrie: (etat.sansGeometrie || []).map(x => x.idu).filter(Boolean)
+    sansGeometrie: (etat.sansGeometrie || []).map(x => x.idu).filter(Boolean),
+    numerotation_definitive: etat.numerotationFaite ? (etat.numerotationDate || new Date().toISOString()) : null
   };
 }
 function groupesPersistables(){
@@ -1920,6 +1935,7 @@ function ouvrirDepuisBase(d){
   etat.documents = (d.documents || []).map(x => Object.assign({}, x, {date_doc: x.date_doc ? String(x.date_doc).slice(0,10) : null}));
   etat.driveSociete = (d.dossier.drive && d.dossier.drive.societe) ? d.dossier.drive : null;
   etat.numerotationFaite = Boolean(d.dossier.etat && d.dossier.etat.numerotation_definitive);
+  etat.numerotationDate = (d.dossier.etat && d.dossier.etat.numerotation_definitive) || null;
   etat.documents.forEach(x => { if(typeof x.lecture === "string"){ try{ x.lecture = JSON.parse(x.lecture); }catch(e){ x.lecture = {}; } } });
   etat.compteurGroupe = etat.groupes.reduce((m,g) => Math.max(m, g.num), 0);
   // parcelles orphelines (sans groupe en base) : un groupe chacune, plutôt que de les perdre
@@ -2153,7 +2169,7 @@ async function chercherParcelles(siren, libelle, forcer){
     etat.ouvert = null;                 // vue d'ensemble d'abord : les groupes repliés
     etat.sansGeometrie = sansGeometrie;
     etat.dossier = {siren, denomination: (d1.societe && d1.societe.denomination) || libelle || null, millesime: d1.millesime || null};
-    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false;
+    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false; etat.numerotationDate = null;
     etat.groupes.forEach(g => { g.drive = {}; });
     rendre();
     fermer();
@@ -2236,16 +2252,19 @@ function brancher(){
 
   document.getElementById("tolerance").addEventListener("change", () => {
     if(!etat.parcelles.length) return;
+    if(etat.numerotationFaite){ signaler("Découpage gelé par la numérotation définitive.", true); rendre(); return; }
     if(etat.groupes.some(g => g.manuel) && !confirm("Changer la tolérance recalcule le découpage et efface les retouches manuelles. Continuer ?")) return;
     etat.ignores = new Set(); regrouperAutomatiquement(); etat.ouvert = null; rendre();
     marquerModifie("recalcul", {groupes: etat.groupes.length, tolerance_m: document.getElementById("tolerance").value});
   });
 
   document.getElementById("mini").addEventListener("change", () => {
+    if(etat.numerotationFaite){ signaler("Découpage gelé par la numérotation définitive.", true); rendre(); return; }
     if(etat.parcelles.length){ regrouperAutomatiquement(); rendre(); }
   });
 
   document.getElementById("btn-recalculer").addEventListener("click", () => {
+    if(etat.numerotationFaite){ signaler("Découpage gelé par la numérotation définitive — pour repartir, Réinitialiser depuis REDPAR.", true); return; }
     if(etat.groupes.some(g => g.manuel) && !confirm("Recalculer efface les retouches manuelles du découpage. Continuer ?")) return;
     etat.ignores = new Set();
     regrouperAutomatiquement(); etat.ouvert = null; rendre();
