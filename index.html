@@ -246,6 +246,42 @@
     padding:7px;font-family:Consolas,monospace;font-size:12px;display:none
   }
   textarea.coller.visible{display:block}
+  /* ---- écran de contrôle de la lecture d'état hypothécaire ---- */
+  .lect-fond{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:900;display:flex;align-items:center;justify-content:center;padding:18px}
+  .lect{background:#fff;border-radius:10px;width:min(1500px,98vw);height:min(920px,94vh);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 18px 48px rgba(0,0,0,.28)}
+  .lect-tete{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--trait,#e5e7eb)}
+  .lect-tete .lect-sous{color:#6b7280;font-size:13px;flex:1}
+  .lect-corps{flex:1;display:flex;min-height:0}
+  .lect-gauche{width:56%;overflow:auto;padding:14px 16px;border-right:1px solid var(--trait,#e5e7eb)}
+  .lect-droite{flex:1;overflow:auto;padding:8px;background:#f3f4f6;text-align:center}
+  .lect-droite canvas{max-width:100%;box-shadow:0 2px 10px rgba(0,0,0,.18);background:#fff}
+  .lect-aide{color:#6b7280;font-size:13px;margin-top:24px}
+  .lect-entete{background:#f8fafc;border:1px solid var(--trait,#e5e7eb);border-radius:8px;padding:10px 12px;margin-bottom:12px}
+  .lect-entete ul{list-style:none;margin:6px 0 0;padding:0;font-size:13px;line-height:1.7}
+  .lect-compte{margin:8px 0 0;font-size:13px;color:#374151}
+  .lect-mention{border:1px solid var(--trait,#e5e7eb);border-radius:8px;padding:10px 12px;margin-bottom:10px}
+  .lect-mtete{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+  .lect-rub{color:#6b7280;font-size:12px;flex:1}
+  .lect-ok{font-size:12px;color:#374151;white-space:nowrap}
+  .lect-champs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px}
+  .lect-champs label{display:flex;flex-direction:column;font-size:12px;color:#6b7280;gap:3px}
+  .lect-champs input{border:1px solid var(--trait,#d1d5db);border-radius:6px;padding:4px 7px;font:inherit;font-size:13px;color:#111827}
+  .lect-src{font-size:11px;color:#9ca3af;display:flex;align-items:center;gap:6px}
+  .lect-parc,.lect-parties,.lect-comp{font-size:12px;color:#374151;margin:8px 0 0;line-height:1.5}
+  .lect-comp{color:#6b7280;font-style:italic}
+  button.pg{border:1px solid var(--trait,#d1d5db);background:#fff;border-radius:5px;padding:1px 6px;font:inherit;font-size:11px;color:#2563eb;cursor:pointer}
+  button.pg:hover{background:#eff6ff}
+  button.pg.actif{background:#2563eb;border-color:#2563eb;color:#fff}
+  .lect-pied{border-top:1px solid var(--trait,#e5e7eb);padding-top:12px;margin-top:14px}
+  .lect-pied textarea{width:100%;border:1px solid var(--trait,#d1d5db);border-radius:6px;padding:7px;font:inherit;font-size:13px;margin-top:6px}
+  .lect-note{font-size:12px;color:#6b7280;margin:6px 0 10px}
+  .lect-boutons{display:flex;gap:10px}
+  .lect-msg{font-size:13px;margin:10px 0 0;min-height:18px}
+  .lect-msg.ok{color:#15803d}
+  .lect-msg.alerte{color:#b91c1c}
+  .lect-vide{color:#6b7280;font-size:13px;padding:10px 0}
+  .pieces li button.lire{border:1px solid var(--trait,#d1d5db);background:#fff;border-radius:6px;padding:2px 8px;font:inherit;font-size:12px;cursor:pointer}
+  .pieces li button.lire:hover{background:#f3f4f6}
 </style>
 </head>
 <body>
@@ -1137,6 +1173,391 @@ async function driveRenommerDeplacer(id, nom, ancienParent, nouveauParent){
 }
 async function driveRenommer(id, nom){ return driveRenommerDeplacer(id, nom, null, null); }
 
+/* ---------- lecture de l'état hypothécaire — passe 1 (code) ---------- */
+/* Contrat de sortie : un en-tête + une ligne par mention, chaque champ portant
+   sa page d'origine et son moteur. La passe 2 (lecture d'image) viendra
+   remplir la même structure sur le seul résidu, sans la modifier.          */
+
+async function driveTelecharger(id){
+  const r = await driveFetch("https://www.googleapis.com/drive/v3/files/" + id + "?alt=media&supportsAllDrives=true");
+  return r.blob();
+}
+
+// Extraction page par page du document entier (le `textePdf` existant s'arrête à 3 pages).
+async function textePdfPages(source, maxPages, progres){
+  const pdfjs = await chargerPdfjs();
+  const data = source instanceof Blob ? await source.arrayBuffer() : source;
+  const doc = await pdfjs.getDocument({data}).promise;
+  const n = Math.min(doc.numPages, maxPages || 800);
+  const pages = [];
+  for(let i = 1; i <= n; i++){
+    const page = await doc.getPage(i);
+    const c = await page.getTextContent();
+    pages.push({page: i, texte: c.items.map(x => x.str).join(" ")});
+    if(progres && (i % 10 === 0 || i === n)) progres(i, n);
+  }
+  return {pages, total: doc.numPages};
+}
+
+async function dessinerPagePdf(source, numero, canvas){
+  const pdfjs = await chargerPdfjs();
+  if(!dessinerPagePdf.cache || dessinerPagePdf.cache.source !== source){
+    const data = source instanceof Blob ? await source.arrayBuffer() : source;
+    dessinerPagePdf.cache = {source, doc: await pdfjs.getDocument({data}).promise};
+  }
+  const doc = dessinerPagePdf.cache.doc;
+  const page = await doc.getPage(Math.min(Math.max(1, numero), doc.numPages));
+  const large = canvas.parentElement.clientWidth - 16;
+  const base = page.getViewport({scale: 1});
+  const vue = page.getViewport({scale: Math.max(0.4, Math.min(2.2, large / base.width))});
+  canvas.width = vue.width; canvas.height = vue.height;
+  await page.render({canvasContext: canvas.getContext("2d"), viewport: vue}).promise;
+}
+
+const EHF_NORMALISER = (t) => String(t || "")
+  .replace(/\\([_*#])/g, "$1")
+  .replace(/ /g, " ")
+  .replace(/[ \t]+/g, " ")
+  .replace(/\s*\n\s*/g, "\n")
+  .trim();
+
+function ehfChamp(valeur, page){
+  return valeur == null || valeur === "" ? null : {valeur, page, moteur: "code"};
+}
+function ehfDate(s){
+  const m = /(\d{1,2})[\/.\-](\d{1,2})[\/.\-]((?:19|20)\d\d)/.exec(String(s || ""));
+  if(!m) return null;
+  const d = new Date(+m[3], +m[2] - 1, +m[1]);
+  return isNaN(d) ? null : String(d.getDate()).padStart(2,"0") + "/" + String(d.getMonth()+1).padStart(2,"0") + "/" + d.getFullYear();
+}
+
+function ehfEntete(pages){
+  const tete = pages.slice(0, 3).map(p => EHF_NORMALISER(p.texte)).join("\n");
+  const pg = (re) => { for(const p of pages.slice(0, 5)){ if(re.test(EHF_NORMALISER(p.texte))) return p.page; } return 1; };
+  const service = /ÉTAT-RÉPONSE[^\n]*\n([A-ZÀ-Ÿ0-9 \-']{2,40})/.exec(tete)
+               || /service de la publicité foncière de ([A-ZÀ-Ÿ0-9 \-']{2,40})/i.exec(tete);
+  const delivre = /délivré le ([^\n]{6,40})/i.exec(tete);
+  const dossier = /Dossier ANF N°\s*:?\s*([A-Z0-9_]+)/i.exec(tete);
+  const demande = /Demande de renseignements N°\s*:?\s*([A-Z0-9]+)/i.exec(tete);
+  const depose  = /Déposée le\s*:?\s*([0-9\/.\-]{8,10})/i.exec(tete);
+  const releve  = /Relevé des formalités[^\n]*\n?Du\s*([0-9\/.\-]{8,10})[\s\S]{0,40}?Au\s*([0-9\/.\-]{8,10})/i.exec(tete);
+  const immeubles = [];
+  const reImm = /^(\d{1,3})\s*-\s*([A-ZÀ-Ÿ0-9 '\-]{2,40}?)\s*-\s*([A-Z]{1,3})\s*(\d{1,4}[A-Z]?)\b/gm;
+  let m;
+  while((m = reImm.exec(tete))) immeubles.push({codeCommune:m[1], commune:m[2].trim(), section:m[3], numero:m[4]});
+  return {
+    service:       ehfChamp(service ? service[1].trim() : null, pg(/ÉTAT-RÉPONSE|publicité foncière/i)),
+    delivreLe:     ehfChamp(delivre ? (ehfDate(delivre[1]) || delivre[1].trim()) : null, pg(/délivré le/i)),
+    dossierANF:    ehfChamp(dossier ? dossier[1] : null, pg(/Dossier ANF/i)),
+    demandeNumero: ehfChamp(demande ? demande[1] : null, pg(/Demande de renseignements/i)),
+    deposeeLe:     ehfChamp(depose ? ehfDate(depose[1]) : null, pg(/Déposée le/i)),
+    periodeReleve: ehfChamp(releve ? (ehfDate(releve[1]) + " au " + ehfDate(releve[2])) : null, pg(/Relevé des formalités/i)),
+    immeubles
+  };
+}
+
+const EHF_RE_FORMALITE = /^([A-ZÀ-Ÿ0-9 ,'’\-\/]{4,120}?)\s+PAGE\s+(\d+)\s+À\s+PAGE\s+(\d+)\s*$/;
+
+function ehfDecouper(pages){
+  const lignes = [];
+  for(const p of pages){ for(const l of EHF_NORMALISER(p.texte).split("\n")) lignes.push({page:p.page, l}); }
+  const debuts = [];
+  lignes.forEach((x,i) => { if(EHF_RE_FORMALITE.test(x.l)) debuts.push(i); });
+  const blocs = [];
+  for(let k = 0; k < debuts.length; k++){
+    const a = debuts[k], b = k+1 < debuts.length ? debuts[k+1] : lignes.length;
+    const m = EHF_RE_FORMALITE.exec(lignes[a].l);
+    let rubrique = null;
+    for(let j = a; j >= 0 && j > a - 40; j--){
+      const r = /Relevé des formalités\s*-\s*(.+)$/.exec(lignes[j].l);
+      if(r){ rubrique = r[1].trim(); break; }
+    }
+    blocs.push({natures:m[1].trim(), pageDebut:+m[2], pageFin:+m[3], rubrique, lignes: lignes.slice(a,b)});
+  }
+  // le bandeau « NATURE PAGE x À PAGE y » est réimprimé sur chaque page de continuation
+  const out = [];
+  for(const b of blocs){
+    const p = out[out.length-1];
+    if(p && p.natures === b.natures && p.pageDebut === b.pageDebut && p.pageFin === b.pageFin) p.lignes = p.lignes.concat(b.lignes);
+    else out.push(b);
+  }
+  return out;
+}
+
+function ehfParties(txt, etiquette){
+  const re = new RegExp(etiquette + "[^\\n]*\\n([\\s\\S]*?)(?=\\n(?:Disposant|Bénéficiaire|Immeuble\\(s\\)|Prix\\/évaluation|Complément|Disposition n°|$))", "i");
+  const m = re.exec(txt);
+  if(!m) return [];
+  const out = [];
+  for(const l of m[1].split("\n")){
+    const p = /^\s*\d+\s+(.+?)\s{0,3}((?:\d[\d\s]{8,13}\d)|-)?\s*$/.exec(l);
+    if(p && p[1] && p[1].length > 2) out.push({nom:p[1].trim(), identite:(p[2]||"").replace(/\s/g,"") || null});
+  }
+  return out;
+}
+
+// « ARMENTIERES AS 461, AS 464, AS 470 à 473 » : la commune n'est portée que par la première.
+function ehfImmeubles(txt){
+  const out = [];
+  const DROIT = /(Toute propriété|Nue propriété|Usufruit|Tréfonds|Bail emphytéotique|Bail à construction)/i;
+  const RE_REF = /\b([A-Z]{1,3})\s*(\d{1,4}[A-Z]?)(?:\s*(?:à|a)\s*(\d{1,4}[A-Z]?))?\b/g;
+  const RE_COMMUNE = /([A-ZÀ-Ÿ][A-ZÀ-Ÿ'\-]{1,}(?:[ '\-][A-ZÀ-Ÿ][A-ZÀ-Ÿ'\-]*)*)\s+[A-Z]{1,3}\s*\d{1,4}/;
+  const HORS = /^(PAGE|DISPOSITION|COMPLEMENT|PRIX|IMMEUBLE|VOLUME|LOT|BENEFICIAIRE|DISPOSANT|DONATEUR|DONATAIRE|RENVOI|DATE|CODE|REFERENCE|NOT|EUR|UD)$/i;
+  const PAS_COMMUNE = /\b(ACTE|DIVISION|CADASTRAL|CADASTRALE|PROPRIETAIRE|PROPRIÉTAIRE|TRANSFERT|RECTIFICATIF|PARCELLE|SECTION|VENTE|APPORT|DEPOT|DÉPÔT|ECHANGE|ÉCHANGE|BAIL|SERVITUDE|COPROPRIETE|COPROPRIÉTÉ|MODIFICATIF|ETAT|ÉTAT|DESCRIPTIF|SYNDICAT|SOCIETE|SOCIÉTÉ|COMMUNE|NUMERO|NUMÉRO|TOUTE|NUE|USUFRUIT)\b/i;
+  let commune = null;
+  for(const ligne of txt.split("\n")){
+    if(!/[A-Z]{1,3}\s*\d/.test(ligne)) continue;
+    if(/^(Date de|Référence d'enliassement|Code sages|Prix\/évaluation|Rédacteur)/i.test(ligne)) continue;
+    const droit = DROIT.exec(ligne);
+    const c = RE_COMMUNE.exec(ligne);
+    if(c){
+      const cand = c[1].trim().split(/\s+/).filter(w => !HORS.test(w)).join(" ");
+      if(cand.length > 2 && !PAS_COMMUNE.test(cand)) commune = cand;
+    }
+    RE_REF.lastIndex = 0;
+    let m;
+    while((m = RE_REF.exec(ligne))){
+      if(HORS.test(m[1])) continue;
+      if(commune && commune.split(/\s+/).indexOf(m[1]) >= 0) continue;
+      const pousser = (num) => out.push({droit: droit ? droit[1] : null, commune, section:m[1], numero:String(num)});
+      if(m[3] && /^\d+$/.test(m[2]) && /^\d+$/.test(m[3]) && +m[3] > +m[2] && +m[3]-+m[2] < 200){
+        for(let n = +m[2]; n <= +m[3]; n++) pousser(n);
+      }else pousser(m[2]);
+    }
+  }
+  const vus = {};
+  return out.filter(x => { const k = (x.commune||"?")+"|"+x.section+"|"+x.numero; if(vus[k]) return false; vus[k] = 1; return true; });
+}
+
+function lireEtatHypothecaire(pages){
+  const entete = ehfEntete(pages);
+  return {
+    entete,
+    mentions: ehfDecouper(pages).map((b, i) => {
+      const t = b.lignes.map(x => x.l).join("\n");
+      const pageDe = (re) => { const x = b.lignes.find(y => re.test(y.l)); return x ? x.page : b.pageDebut; };
+      const redacteur = /Rédacteur\s*:\s*([^\n]*?)(?:\s+Commune\s*:|$)/i.exec(t);
+      const commune   = /Commune\s*:\s*([A-ZÀ-Ÿ0-9 '\-]{2,40}?)(?:\s+Date de l'acte|\n|$)/i.exec(t);
+      const dateActe  = /Date de l'acte\s*:\s*([0-9\/.\-]{8,10})/i.exec(t);
+      const dateDepot = /Date de dépôt\s*:\s*([0-9\/.\-]{8,10})/i.exec(t);
+      const enl       = /Référence d'enliassement\s*:\s*([0-9]{4})\s*([A-Z])\s*([0-9]+)/i.exec(t);
+      const sages     = /Code sages\s*:\s*([0-9A-Z]+)\s*-\s*([A-ZÀ-Ÿ0-9 ]+)/i.exec(t);
+      const prix      = /Prix\/évaluation\s*:\s*([0-9  .,]+)\s*EUR/i.exec(t);
+      const rang      = /(?:de\s+)?(premier|deuxième|second|troisième|quatrième)\s+rang/i.exec(t);
+      const comp      = /Complément\s*:\s*([^\n]+)/i.exec(t);
+      return {
+        index: i + 1, rubrique: b.rubrique, pages: {debut:b.pageDebut, fin:b.pageFin},
+        natures:    ehfChamp(b.natures, b.pageDebut),
+        redacteur:  ehfChamp(redacteur ? redacteur[1].trim() : null, pageDe(/Rédacteur/i)),
+        commune:    ehfChamp(commune ? commune[1].trim() : null, pageDe(/Commune\s*:/i)),
+        dateActe:   ehfChamp(dateActe ? ehfDate(dateActe[1]) : null, pageDe(/Date de l'acte/i)),
+        dateDepot:  ehfChamp(dateDepot ? ehfDate(dateDepot[1]) : null, pageDe(/Date de dépôt/i)),
+        volume:     ehfChamp(enl ? enl[1] + enl[2] : null, pageDe(/Référence d'enliassement/i)),
+        numero:     ehfChamp(enl ? enl[3] : null, pageDe(/Référence d'enliassement/i)),
+        service:    ehfChamp(sages ? sages[2].trim() : null, pageDe(/Code sages/i)),
+        rang:       ehfChamp(rang ? rang[1].toLowerCase() : null, pageDe(/rang/i)),
+        montant:    ehfChamp(prix ? prix[1].replace(/[\s ]/g,"").replace(",",".") : null, pageDe(/Prix\/évaluation/i)),
+        complement: ehfChamp(comp ? comp[1].trim() : null, pageDe(/Complément/i)),
+        disposants:    ehfParties(t, "Disposant"),
+        beneficiaires: ehfParties(t, "Bénéficiaire"),
+        immeubles:     ehfImmeubles(t),
+        valide: false
+      };
+    }),
+    luLe: new Date().toISOString()
+  };
+}
+
+// Une fiche qui couvre deux groupes produit deux résultats : chacun ne garde
+// que les parcelles de son groupe.
+function ehfMentionsDuGroupe(lecture, parcelles){
+  const nz = (t) => sansAccent(String(t || "")).toUpperCase().replace(/[^A-Z]/g, "");
+  const cles = {}, communes = {};
+  parcelles.forEach(p => {
+    cles[nz(p.section) + "|" + String(+p.numero)] = 1;
+    if(p.commune) communes[nz(p.commune)] = 1;
+  });
+  const avecCommune = Object.keys(communes).length > 0;
+  return lecture.mentions.filter(m => m.immeubles.some(i => {
+    if(!cles[nz(i.section) + "|" + String(+i.numero)]) return false;
+    if(avecCommune && i.commune && !communes[nz(i.commune)]) return false;
+    return true;
+  }));
+}
+
+const EHF_MUTATIONS = /VENTE|APPORT|ECHANGE|ÉCHANGE|ADJUDICATION|DONATION|FUSION|TRANSFERT|LICITATION|ATTRIBUTION|PARTAGE|EMPHYTEOTIQUE|EMPHYTÉOTIQUE|CONSTRUCTION/i;
+function ehfDerniereMutation(mentions){
+  const horodate = (m) => {
+    const d = (m.dateDepot && m.dateDepot.valeur) || (m.dateActe && m.dateActe.valeur);
+    if(!d) return 0;
+    const p = d.split("/").map(Number);
+    return new Date(p[2], p[1]-1, p[0]).getTime();
+  };
+  return mentions
+    .filter(m => EHF_MUTATIONS.test(sansAccent(m.natures ? m.natures.valeur : "")))
+    .sort((a,b) => horodate(b) - horodate(a))[0] || null;
+}
+
+function ehfPhraseEffetRelatif(m){
+  if(!m) return "";
+  // La nature est reprise telle que l'ANF l'écrit — en capitales, sans accents :
+  // c'est volontaire, le rédacteur doit la remettre en forme avant de coller.
+  const v = (c) => (c && c.valeur) ? c.valeur : null;
+  let p = "Acquisition aux termes d'un acte";
+  if(v(m.natures)) p += " contenant " + v(m.natures);
+  if(v(m.redacteur)){
+    p += " reçu par " + v(m.redacteur).replace(/^NOT\s+/i, "Maître ");
+    if(v(m.commune)) p += ", notaire à " + v(m.commune);
+  }
+  if(v(m.dateActe)) p += ", le " + v(m.dateActe);
+  if(v(m.service)){
+    p += ", publié au service de la publicité foncière de " + v(m.service);
+    if(v(m.dateDepot)) p += " le " + v(m.dateDepot);
+  }else if(v(m.dateDepot)){
+    p += ", déposé le " + v(m.dateDepot);
+  }
+  if(v(m.volume)) p += ", volume " + v(m.volume);
+  if(v(m.numero)) p += ", numéro " + v(m.numero);
+  return p + ".";
+}
+
+/* ---------- écran de contrôle ---------- */
+const EHF_CHAMPS = [
+  ["natures", "Nature"], ["dateActe", "Date de l'acte"], ["dateDepot", "Date de dépôt"],
+  ["redacteur", "Rédacteur"], ["commune", "Commune"], ["volume", "Volume"],
+  ["numero", "Numéro"], ["service", "Service"], ["rang", "Rang"], ["montant", "Montant"]
+];
+
+async function ouvrirLectureEHF(doc, g){
+  if(!driveConnecte()){ exigerDrive(); return; }
+  const fond = document.createElement("div");
+  fond.className = "lect-fond";
+  fond.innerHTML = '<div class="lect"><div class="lect-tete"><b>Lecture de l\'état hypothécaire</b>'
+    + '<span class="lect-sous">' + echap(doc.nom) + ' — groupe ' + numeroGroupe4(g.num) + '</span>'
+    + '<button class="btn" data-act="fermer" type="button">Fermer</button></div>'
+    + '<div class="lect-corps"><div class="lect-gauche"><p class="lect-etat">Téléchargement du document…</p></div>'
+    + '<div class="lect-droite"><p class="lect-aide">Cliquez sur une page pour l\'afficher ici.</p><canvas></canvas></div></div></div>';
+  document.body.appendChild(fond);
+  const gauche = fond.querySelector(".lect-gauche");
+  const toile  = fond.querySelector(".lect-droite canvas");
+  const etatTxt = () => fond.querySelector(".lect-etat");
+  fond.querySelector('[data-act="fermer"]').addEventListener("click", () => fond.remove());
+  fond.addEventListener("click", e => { if(e.target === fond) fond.remove(); });
+
+  let blob, lecture, retenues;
+  try{
+    blob = await driveTelecharger(doc.drive_id);
+    etatTxt().textContent = "Lecture du texte…";
+    const r = await textePdfPages(blob, 800, (i, n) => { const e = etatTxt(); if(e) e.textContent = "Lecture du texte… page " + i + " / " + n; });
+    if(!r.pages.some(p => p.texte.replace(/\s/g, "").length > 40)){
+      gauche.innerHTML = '<p class="lect-vide">Aucune couche de texte dans ce document : il relève de la passe 2 (lecture d\'image), qui n\'est pas encore branchée.</p>';
+      return;
+    }
+    lecture = lireEtatHypothecaire(r.pages);
+    lecture.pagesLues = r.pages.length;
+    lecture.pagesTotal = r.total;
+    const parcelles = (g.parcelles || []).map(i => etat.parcelles[i]).filter(Boolean)
+      .map(p => ({section: p.props.section, numero: p.props.numero, commune: p.props.commune || p.props.nom_com}));
+    retenues = ehfMentionsDuGroupe(lecture, parcelles);
+  }catch(e){
+    gauche.innerHTML = '<p class="lect-vide">Échec : ' + echap(e.message || String(e)) + '</p>';
+    return;
+  }
+
+  const rendreLecture = () => {
+    const ent = lecture.entete;
+    let h = '<div class="lect-entete"><b>En-tête</b><ul>';
+    [["service","Service"],["delivreLe","Délivré le"],["dossierANF","Dossier ANF"],["demandeNumero","N° de demande"],["deposeeLe","Déposée le"],["periodeReleve","Période couverte"]]
+      .forEach(([k, lib]) => { if(ent[k]) h += '<li>' + lib + ' : <b>' + echap(ent[k].valeur) + '</b> <button class="pg" data-page="' + ent[k].page + '">p.' + ent[k].page + '</button></li>'; });
+    h += '</ul><p class="lect-compte">' + lecture.mentions.length + ' formalité' + (lecture.mentions.length > 1 ? 's' : '') + ' lue' + (lecture.mentions.length > 1 ? 's' : '')
+      + ' sur ' + lecture.pagesLues + ' page' + (lecture.pagesLues > 1 ? 's' : '')
+      + (lecture.pagesTotal > lecture.pagesLues ? ' (document de ' + lecture.pagesTotal + ')' : '')
+      + ' — <b>' + retenues.length + '</b> concernant le groupe.</p></div>';
+
+    if(!retenues.length){
+      h += '<p class="lect-vide">Aucune formalité ne cite les parcelles du groupe. À vérifier à l\'œil avant de conclure.</p>';
+    }
+    retenues.forEach((m, k) => {
+      h += '<div class="lect-mention" data-k="' + k + '"><div class="lect-mtete"><b>' + echap((m.natures && m.natures.valeur) || "—") + '</b>'
+        + '<span class="lect-rub">' + echap(m.rubrique || "") + '</span>'
+        + '<button class="pg" data-page="' + m.pages.debut + '">p.' + m.pages.debut + '</button>'
+        + '<label class="lect-ok"><input type="checkbox" data-act="valider"' + (m.valide ? " checked" : "") + '> validée</label></div><div class="lect-champs">';
+      EHF_CHAMPS.forEach(([cle, lib]) => {
+        const c = m[cle];
+        h += '<label>' + lib + '<input data-champ="' + cle + '" value="' + echap(c ? c.valeur : "") + '">'
+          + '<span class="lect-src">' + (c ? '<button class="pg" data-page="' + c.page + '">p.' + c.page + '</button><em>' + echap(c.moteur) + '</em>' : '<em>non lu</em>') + '</span></label>';
+      });
+      h += '</div>';
+      if(m.immeubles.length) h += '<p class="lect-parc">Parcelles citées : ' + echap(m.immeubles.map(i => (i.commune ? i.commune + " " : "") + i.section + " " + i.numero).join(" · ")) + '</p>';
+      if(m.disposants.length || m.beneficiaires.length){
+        h += '<p class="lect-parties">De : ' + echap(m.disposants.map(x => x.nom).join(" · ") || "—")
+          + '<br>Au profit de : ' + echap(m.beneficiaires.map(x => x.nom).join(" · ") || "—") + '</p>';
+      }
+      if(m.complement && m.complement.valeur) h += '<p class="lect-comp">' + echap(m.complement.valeur) + '</p>';
+      h += '</div>';
+    });
+
+    const der = ehfDerniereMutation(retenues);
+    h += '<div class="lect-pied"><b>Effet relatif proposé</b>'
+      + '<textarea rows="3" data-act="effet">' + echap(ehfPhraseEffetRelatif(der)) + '</textarea>'
+      + '<p class="lect-note">Dernière mutation retenue : ' + (der ? echap((der.natures && der.natures.valeur) || "") + ' — page ' + der.pages.debut : 'aucune mutation identifiée') + '.</p>'
+      + '<div class="lect-boutons"><button class="btn" data-act="tout">Tout valider</button>'
+      + '<button class="btn plein" data-act="enregistrer">Enregistrer la lecture</button></div>'
+      + '<p class="lect-msg"></p></div>';
+    gauche.innerHTML = h;
+
+    gauche.querySelectorAll("button.pg").forEach(b => b.addEventListener("click", async () => {
+      gauche.querySelectorAll("button.pg").forEach(x => x.classList.remove("actif"));
+      b.classList.add("actif");
+      const aide = fond.querySelector(".lect-aide"); if(aide) aide.remove();
+      try{ await dessinerPagePdf(blob, Number(b.dataset.page), toile); }
+      catch(e){ /* page non rendue : on laisse la toile en l'état */ }
+    }));
+    gauche.querySelectorAll("input[data-champ]").forEach(inp => inp.addEventListener("change", e => {
+      const k = Number(e.target.closest(".lect-mention").dataset.k);
+      const cle = e.target.dataset.champ;
+      const m = retenues[k];
+      const v = e.target.value.trim();
+      if(!v){ m[cle] = null; return; }
+      m[cle] = {valeur: v, page: m[cle] ? m[cle].page : m.pages.debut, moteur: "humain"};
+      e.target.closest("label").querySelector(".lect-src em").textContent = "humain";
+    }));
+    gauche.querySelectorAll('input[data-act="valider"]').forEach(inp => inp.addEventListener("change", e => {
+      retenues[Number(e.target.closest(".lect-mention").dataset.k)].valide = e.target.checked;
+    }));
+    gauche.querySelector('[data-act="tout"]').addEventListener("click", () => {
+      retenues.forEach(m => m.valide = true);
+      gauche.querySelectorAll('input[data-act="valider"]').forEach(x => x.checked = true);
+    });
+    gauche.querySelector('[data-act="enregistrer"]').addEventListener("click", async () => {
+      const msg = gauche.querySelector(".lect-msg");
+      msg.textContent = "Enregistrement…";
+      try{
+        const moteurs = {};
+        retenues.forEach(m => EHF_CHAMPS.forEach(([c]) => { if(m[c]) moteurs[m[c].moteur] = (moteurs[m[c].moteur] || 0) + 1; }));
+        doc.lecture = Object.assign({}, doc.lecture, {ehf: {
+          entete: lecture.entete,
+          mentions: retenues,
+          effetRelatif: gauche.querySelector('[data-act="effet"]').value,
+          pagesLues: lecture.pagesLues, pagesTotal: lecture.pagesTotal,
+          luLe: lecture.luLe, moteurs
+        }});
+        await appelDossier({action:"document", siren: etat.dossier.siren, document: doc});
+        await appelDossier({action:"journal", siren: etat.dossier.siren, quoi:"lecture-ehf",
+          detail:{document: doc.drive_id, groupe: g.num, formalites: lecture.mentions.length,
+                  retenues: retenues.length, validees: retenues.filter(m => m.valide).length,
+                  pages_lues: lecture.pagesLues, pages_total: lecture.pagesTotal, moteurs}});
+        msg.textContent = "Lecture enregistrée.";
+        msg.className = "lect-msg ok";
+      }catch(e){
+        msg.textContent = "Non enregistré — " + (e.message || "base indisponible");
+        msg.className = "lect-msg alerte";
+      }
+    });
+  };
+  rendreLecture();
+}
+
 /* ---------- plan de nommage ---------- */
 function sansAccent(t){ return String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
 function numeroGroupe4(n){ return String(n).padStart(4, "0"); }
@@ -1579,6 +2000,8 @@ function rendreDepot(g){
         + '<span class="orig" title="Nom d\u2019origine">' + echap(d.nom_origine || "") + '</span>'
         + '<select data-act="type" title="Type de pièce">' + Object.entries(TYPES_PIECE).map(([k,v]) => '<option value="' + k + '"' + (k === d.type ? " selected" : "") + '>' + echap(v.libelle) + '</option>').join("") + '</select>'
         + '<input type="date" data-act="date" value="' + (d.date_doc || "") + '" title="' + (d.date_sure ? "Date lue dans la pièce" : "Date à confirmer") + '" class="' + (d.date_sure ? "" : "adate") + '">'
+        + (d.type === "EHF" ? '<button class="lire" type="button" data-act="lire" title="Lire l\u2019\u00e9tat hypoth\u00e9caire">' + (d.lecture && d.lecture.ehf ? "Relire" : "Lire") + '</button>' : "")
+        + (d.lecture && d.lecture.ehf ? '<span class="tag">lu — ' + (d.lecture.ehf.mentions || []).filter(m => m.valide).length + '/' + (d.lecture.ehf.mentions || []).length + ' validées</span>' : "")
         + (d.statut === "scan" ? '<span class="tag">scan — passe API</span>' : "")
         + (d.type === "AQ" ? '<span class="tag aq">à qualifier</span>' : "")
         + (d.statut === "copie" ? '<span class="tag">copie</span>' : "")
@@ -1607,6 +2030,10 @@ function rendreDepot(g){
   ["dragenter","dragover"].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zone.classList.add("actif"); }));
   ["dragleave","drop"].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zone.classList.remove("actif"); }));
   zone.addEventListener("drop", e => { if(persistant && e.dataTransfer.files.length) deposerFichiers(g, e.dataTransfer.files); });
+  bloc.querySelectorAll('button[data-act="lire"]').forEach(b => b.addEventListener("click", e => {
+    const doc = (etat.documents || []).find(x => x.drive_id === e.target.closest("li").dataset.id);
+    if(doc) ouvrirLectureEHF(doc, g);
+  }));
   bloc.querySelectorAll('select[data-act="type"]').forEach(sel => sel.addEventListener("change", e => {
     const doc = (etat.documents || []).find(x => x.drive_id === e.target.closest("li").dataset.id); if(doc) requalifierDocument(doc, e.target.value, null);
   }));
