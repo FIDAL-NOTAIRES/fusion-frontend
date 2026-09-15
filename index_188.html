@@ -1,0 +1,2777 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FUSION — Regroupement par unité foncière</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{
+    --nuit:#0F2238;
+    --canard:#33838B;
+    --orange:#FF982D;
+    --carmin:#A01040;
+    --cyan:#6DD5DC;
+    --jaune-forme:#FFE764;
+    --jaune-texte:#FFC900;
+    --vert:#1F7A4D;
+    --gris:#8C97A3;
+    --papier:#FFFFFF;
+    --fond:#F2F4F6;
+    --trait:#DDE2E8;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    font-family:"Segoe UI",system-ui,sans-serif;
+    color:var(--nuit);
+    background:var(--fond);
+    font-size:14px;
+  }
+  h1,h2,h3{font-family:Georgia,"Times New Roman",serif;font-weight:normal;margin:0}
+  button{font-family:inherit;font-size:inherit;cursor:pointer}
+  button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{
+    outline:2px solid var(--cyan);outline-offset:2px
+  }
+
+  /* ---- ossature ---- */
+  .app{display:flex;flex-direction:column;height:100vh}
+  header.bandeau{
+    background:var(--nuit);color:#fff;
+    padding:10px 18px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap
+  }
+  .bandeau h1{font-size:19px;letter-spacing:.3px}
+  .bandeau .sous{color:var(--cyan);font-size:12.5px}
+  .bandeau .compteurs{margin-left:auto;display:flex;gap:16px;font-size:12.5px;color:#C9D3DE}
+  .bandeau .compteurs b{color:var(--jaune-texte);font-weight:600}
+  .persist{color:#C9D3DE;font-size:12px;padding-left:12px;border-left:1px solid rgba(255,255,255,.18)}
+  .persist.ok{color:var(--cyan)}
+  .persist.alerte{color:var(--orange)}
+  .persist:empty{display:none}
+  .dossiers{margin-top:10px}
+  .dossiers h3{font-family:Georgia,serif;font-size:13.5px;margin:0 0 5px;color:var(--nuit)}
+  .dossiers ul{list-style:none;margin:0;padding:0}
+  .dossiers li{margin-top:4px}
+  .dossiers button{
+    width:100%;text-align:left;border:1px solid var(--trait);background:#fff;
+    padding:6px 9px;border-radius:3px;display:flex;gap:8px;align-items:baseline
+  }
+  .dossiers button:hover{border-color:var(--canard);background:#F6FAFB}
+  .dossiers .d-nom{flex:1;color:var(--nuit);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dossiers .d-inf{font-size:11.5px;color:var(--gris);white-space:nowrap}
+  .dossiers .d-inf b{color:var(--orange);font-weight:600}
+  .reinit{margin-top:6px}
+
+  main{flex:1;display:flex;min-height:0}
+  .panneau{
+    width:390px;min-width:320px;background:var(--papier);
+    border-right:1px solid var(--trait);display:flex;flex-direction:column;min-height:0
+  }
+  .carte-zone{flex:1;position:relative;min-width:0}
+  #carte{position:absolute;inset:0}
+
+  /* ---- source ---- */
+  .source{padding:12px 14px;border-bottom:1px solid var(--trait)}
+  .depose{
+    border:1.5px dashed var(--canard);border-radius:4px;padding:14px;text-align:center;
+    color:var(--canard);background:#F6FAFB
+  }
+  .depose.actif{background:#E6F3F4;border-color:var(--nuit)}
+  .depose p{margin:0 0 8px}
+  .ligne-boutons{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+  .btn{
+    border:1px solid var(--canard);background:#fff;color:var(--canard);
+    padding:5px 11px;border-radius:3px
+  }
+  .btn:hover{background:var(--canard);color:#fff}
+  .btn.plein{background:var(--canard);color:#fff}
+  .btn.plein:hover{background:var(--nuit);border-color:var(--nuit)}
+  .btn.danger{border-color:var(--carmin);color:var(--carmin)}
+  .btn.danger:hover{background:var(--carmin);color:#fff}
+  .btn[disabled]{opacity:.4;cursor:not-allowed}
+  .btn[disabled]:hover{background:#fff;color:var(--canard)}
+
+  /* ---- réglages ---- */
+  .reglages{padding:10px 14px;border-bottom:1px solid var(--trait);background:#FAFBFC}
+  .reglage{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .reglage:last-child{margin-bottom:0}
+  .reglage label{flex:1;font-size:12.5px}
+  .reglage input[type=range]{flex:1;accent-color:var(--canard)}
+  .reglage .val{width:62px;text-align:right;font-variant-numeric:tabular-nums;color:var(--canard)}
+  .reglage input[type=number]{width:70px;padding:3px 5px;border:1px solid var(--trait);border-radius:3px}
+
+  /* ---- liste des groupes ---- */
+  .liste{flex:1;overflow:auto;min-height:0}
+  .vide{padding:26px 18px;color:var(--gris);line-height:1.55}
+  .groupe{border-bottom:1px solid var(--trait)}
+  .groupe-tete{
+    display:flex;align-items:center;gap:9px;padding:9px 14px;background:#fff;width:100%;
+    border:0;border-left:4px solid transparent;text-align:left
+  }
+  .groupe-tete:hover{background:#F4F8F9}
+  .groupe.ouvert>.groupe-tete{background:#EDF4F5;border-left-color:var(--carmin)}
+  .groupe-tete .num{
+    font-family:Georgia,serif;font-size:15px;color:var(--nuit);min-width:34px
+  }
+  .groupe-tete .num.manuel::after{content:"✎";font-size:11px;color:var(--orange);margin-left:3px;vertical-align:super}
+  .groupe-tete .info{flex:1;min-width:0}
+  .groupe-tete .lieu{display:block;font-size:12.5px;color:var(--nuit);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .groupe-tete .chiffres{display:block;font-size:12px;color:var(--gris);font-variant-numeric:tabular-nums}
+  .groupe-tete .pastille{width:11px;height:11px;border-radius:50%;border:1px solid rgba(0,0,0,.18)}
+  .parcelles{list-style:none;margin:0;padding:2px 0 8px;background:#FBFCFD}
+  .parcelles li{display:flex;align-items:center;gap:9px;padding:3px 14px 3px 30px}
+  .parcelles li:hover{background:#F1F5F7}
+  .parcelles label{flex:1;cursor:pointer;font-variant-numeric:tabular-nums}
+  .parcelles .surf{color:var(--gris);font-size:12px;font-variant-numeric:tabular-nums}
+  .parcelles input[type=checkbox]{accent-color:var(--carmin)}
+  .groupe-actions{padding:0 14px 10px 30px;display:flex;gap:8px;flex-wrap:wrap}
+
+  /* ---- rapprochements proposés ---- */
+  .sugg{border-bottom:1px solid var(--trait);background:#FFF8EE}
+  .sugg-tete{
+    display:flex;align-items:center;gap:8px;padding:8px 14px;
+    font-family:Georgia,serif;font-size:14px;color:var(--nuit)
+  }
+  .sugg-tete .n{color:var(--orange);font-weight:600}
+  .sugg-tete .aide{font-family:"Segoe UI",system-ui,sans-serif;font-size:11.5px;color:var(--gris);margin-left:auto}
+  .sugg ul{list-style:none;margin:0;padding:0 0 6px}
+  .sugg li{display:grid;grid-template-columns:1fr auto auto;grid-template-areas:"paire fus ign" "motif motif motif";
+    column-gap:8px;row-gap:2px;align-items:center;padding:6px 14px;font-size:12.5px;cursor:pointer}
+  .sugg li:hover{background:#FDEFD9}
+  .sugg li.active{background:#FBE3C2;box-shadow:inset 4px 0 0 var(--orange)}
+  .sugg li:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+  .sugg .paire{grid-area:paire;font-family:Georgia,serif;color:var(--nuit)}
+  .sugg .motif{grid-area:motif;color:#4A5561;font-size:12px;line-height:1.35}
+  .sugg .motif .voie{color:var(--nuit)}
+  .sugg .extra{color:var(--orange);font-weight:600}
+  .sugg .piece{color:var(--carmin);font-weight:600}
+  .sugg .piece a{color:var(--carmin)}
+  .sugg li.par-piece{background:#FBEAEF}
+  .sugg .aide-carte{display:block;font-family:"Segoe UI",system-ui,sans-serif;font-size:11px;color:var(--gris);font-style:italic}
+  .sugg button[data-act="fusionner"]{grid-area:fus}
+  .sugg button[data-act="ignorer"]{grid-area:ign}
+  .sugg .btn{padding:2px 8px;font-size:12px}
+  .sugg .plus{padding:4px 14px 8px;font-size:12px;color:var(--gris)}
+  .tete-tri{
+    padding:7px 14px 4px;font-size:11px;letter-spacing:.6px;text-transform:uppercase;
+    color:var(--canard);background:#F4F8F9;border-bottom:1px solid var(--trait)
+  }
+
+  /* ---- Drive et dépôt ---- */
+  .btn-drive{
+    margin-left:10px;border:1px solid var(--cyan);background:transparent;color:var(--cyan);
+    padding:3px 10px;border-radius:3px;font-size:12px
+  }
+  .btn-drive:hover{background:var(--cyan);color:var(--nuit)}
+  .btn-drive.ok{border-color:#7FD8A0;color:#7FD8A0}
+  .btn-drive.alerte{border-color:var(--orange);color:var(--orange)}
+  .depot{padding:6px 14px 10px 30px;background:#FBFCFD}
+  .depot-zone{
+    border:1.5px dashed var(--canard);border-radius:4px;padding:10px;text-align:center;
+    color:var(--canard);background:#F6FAFB;font-size:12.5px
+  }
+  .depot-zone.actif{background:#E6F3F4;border-color:var(--nuit)}
+  .depot-zone.inactif{border-color:var(--trait);color:var(--gris);background:#F7F8F9}
+  .depot-zone p{margin:0 0 6px}
+  .depot-etat{font-size:11.5px;color:var(--gris);margin-top:5px;min-height:1em}
+  .pieces{list-style:none;margin:8px 0 0;padding:0}
+  .pieces li{
+    display:grid;grid-template-columns:1fr auto auto;grid-template-areas:"nom type date" "orig tag tag";
+    column-gap:8px;row-gap:2px;align-items:center;padding:5px 8px;border:1px solid var(--trait);border-radius:3px;margin-top:4px;background:#fff;font-size:12px
+  }
+  .pieces li.aq{border-color:var(--orange);background:#FFF8EE}
+  .pieces li.scan{border-left:3px solid var(--jaune-texte)}
+  .pieces .nom{grid-area:nom;font-variant-numeric:tabular-nums;color:var(--nuit);text-decoration:none;font-weight:600}
+  .pieces .nom:hover{color:var(--canard);text-decoration:underline}
+  .pieces .orig{grid-area:orig;color:var(--gris);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pieces select{grid-area:type;font-size:11.5px;padding:2px 4px;border:1px solid var(--trait);border-radius:3px;max-width:190px}
+  .pieces input[type=date]{grid-area:date;font-size:11.5px;padding:2px 4px;border:1px solid var(--trait);border-radius:3px}
+  .pieces input.adate{border-color:var(--orange);background:#FFF8EE}
+  .pieces .tag{grid-area:tag;font-size:11px;color:#7A5A00;justify-self:end}
+  .pieces .tag.aq{color:var(--carmin)}
+  .pieces li{grid-template-areas:"nom type date" "orig tag tag" "ratt ratt ratt" "acts acts acts"}
+  .pieces .ratt{grid-area:ratt;font-size:11.5px}
+  .pieces .ratt.ok{color:var(--vert)}
+  .pieces .ratt.alerte{color:var(--carmin);font-weight:600}
+  .pieces .ratt.neutre{color:var(--gris)}
+  .pieces .ratt-actions{grid-area:acts;display:flex;gap:6px;flex-wrap:wrap}
+  .pieces .ratt-actions .btn{padding:2px 8px;font-size:11.5px}
+
+  /* ---- pied ---- */
+  .pied{padding:10px 14px;border-top:1px solid var(--trait);background:#FAFBFC;display:flex;gap:8px;flex-wrap:wrap}
+
+  .legende{
+    position:absolute;bottom:14px;left:14px;z-index:500;background:rgba(255,255,255,.94);
+    border:1px solid var(--trait);border-radius:4px;padding:9px 12px;font-size:12.5px;line-height:1.9
+  }
+  .legende i{display:inline-block;width:13px;height:13px;border-radius:2px;margin-right:7px;vertical-align:-2px}
+
+  .message{
+    position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:600;
+    background:var(--nuit);color:#fff;padding:9px 16px;border-radius:3px;max-width:560px
+  }
+  .message.alerte{background:var(--carmin)}
+  @media (prefers-reduced-motion:no-preference){
+    .message{transition:opacity .2s}
+  }
+  .societe{margin-bottom:10px}
+  .societe>label{display:block;font-family:Georgia,serif;font-size:15px;margin-bottom:5px}
+  .societe-ligne{display:flex;gap:8px}
+  .societe-ligne input{
+    flex:1;padding:7px 9px;border:1px solid var(--trait);border-radius:3px;font-size:14px
+  }
+  .societe-etat{font-size:12.5px;color:var(--gris);margin-top:6px;min-height:1em;line-height:1.5}
+  .societe-etat b{color:var(--nuit);font-weight:600}
+  .societe-etat .alerte{color:var(--carmin)}
+  .candidats{list-style:none;margin:8px 0 0;padding:0;max-height:46vh;overflow:auto}
+  .candidats li{margin-top:6px}
+  .candidats button{
+    width:100%;text-align:left;border:1.5px solid var(--trait);background:#fff;
+    padding:9px 11px;border-radius:4px;line-height:1.45
+  }
+  .candidats button:hover{border-color:var(--canard);background:#F6FAFB}
+  .candidats .nom{font-family:Georgia,serif;font-size:14.5px;color:var(--nuit);display:block;margin-bottom:3px}
+  .candidats .badge{
+    display:inline-block;font-size:11px;padding:1px 7px;border-radius:9px;margin:0 4px 3px 0;
+    background:#EEF1F4;color:#4A5561;border:1px solid var(--trait)
+  }
+  .candidats .badge.actif{background:#E8F4EC;color:#1F7A4D;border-color:#BFE0CB}
+  .candidats .badge.cesse{background:#FBEAEF;color:var(--carmin);border-color:#EFC3D0}
+  .candidats .det{font-size:12px;color:#4A5561;display:block}
+  .candidats .det b{color:var(--nuit);font-weight:600;font-variant-numeric:tabular-nums}
+  .candidats .src{font-size:11.5px;color:var(--gris);margin:6px 0 0}
+  textarea.coller{
+    width:100%;height:90px;margin-top:9px;border:1px solid var(--trait);border-radius:3px;
+    padding:7px;font-family:Consolas,monospace;font-size:12px;display:none
+  }
+  textarea.coller.visible{display:block}
+  /* ---- écran de contrôle de la lecture d'état hypothécaire ---- */
+  .lect-fond{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:900;display:flex;align-items:center;justify-content:center;padding:18px}
+  .lect{background:#fff;border-radius:10px;width:min(1500px,98vw);height:min(920px,94vh);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 18px 48px rgba(0,0,0,.28)}
+  .lect-tete{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--trait,#e5e7eb)}
+  .lect-tete .lect-sous{color:#6b7280;font-size:13px;flex:1}
+  .lect-corps{flex:1;display:flex;min-height:0}
+  .lect-gauche{width:56%;overflow:auto;padding:14px 16px;border-right:1px solid var(--trait,#e5e7eb)}
+  .lect-droite{flex:1;overflow:auto;padding:8px;background:#f3f4f6;text-align:center}
+  .lect-droite canvas{max-width:100%;box-shadow:0 2px 10px rgba(0,0,0,.18);background:#fff}
+  .lect-aide{color:#6b7280;font-size:13px;margin-top:24px}
+  .lect-entete{background:#f8fafc;border:1px solid var(--trait,#e5e7eb);border-radius:8px;padding:10px 12px;margin-bottom:12px}
+  .lect-entete ul{list-style:none;margin:6px 0 0;padding:0;font-size:13px;line-height:1.7}
+  .lect-compte{margin:8px 0 0;font-size:13px;color:#374151}
+  .lect-mention{border:1px solid var(--trait,#e5e7eb);border-radius:8px;padding:10px 12px;margin-bottom:10px}
+  .lect-mtete{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+  .lect-rub{color:#6b7280;font-size:12px;flex:1}
+  .lect-ok{font-size:12px;color:#374151;white-space:nowrap}
+  .lect-champs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px}
+  .lect-champs label{display:flex;flex-direction:column;font-size:12px;color:#6b7280;gap:3px}
+  .lect-champs input{border:1px solid var(--trait,#d1d5db);border-radius:6px;padding:4px 7px;font:inherit;font-size:13px;color:#111827}
+  .lect-src{font-size:11px;color:#9ca3af;display:flex;align-items:center;gap:6px}
+  .lect-parc,.lect-parties,.lect-comp{font-size:12px;color:#374151;margin:8px 0 0;line-height:1.5}
+  .lect-comp{color:#6b7280;font-style:italic}
+  button.pg{border:1px solid var(--trait,#d1d5db);background:#fff;border-radius:5px;padding:1px 6px;font:inherit;font-size:11px;color:#2563eb;cursor:pointer}
+  button.pg:hover{background:#eff6ff}
+  button.pg.actif{background:#2563eb;border-color:#2563eb;color:#fff}
+  .lect-pied{border-top:1px solid var(--trait,#e5e7eb);padding-top:12px;margin-top:14px}
+  .lect-pied textarea{width:100%;border:1px solid var(--trait,#d1d5db);border-radius:6px;padding:7px;font:inherit;font-size:13px;margin-top:6px}
+  .lect-note{font-size:12px;color:#6b7280;margin:6px 0 10px}
+  .lect-boutons{display:flex;gap:10px}
+  .lect-msg{font-size:13px;margin:10px 0 0;min-height:18px}
+  .lect-msg.ok{color:#15803d}
+  .lect-msg.alerte{color:#b91c1c}
+  .lect-vide{color:#6b7280;font-size:13px;padding:10px 0}
+  .pieces li button.lire{border:1px solid var(--trait,#d1d5db);background:#fff;border-radius:6px;padding:2px 8px;font:inherit;font-size:12px;cursor:pointer}
+  .pieces li button.lire:hover{background:#f3f4f6}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="bandeau">
+    <h1>FUSION</h1>
+    <span class="sous">Regroupement par unité foncière</span>
+    <div class="compteurs">
+      <span>Parcelles <b id="c-parcelles">0</b></span>
+      <span>Groupes <b id="c-groupes">0</b></span>
+      <span>Surface <b id="c-surface">0 ha</b></span>
+      <span id="persist" class="persist"></span>
+      <button type="button" id="btn-drive" class="btn-drive">Connecter le Drive</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="panneau">
+
+      <div class="source">
+        <div class="societe">
+          <label for="societe-saisie">Société</label>
+          <div class="societe-ligne">
+            <input type="text" id="societe-saisie" placeholder="SIREN ou dénomination" autocomplete="off">
+            <button class="btn plein" id="btn-societe">Chercher</button>
+          </div>
+          <div class="societe-etat" id="societe-etat"></div>
+          <ul class="candidats" id="candidats"></ul>
+          <div class="dossiers" id="dossiers"></div>
+        </div>
+        <div class="depose" id="depose">
+          <p>ou déposez un GeoJSON de parcelles</p>
+          <div class="ligne-boutons">
+            <button class="btn" id="btn-fichier">Choisir un fichier</button>
+            <button class="btn" id="btn-coller">Coller du texte</button>
+            <button class="btn" id="btn-essai">Jeu d'essai</button>
+          </div>
+          <textarea class="coller" id="zone-coller" placeholder="Collez ici le contenu GeoJSON, puis Ctrl+Entrée"></textarea>
+        </div>
+        <input type="file" id="fichier" accept=".geojson,.json,application/geo+json,application/json" hidden>
+      </div>
+
+      <div class="reglages">
+        <div class="reglage">
+          <label for="rayon">Voisinage affiché</label>
+          <input type="range" id="rayon" min="0" max="500" step="10" value="100">
+          <span class="val" id="rayon-val">100 m</span>
+        </div>
+        <div class="reglage">
+          <label for="rapproch">Rapprochements proposés jusqu'à</label>
+          <input type="range" id="rapproch" min="0" max="80" step="5" value="30">
+          <span class="val" id="rapproch-val">30 m</span>
+        </div>
+        <div class="reglage">
+          <label for="mini">Longueur minimale de limite commune</label>
+          <input type="number" id="mini" min="0" max="20" step="0.5" value="1">
+          <span class="val">m</span>
+        </div>
+        <div class="reglage">
+          <label for="tolerance">Tolérance de contact entre contours</label>
+          <input type="number" id="tolerance" min="0" max="3" step="0.1" value="0.5">
+          <span class="val">m</span>
+        </div>
+      </div>
+
+      <div class="liste" id="liste">
+        <p class="vide">Aucune parcelle chargée. Déposez un GeoJSON, ou ouvrez le jeu d'essai pour voir le regroupement à l'œuvre.</p>
+      </div>
+
+      <div class="pied">
+        <button class="btn plein" id="btn-fusionner" disabled>Fusionner les groupes cochés</button>
+        <button class="btn" id="btn-recalculer" disabled>Recalculer</button>
+        <button class="btn" id="btn-export" disabled>Exporter les groupes</button>
+        <button class="btn plein" id="btn-arbo" disabled title="Pose la numérotation définitive (SPF, commune, section) puis crée le dossier Drive de la société, un dossier par groupe et ses quatre sous-dossiers">Numéroter et créer le Drive</button>
+      </div>
+
+    </section>
+
+    <section class="carte-zone">
+      <div id="carte"></div>
+      <div class="legende">
+        <div><i style="background:#A01040"></i>Unité foncière retenue</div>
+        <div><i style="background:#1F7A4D"></i>Parcelles de la société à proximité</div>
+        <div><i style="background:#8C97A3"></i>Autres parcelles de la société</div>
+        <div><i style="background:#FF982D"></i>Rapprochement examiné</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script defer src="https://attente.vercel.app/attente.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script>
+"use strict";
+
+/* Seuil au-delà duquel ATTENTE prend le relais de l'indicateur discret
+   (règle de la suite, décision du 02/09 : 30 s ; abaisser à 2 000 pendant
+   les tests, remettre à 30 000 une fois la greffe validée). */
+const ATTENTE_SEUIL_MS = 30000;
+
+/* ---- Services de la publicité foncière — PREMIÈRE CLÉ DE TRI des groupes ----
+   Source : annuaire de l'administration (DILA, service-public.fr, licence ouverte),
+   relevé le 14/09/2026 via l'API api-lannuaire — 127 services de type « hypotheque »
+   (SPF, SPFE, livres fonciers de Moselle, CPI de Mayotte). L'annuaire donne le
+   SIÈGE de chaque service, pas son ressort communal : la table est donc sûre pour
+   les 75 départements qui n'ont plus qu'UN service, et reste à compléter commune
+   par commune pour les 23 départements à ressort multiple (dont le Nord). Tant
+   qu'une commune de ces départements n'est pas renseignée, le groupe s'affiche
+   sous « SPF à préciser ». Mise à jour : rejouer l'extraction DILA, un service
+   modifié y porte sa date. */
+const SPF = {
+  // Départements à service unique : département → service
+  departement: {
+    "01":"Nantua","02":"Laon","03":"Yzeure","04":"Digne-les-Bains","05":"Gap","07":"Privas",
+    "08":"Charleville-Mézières","09":"Foix","10":"Troyes","11":"Carcassonne","12":"Rodez",
+    "14":"Caen","15":"Aurillac","16":"Angoulême","18":"Cher (Bourges)","19":"Tulle","21":"Dijon",
+    "22":"Saint-Brieuc","23":"Guéret","24":"Périgueux","26":"Valence","27":"Évreux","28":"Chartres",
+    "2A":"Ajaccio","2B":"Bastia","30":"Nîmes","32":"Auch","35":"Rennes","36":"Châteauroux",
+    "37":"Tours","39":"Jura (Lons-le-Saunier)","40":"Mont-de-Marsan","41":"Blois","43":"Le Puy-en-Velay",
+    "45":"Orléans","46":"Cahors","47":"Lot-et-Garonne (Agen)","48":"Mende","49":"Angers",
+    "50":"Coutances","51":"Reims","52":"Chaumont","53":"Laval","54":"Nancy","55":"Bar-le-Duc",
+    "58":"Nevers","61":"Alençon","63":"Clermont-Ferrand","65":"Tarbes","66":"Perpignan",
+    "70":"Vesoul","71":"Mâcon","72":"Sarthe (Le Mans)","73":"Chambéry","78":"Versailles",
+    "79":"Niort","80":"Abbeville","81":"Castres","82":"Tarn-et-Garonne (Montauban)","84":"Avignon",
+    "85":"La Roche-sur-Yon","86":"Poitiers","87":"Limoges","88":"Épinal","89":"Auxerre",
+    "90":"Belfort","91":"Essonne (Évry)","93":"Seine-Saint-Denis (Bobigny)","94":"Créteil",
+    "95":"Saint-Leu-la-Forêt","971":"Les Abymes","972":"Fort-de-France","973":"Cayenne",
+    "974":"Saint-Denis de La Réunion","976":"Mamoudzou (CPI)"
+  },
+  // Départements à ressort multiple : les services en présence, le ressort communal étant à fournir
+  multiples: {
+    "06":["Antibes","Nice"],"13":["Aix-en-Provence","Marseille"],"17":["La Rochelle","Saintes"],
+    "25":["Besançon","Montbéliard"],"29":["Brest","Quimper"],"31":["Muret","Toulouse"],
+    "33":["Bordeaux","Libourne"],"34":["Béziers","Montpellier"],"38":["Grenoble","Vienne"],
+    "42":["Roanne","Saint-Étienne"],"44":["Nantes","Saint-Nazaire"],"56":["Lorient","Vannes"],
+    "57":["Metz (livre foncier)","Sarreguemines (livre foncier)","Thionville (livre foncier)"],
+    "59":["Dunkerque","Lille","Valenciennes"],"60":["Beauvais","Senlis"],
+    "62":["Arras","Béthune","Boulogne-sur-Mer"],"64":["Bayonne","Pau"],"69":["Lyon 1","Lyon 3"],
+    "74":["Annecy","Bonneville"],"75":["Paris 1","Paris 2"],"76":["Le Havre","Rouen"],
+    "77":["Coulommiers","Meaux","Melun"],"83":["Draguignan","Toulon"],"92":["Nanterre","Vanves"]
+  },
+  // Ressort communal connu : code INSEE → service. Paris est réglé par arrondissement
+  // (le ressort figure dans l'intitulé même des deux services).
+  commune: {
+    "75101":"Paris 1","75102":"Paris 1","75103":"Paris 1","75104":"Paris 1","75108":"Paris 1","75109":"Paris 1",
+    "75110":"Paris 1","75117":"Paris 1","75118":"Paris 1","75119":"Paris 1","75120":"Paris 1",
+    "75105":"Paris 2","75106":"Paris 2","75107":"Paris 2","75111":"Paris 2","75112":"Paris 2","75113":"Paris 2",
+    "75114":"Paris 2","75115":"Paris 2","75116":"Paris 2"
+  }
+};
+function departementDe(insee){
+  const c = String(insee || "");
+  return c.startsWith("97") ? c.slice(0,3) : c.slice(0,2);
+}
+function spfDe(insee){
+  if(!insee) return null;
+  if(SPF.commune[insee]) return SPF.commune[insee];
+  const d = departementDe(insee);
+  if(SPF.departement[d]) return SPF.departement[d];
+  return null;                                  // département à ressort multiple non renseigné
+}
+
+/* ============================================================
+   FUSION — moteur de regroupement par unité foncière
+   Règles métier arrêtées :
+   - contiguïté calculée uniquement sur la géométrie cadastrale ;
+   - un contact par un simple coin (point unique) ne vaut PAS contiguïté :
+     il faut un segment de limite commun d'au moins `minCommun` mètres ;
+   - deux parcelles séparées par une voie forment par défaut deux unités
+     foncières distinctes — le regroupement se fait alors à la main ;
+   - une parcelle décochée ne disparaît jamais : elle retombe dans un
+     nouveau groupe, recalculé par contiguïté sur le reliquat.
+   ============================================================ */
+
+const etat = {
+  parcelles: [],      // {i, ref, ring[], surface, centre:{x,y}, bbox}
+  groupes: [],        // {num, membres:Set<int>, coche:bool}
+  adjacence: [],      // Set<int> par parcelle
+  ouvert: null,       // num du groupe déplié
+  compteurGroupe: 0,
+  lat0: 0,
+  sansGeometrie: [],     // références au relevé mais absentes du plan (REDPAR)
+  zoomSur: null,         // groupe sur lequel caler la carte au prochain rendu
+  suggestions: [],       // rapprochements proposés {a, b, distance, motifs}
+  suggActive: null,      // clé du rapprochement épinglé (cliqué) : ses deux groupes restent allumés et la carte se cale dessus
+  suggExtras: new Set(), // groupes ajoutés au rapprochement épinglé par clic sur la carte
+  ignores: new Set(),    // paires écartées par l'utilisateur (clé stable par parcelles)
+  dossier: null,         // {siren, denomination, millesime} quand le travail est persisté dans Neon
+  documents: [],         // pièces déposées (miroir de fusion_document)
+  driveSociete: null,    // {racine, societe, nom, cree_le}
+  numerotationFaite: false,
+  persist: {actif:false, minuteur:null, enCours:false, quoi:null, detail:null}
+};
+
+/* ---------- projection locale (mètres) ---------- */
+const R_TERRE = 6378137;
+function projeter(lon, lat, lat0){
+  const rad = Math.PI/180;
+  return [R_TERRE*lon*rad*Math.cos(lat0*rad), R_TERRE*lat*rad];
+}
+function deprojeter(x, y, lat0){
+  const rad = Math.PI/180;
+  return [x/(R_TERRE*rad*Math.cos(lat0*rad)), y/(R_TERRE*rad)];
+}
+
+/* ---------- lecture du GeoJSON ---------- */
+function referenceParcelle(p){
+  if(!p) return null;
+  const direct = p.idu || p.id || p.IDU || p.code || p.reference || p.ref;
+  if(direct) return String(direct);
+  const sec = p.section || p.SECTION || p.sec;
+  const num = p.numero || p.NUMERO || p.num;
+  const com = p.commune || p.COMMUNE || p.code_insee || p.insee;
+  if(sec && num) return [com, sec, String(num).padStart(4,"0")].filter(Boolean).join(" ");
+  return null;
+}
+
+function chargerGeoJSON(objet){
+  const traits = objet.type === "FeatureCollection" ? objet.features
+               : objet.type === "Feature" ? [objet]
+               : [];
+  if(!traits.length) throw new Error("Le fichier ne contient aucune entité exploitable.");
+
+  // latitude de référence pour la projection locale
+  let somme = 0, n = 0;
+  const parcourir = (c) => {
+    if(typeof c[0] === "number"){ somme += c[1]; n++; return; }
+    c.forEach(parcourir);
+  };
+  traits.forEach(t => t.geometry && parcourir(t.geometry.coordinates));
+  if(!n) throw new Error("Aucune coordonnée trouvée dans le fichier.");
+  const lat0 = somme/n;
+
+  const parcelles = [];
+  traits.forEach((t, idx) => {
+    const g = t.geometry;
+    if(!g) return;
+    const polys = g.type === "Polygon" ? [g.coordinates]
+                : g.type === "MultiPolygon" ? g.coordinates
+                : null;
+    if(!polys) return;
+
+    const anneaux = [];
+    polys.forEach(poly => poly.forEach(anneau => {
+      const pts = anneau.map(c => projeter(c[0], c[1], lat0));
+      if(pts.length > 2) anneaux.push(pts);
+    }));
+    if(!anneaux.length) return;
+
+    parcelles.push({
+      i: parcelles.length,
+      ref: referenceParcelle(t.properties) || ("Parcelle " + (idx+1)),
+      props: t.properties || {},
+      geometrie: g,                       // telle que servie, pour la persistance
+      anneaux,
+      surface: surfaceAnneaux(anneaux),
+      centre: centreAnneaux(anneaux),
+      bbox: bboxAnneaux(anneaux)
+    });
+  });
+
+  if(!parcelles.length) throw new Error("Aucune parcelle (polygone) trouvée dans le fichier.");
+  etat.lat0 = lat0;
+  etat.parcelles = parcelles;
+}
+
+function surfaceAnneaux(anneaux){
+  // shoelace : le premier anneau de chaque polygone est extérieur, les
+  // suivants sont soustraits en valeur absolue décroissante
+  let total = 0;
+  anneaux.forEach((pts, k) => {
+    let s = 0;
+    for(let i = 0, j = pts.length-1; i < pts.length; j = i++){
+      s += (pts[j][0]*pts[i][1]) - (pts[i][0]*pts[j][1]);
+    }
+    total += (k === 0 ? 1 : -1) * Math.abs(s/2);
+  });
+  return Math.max(total, 0);
+}
+function centreAnneaux(anneaux){
+  const pts = anneaux[0];
+  let x = 0, y = 0;
+  pts.forEach(p => { x += p[0]; y += p[1]; });
+  return {x: x/pts.length, y: y/pts.length};
+}
+function bboxAnneaux(anneaux){
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  anneaux.forEach(pts => pts.forEach(p => {
+    if(p[0] < x1) x1 = p[0];
+    if(p[1] < y1) y1 = p[1];
+    if(p[0] > x2) x2 = p[0];
+    if(p[1] > y2) y2 = p[1];
+  }));
+  return {x1, y1, x2, y2};
+}
+
+/* ---------- index de points (grille) ---------- */
+function creerGrille(pas){
+  const cases = new Map();
+  const cle = (a,b) => a + "|" + b;
+  return {
+    pas,
+    ajouter(x, y, id){
+      const k = cle(Math.floor(x/pas), Math.floor(y/pas));
+      let l = cases.get(k);
+      if(!l){ l = []; cases.set(k, l); }
+      l.push({x, y, id});
+    },
+    autour(x, y){
+      const cx = Math.floor(x/pas), cy = Math.floor(y/pas), out = [];
+      for(let a = -1; a <= 1; a++) for(let b = -1; b <= 1; b++){
+        const l = cases.get(cle(cx+a, cy+b));
+        if(l) out.push(...l);
+      }
+      return out;
+    },
+    dansBoite(x1, y1, x2, y2){
+      const out = [];
+      for(let a = Math.floor(x1/pas); a <= Math.floor(x2/pas); a++)
+        for(let b = Math.floor(y1/pas); b <= Math.floor(y2/pas); b++){
+          const l = cases.get(cle(a,b));
+          if(l) out.push(...l);
+        }
+      return out;
+    }
+  };
+}
+
+/* ---------- calcul de l'adjacence ---------- */
+// Longueur de la limite de A qui court à moins de `tol` de la limite de B.
+// Échantillonnage des arêtes de A tous les `pas` mètres ; un contact par un
+// coin donne ~0, deux limites qui se longent donnent leur longueur commune.
+function longueurLimiteProche(A, B, tol, pas){
+  let total = 0;
+  for(const ring of A.anneaux){
+    for(let i = 0; i < ring.length-1; i++){
+      const ax = ring[i][0], ay = ring[i][1], bx = ring[i+1][0], by = ring[i+1][1];
+      const L = Math.hypot(bx-ax, by-ay); if(L === 0) continue;
+      // pré-filtre : boîte de l'arête élargie de tol contre la boîte de B
+      if(Math.min(ax,bx) - tol > B.bbox.x2 || Math.max(ax,bx) + tol < B.bbox.x1 ||
+         Math.min(ay,by) - tol > B.bbox.y2 || Math.max(ay,by) + tol < B.bbox.y1) continue;
+      const n = Math.max(1, Math.ceil(L / pas));
+      let dedans = 0;
+      for(let k = 0; k <= n; k++){
+        const t = k/n, px = ax + t*(bx-ax), py = ay + t*(by-ay);
+        let d = Infinity;
+        for(const r2 of B.anneaux) for(let j = 0; j < r2.length-1 && d > tol; j++){
+          const v = distanceSegmentPoint(px, py, r2[j][0], r2[j][1], r2[j+1][0], r2[j+1][1]);
+          if(v < d) d = v;
+        }
+        if(d <= tol) dedans++;
+      }
+      total += L * dedans / (n+1);
+    }
+  }
+  return total;
+}
+
+function calculerAdjacence(minCommun){
+  const TOL = 0.20;                 // fusion des sommets quasi confondus (20 cm)
+  const TOL_CONTACT = parseFloat((document.getElementById("tolerance")||{}).value);
+  const tolContact = Number.isFinite(TOL_CONTACT) ? TOL_CONTACT : 0.5;
+  const grille = creerGrille(Math.max(TOL, 0.5));
+  const sommets = [];               // {x,y}
+
+  function idSommet(x, y){
+    for(const s of grille.autour(x, y)){
+      if(Math.hypot(s.x - x, s.y - y) <= TOL) return s.id;
+    }
+    const id = sommets.length;
+    sommets.push({x, y});
+    grille.ajouter(x, y, id);
+    return id;
+  }
+
+  // 1. accrochage de tous les sommets
+  const anneauxIds = etat.parcelles.map(p =>
+    p.anneaux.map(pts => pts.map(pt => idSommet(pt[0], pt[1])))
+  );
+
+  // 2. densification : un sommet voisin posé au milieu d'une limite
+  //    (jonction en T) doit couper cette limite, sinon la limite commune
+  //    passe inaperçue
+  const anneauxDenses = anneauxIds.map(anneaux => anneaux.map(ids => {
+    const sortie = [];
+    for(let i = 0; i < ids.length - 1; i++){
+      const a = sommets[ids[i]], b = sommets[ids[i+1]];
+      sortie.push(ids[i]);
+      const x1 = Math.min(a.x,b.x)-TOL, x2 = Math.max(a.x,b.x)+TOL;
+      const y1 = Math.min(a.y,b.y)-TOL, y2 = Math.max(a.y,b.y)+TOL;
+      const dx = b.x-a.x, dy = b.y-a.y;
+      const long2 = dx*dx + dy*dy;
+      if(long2 < 1e-9) continue;
+      const inserts = [];
+      for(const s of grille.dansBoite(x1, y1, x2, y2)){
+        if(s.id === ids[i] || s.id === ids[i+1]) continue;
+        const t = ((s.x-a.x)*dx + (s.y-a.y)*dy) / long2;
+        if(t <= 0.0001 || t >= 0.9999) continue;
+        const px = a.x + t*dx, py = a.y + t*dy;
+        if(Math.hypot(s.x-px, s.y-py) <= TOL) inserts.push({t, id:s.id});
+      }
+      inserts.sort((u,v) => u.t - v.t);
+      let dernier = -1;
+      inserts.forEach(o => { if(o.id !== dernier){ sortie.push(o.id); dernier = o.id; } });
+    }
+    sortie.push(ids[ids.length-1]);
+    return sortie;
+  }));
+
+  // 3. limites communes : une arête portée par deux parcelles différentes
+  const aretes = new Map();         // "a-b" -> {longueur, parcelles:Set}
+  anneauxDenses.forEach((anneaux, ip) => anneaux.forEach(ids => {
+    for(let i = 0; i < ids.length - 1; i++){
+      const a = ids[i], b = ids[i+1];
+      if(a === b) continue;
+      const k = Math.min(a,b) + "-" + Math.max(a,b);
+      let e = aretes.get(k);
+      if(!e){
+        e = {longueur: Math.hypot(sommets[a].x-sommets[b].x, sommets[a].y-sommets[b].y), parcelles: new Set()};
+        aretes.set(k, e);
+      }
+      e.parcelles.add(ip);
+    }
+  }));
+
+  const partage = new Map();        // "ip1-ip2" -> longueur cumulée
+  aretes.forEach(e => {
+    if(e.parcelles.size < 2) return;
+    const liste = [...e.parcelles];
+    for(let i = 0; i < liste.length; i++) for(let j = i+1; j < liste.length; j++){
+      const k = liste[i] + "-" + liste[j];
+      partage.set(k, (partage.get(k) || 0) + e.longueur);
+    }
+  });
+
+  const adj = etat.parcelles.map(() => new Set());
+  partage.forEach((longueur, k) => {
+    if(longueur < minCommun) return;     // coin unique ou contact négligeable
+    const [a, b] = k.split("-").map(Number);
+    adj[a].add(b);
+    adj[b].add(a);
+  });
+
+  // 4. second test, pour les contours décalés entre feuilles ou sections : deux
+  //    parcelles dont les limites se longent à moins de tolContact sur au moins
+  //    minCommun mètres sont contiguës, même sans aucun sommet en commun.
+  if(tolContact > 0){
+    const P = etat.parcelles;
+    const pas = Math.max(0.25, Math.min(1, minCommun / 2 || 0.5));
+    // index des boîtes pour ne comparer que les voisines
+    const cell = 50, cases = new Map();
+    const cle = (x,y) => Math.floor(x/cell) + "|" + Math.floor(y/cell);
+    P.forEach(p => {
+      for(let cx = Math.floor(p.bbox.x1/cell); cx <= Math.floor(p.bbox.x2/cell); cx++)
+        for(let cy = Math.floor(p.bbox.y1/cell); cy <= Math.floor(p.bbox.y2/cell); cy++){
+          const k = cx + "|" + cy; if(!cases.has(k)) cases.set(k, []); cases.get(k).push(p.i);
+        }
+    });
+    const vus = new Set();
+    P.forEach(p => {
+      const cand = new Set();
+      for(let cx = Math.floor((p.bbox.x1-tolContact)/cell); cx <= Math.floor((p.bbox.x2+tolContact)/cell); cx++)
+        for(let cy = Math.floor((p.bbox.y1-tolContact)/cell); cy <= Math.floor((p.bbox.y2+tolContact)/cell); cy++)
+          (cases.get(cx + "|" + cy) || []).forEach(j => { if(j !== p.i) cand.add(j); });
+      cand.forEach(j => {
+        if(adj[p.i].has(j)) return;
+        const pk = Math.min(p.i,j) + "-" + Math.max(p.i,j); if(vus.has(pk)) return; vus.add(pk);
+        const q = P[j];
+        if(distanceBoites(p.bbox, q.bbox) > tolContact) return;
+        // Un simple coin cumule à lui seul ~2×tol de « limite proche » (les points à moins de
+        // tol du sommet, sur les deux arêtes) : on l'écarte en exigeant minCommun AU-DELÀ de cet effet.
+        const l = longueurLimiteProche(p, q, tolContact, pas);
+        if(l >= minCommun + 2 * tolContact){ adj[p.i].add(j); adj[j].add(p.i); }
+      });
+    });
+  }
+  etat.adjacence = adj;
+}
+
+/* ---------- composantes connexes ---------- */
+function composantes(sousEnsemble){
+  const restant = new Set(sousEnsemble);
+  const blocs = [];
+  while(restant.size){
+    const depart = restant.values().next().value;
+    const bloc = new Set([depart]);
+    const pile = [depart];
+    restant.delete(depart);
+    while(pile.length){
+      const courant = pile.pop();
+      etat.adjacence[courant].forEach(v => {
+        if(restant.has(v)){ restant.delete(v); bloc.add(v); pile.push(v); }
+      });
+    }
+    blocs.push(bloc);
+  }
+  return blocs;
+}
+
+function numeroterGroupe(membres){
+  etat.compteurGroupe++;
+  return {num: etat.compteurGroupe, membres, coche:false};
+}
+
+function regrouperAutomatiquement(){
+  const minCommun = parseFloat(document.getElementById("mini").value) || 0;
+  calculerAdjacence(minCommun);
+  etat.compteurGroupe = 0;
+  etat.groupes = composantes(etat.parcelles.map(p => p.i))
+    .sort((a,b) => b.size - a.size)
+    .map(numeroterGroupe);
+  etat.ouvert = etat.groupes.length ? etat.groupes[0].num : null;
+  proposerRapprochements();
+}
+
+/* ---------- rapprochements : FUSION propose, l'humain valide ---------- */
+function voieDe(adresse){
+  // « 0031 RUE BLANCHE BANNIERE », « 9001 RUE DE L EUROPE », « RUE DE VERDUN »
+  return String(adresse || "").replace(/^\d{4}\s?[A-Z]?\s+/, "").trim();
+}
+function distanceSegmentPoint(px, py, ax, ay, bx, by){
+  const dx = bx-ax, dy = by-ay, l2 = dx*dx + dy*dy;
+  let t = l2 ? ((px-ax)*dx + (py-ay)*dy)/l2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t*dx), py - (ay + t*dy));
+}
+function distanceContours(p, q){
+  // plus courte distance entre les deux contours (sommets de l'un → arêtes de l'autre, et inversement)
+  let d = Infinity;
+  const passe = (A, B) => {
+    for(const pts of A.anneaux) for(const s of pts){
+      for(const ring of B.anneaux) for(let i = 0; i < ring.length-1; i++){
+        const v = distanceSegmentPoint(s[0], s[1], ring[i][0], ring[i][1], ring[i+1][0], ring[i+1][1]);
+        if(v < d) d = v;
+        if(d === 0) return;
+      }
+    }
+  };
+  passe(p, q); if(d > 0) passe(q, p);
+  return d;
+}
+function cleSuggestion(ga, gb){
+  const a = Math.min(...ga.membres), b = Math.min(...gb.membres);
+  return Math.min(a,b) + "|" + Math.max(a,b);
+}
+function proposerRapprochements(){
+  const seuil = parseFloat(document.getElementById("rapproch").value) || 0;
+  etat.suggestions = [];
+  if(etat.groupes.length < 2) return;
+
+  // bbox et commune par groupe
+  const infos = etat.groupes.map(g => {
+    const membres = [...g.membres].map(i => etat.parcelles[i]);
+    let x1=Infinity,y1=Infinity,x2=-Infinity,y2=-Infinity;
+    membres.forEach(p => { x1=Math.min(x1,p.bbox.x1); y1=Math.min(y1,p.bbox.y1); x2=Math.max(x2,p.bbox.x2); y2=Math.max(y2,p.bbox.y2); });
+    return {g, membres, bbox:{x1,y1,x2,y2},
+      communes: new Set(membres.map(p => p.props.commune).filter(Boolean)),
+      voies: new Set(membres.map(p => voieDe(p.props.adresse)).filter(v => v && !/^(LE |LA |LES |L )/.test(v) && v.length > 3))};
+  });
+
+  for(let i = 0; seuil > 0 && i < infos.length; i++) for(let j = i+1; j < infos.length; j++){
+    const A = infos[i], B = infos[j];
+    if(distanceBoites(A.bbox, B.bbox) > seuil) continue;
+    const memeCommune = [...A.communes].some(c => B.communes.has(c));
+    if(!memeCommune) continue;                 // un SPF et un plan par commune : on ne rapproche pas au-delà
+    const cle = cleSuggestion(A.g, B.g);
+    if(etat.ignores.has(cle)) continue;
+
+    // distance réelle entre contours, sur les seules paires de parcelles dont les boîtes sont proches
+    let d = Infinity;
+    for(const p of A.membres){
+      for(const q of B.membres){
+        if(distanceBoites(p.bbox, q.bbox) > seuil) continue;
+        const v = distanceContours(p, q);
+        if(v < d) d = v;
+      }
+      if(d === 0) break;
+    }
+    if(d > seuil) continue;
+
+    const motifs = [];
+    const voiesCommunes = [...A.voies].filter(v => B.voies.has(v));
+    if(voiesCommunes.length) motifs.push("même voie : " + voiesCommunes[0]);
+    motifs.push(d < 1 ? "quasi jointifs" : Math.round(d) + " m d'écart");
+    etat.suggestions.push({a: A.g.num, b: B.g.num, distance: d, motifs, memeVoie: voiesCommunes.length > 0, cle});
+  }
+  // Le motif le plus solide vient du fichier immobilier lui-même : une pièce
+  // (état hypothécaire ou titre) qui cite des parcelles de deux groupes les
+  // relie, quelle que soit la distance. Ces paires passent en tête.
+  const parPaire = new Map();
+  (etat.documents || []).forEach(doc => {
+    const gs = groupesDesReferences(doc.lecture && doc.lecture.references);
+    for(let i = 0; i < gs.length; i++) for(let j = i+1; j < gs.length; j++){
+      const k = Math.min(gs[i],gs[j]) + "-" + Math.max(gs[i],gs[j]);
+      if(!parPaire.has(k)) parPaire.set(k, []);
+      parPaire.get(k).push(doc);
+    }
+  });
+  parPaire.forEach((docs, k) => {
+    const [a, b] = k.split("-").map(Number);
+    const ga = etat.groupes.find(g => g.num === a), gb = etat.groupes.find(g => g.num === b);
+    if(!ga || !gb) return;
+    const cle = cleSuggestion(ga, gb);
+    if(etat.ignores.has(cle)) return;
+    const libelle = docs.length === 1 ? (docs[0].type === "EHF" ? "même état hypothécaire" : "même titre") + " : " + docs[0].nom
+                                      : docs.length + " pièces communes";
+    const existante = etat.suggestions.find(x => x.cle === cle);
+    if(existante){ existante.motifs.unshift(libelle); existante.piece = true; existante.docs = docs; }
+    else etat.suggestions.push({a, b, distance: Infinity, motifs:[libelle], memeVoie:false, piece:true, docs, cle});
+  });
+  // les plus convaincants d'abord : pièce commune, puis même voie, puis distance croissante
+  etat.suggestions.sort((u,v) => ((v.piece?1:0) - (u.piece?1:0)) || (v.memeVoie - u.memeVoie) || (u.distance - v.distance));
+}
+
+function fusionnerNums(nums){
+  const cibles = etat.groupes.filter(g => nums.includes(g.num));
+  if(cibles.length < 2) return;
+  const membres = new Set();
+  cibles.forEach(g => g.membres.forEach(i => membres.add(i)));
+  const position = etat.groupes.indexOf(cibles[0]);
+  const num = Math.min(...cibles.map(g => g.num));
+  etat.groupes = etat.groupes.filter(g => !nums.includes(g.num));
+  const conserve = cibles.find(g => g.num === num);
+  const nouveau = {num, membres, coche:false, manuel:true, drive: (conserve && conserve.drive) || {}};
+  etat.groupes.splice(Math.min(position, etat.groupes.length), 0, nouveau);
+  etat.ouvert = num;
+  etat.zoomSur = num;
+  marquerModifie("fusion", {groupes: nums.slice().sort((a,b)=>a-b), resultat: num});
+}
+
+/* ---------- affinage ---------- */
+function retirerDuGroupe(numGroupe, indexParcelles){
+  // RÈGLE : dès que l'utilisateur touche un groupe, c'est SON découpage qui
+  // fait foi, plus la géométrie. Le reliquat reste UN seul groupe et garde son
+  // numéro, même si le retrait a coupé la chaîne de contiguïté (rangée de
+  // maisons de ville : chaque parcelle ne touche que ses deux voisines). Seules
+  // les parcelles retirées partent dans un nouveau groupe, où les contiguës
+  // entre elles restent ensemble.
+  const g = etat.groupes.find(x => x.num === numGroupe);
+  if(!g) return;
+  const retirees = indexParcelles.filter(i => g.membres.has(i));
+  if(!retirees.length || retirees.length >= g.membres.size) return;
+  retirees.forEach(i => g.membres.delete(i));
+  g.manuel = true;
+  const position = etat.groupes.indexOf(g);
+  const nouveaux = composantes(retirees).map(numeroterGroupe);
+  nouveaux.forEach(n => { n.drive = {}; });
+  etat.groupes.splice(position + 1, 0, ...nouveaux);
+  etat.ouvert = g.num;                  // on reste sur le groupe qu'on est en train d'affiner
+  marquerModifie("detachement", {groupe: g.num, parcelles: retirees.map(i => etat.parcelles[i].props.idu || etat.parcelles[i].ref)});
+}
+
+function fusionnerCoches(){
+  const nums = etat.groupes.filter(g => g.coche).map(g => g.num);
+  if(nums.length < 2) return;
+  fusionnerNums(nums);
+}
+
+/* ---------- carte ---------- */
+let carte, coucheParcelles;
+function initCarte(){
+  carte = L.map("carte", {zoomControl:true, attributionControl:true});
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 20, attribution: "© OpenStreetMap"
+  }).addTo(carte);
+  carte.setView([46.6, 2.5], 6);
+  coucheParcelles = L.layerGroup().addTo(carte);
+}
+
+function dessiner(){
+  if(!coucheParcelles) return;
+  coucheParcelles.clearLayers();
+  if(!etat.parcelles.length) return;
+
+  const groupeOuvert = etat.groupes.find(g => g.num === etat.ouvert);
+  const retenues = groupeOuvert ? groupeOuvert.membres : new Set();
+  const rayon = parseFloat(document.getElementById("rayon").value) || 0;
+
+  // parcelles de la société situées dans le rayon autour de l'unité retenue
+  const proches = new Set();
+  if(rayon > 0 && retenues.size){
+    etat.parcelles.forEach(p => {
+      if(retenues.has(p.i)) return;
+      for(const j of retenues){
+        if(distanceBoites(p.bbox, etat.parcelles[j].bbox) <= rayon){ proches.add(p.i); break; }
+      }
+    });
+  }
+
+  const surlignes = etat.surlignes ? new Set([...etat.surlignes].flatMap(n => {
+    const g = etat.groupes.find(x => x.num === n); return g ? [...g.membres] : [];
+  })) : null;
+
+  etat.parcelles.forEach(p => {
+    const retenue = retenues.has(p.i);
+    const proche = proches.has(p.i);
+    const enSugg = surlignes && surlignes.has(p.i);
+    const couleur = enSugg ? "#FF982D" : retenue ? "#A01040" : proche ? "#1F7A4D" : "#8C97A3";
+    const latlngs = p.anneaux.map(pts => pts.map(pt => {
+      const c = deprojeter(pt[0], pt[1], etat.lat0);
+      return [c[1], c[0]];
+    }));
+    const forme = L.polygon(latlngs, {
+      color: couleur,
+      weight: (retenue || enSugg) ? 2.2 : 1.2,
+      fillColor: couleur,
+      fillOpacity: enSugg ? 0.5 : retenue ? 0.42 : proche ? 0.22 : 0.10
+    });
+    forme.bindTooltip(p.ref + " — " + formatSurface(p.surface), {sticky:true});
+    forme.on("click", () => { basculerParcelle(p.i); });
+    coucheParcelles.addLayer(forme);
+  });
+
+  if(!dessiner.cadre){
+    const b = L.latLngBounds([]);
+    etat.parcelles.forEach(p => p.anneaux[0].forEach(pt => {
+      const c = deprojeter(pt[0], pt[1], etat.lat0);
+      b.extend([c[1], c[0]]);
+    }));
+    if(b.isValid()) carte.fitBounds(b, {padding:[30,30]});
+    dessiner.cadre = true;
+  }
+
+  // Rapprochement épinglé : la carte se cale sur les deux groupes ensemble
+  if(etat.zoomSurGroupes){
+    const b = L.latLngBounds([]);
+    etat.zoomSurGroupes.forEach(n => {
+      const g = etat.groupes.find(x => x.num === n); if(!g) return;
+      g.membres.forEach(i => etat.parcelles[i].anneaux[0].forEach(pt => {
+        const c = deprojeter(pt[0], pt[1], etat.lat0); b.extend([c[1], c[0]]);
+      }));
+    });
+    if(b.isValid()) carte.fitBounds(b.pad(0.6), {maxZoom: 19});
+    etat.zoomSurGroupes = null;
+  }
+
+  // Ouverture d'un groupe : la carte se cale dessus, avec assez de marge pour
+  // voir le voisinage vert autour
+  if(etat.zoomSur != null && groupeOuvert){
+    const b = L.latLngBounds([]);
+    groupeOuvert.membres.forEach(i => etat.parcelles[i].anneaux[0].forEach(pt => {
+      const c = deprojeter(pt[0], pt[1], etat.lat0);
+      b.extend([c[1], c[0]]);
+    }));
+    if(b.isValid()) carte.fitBounds(b.pad(1.2), {maxZoom: 18});
+    etat.zoomSur = null;
+  }
+}
+
+function distanceBoites(a, b){
+  const dx = Math.max(0, Math.max(a.x1 - b.x2, b.x1 - a.x2));
+  const dy = Math.max(0, Math.max(a.y1 - b.y2, b.y1 - a.y2));
+  return Math.hypot(dx, dy);
+}
+
+function basculerParcelle(i){
+  const g = etat.groupes.find(x => x.membres.has(i));
+  if(!g) return;
+  // Rapprochement épinglé : le clic ajoute le groupe de la parcelle à la fusion proposée (ou le retire s'il y était déjà).
+  // L'unité de fusion reste le groupe : si la parcelle appartient à un groupe de plusieurs parcelles, il vient en entier.
+  if(etat.suggActive){
+    const sg = etat.suggestions.find(x => x.cle === etat.suggActive);
+    if(sg && g.num !== sg.a && g.num !== sg.b){
+      if(etat.suggExtras.has(g.num)) etat.suggExtras.delete(g.num); else etat.suggExtras.add(g.num);
+      etat.surlignes = new Set([sg.a, sg.b, ...etat.suggExtras]);
+      rendre();
+      return;
+    }
+    if(sg) return;   // clic sur l'un des deux groupes de base : rien à faire
+  }
+  if(g.num === etat.ouvert){
+    if(g.membres.size === 1){ signaler("Ce groupe ne compte qu'une parcelle : rien à détacher."); return; }
+    retirerDuGroupe(g.num, [i]);
+  }else{
+    etat.ouvert = g.num;
+  }
+  rendre();
+}
+
+/* ============================================================
+   DÉPÔT DES PIÈCES — Drive, plan de nommage, détection
+   ------------------------------------------------------------
+   Mécanisme repris de TRENTE : le collaborateur se connecte avec son compte
+   Google (projet OAuth « FIDAL - Apps », mode TEST, chaque utilisateur déclaré
+   testeur) et le NAVIGATEUR écrit lui-même dans le Drive. Aucun secret Google
+   côté Vercel ; la base ne garde que l'identifiant Drive, l'empreinte et le
+   nom composé — un seul exemplaire du fichier, celui du Drive.
+
+   Plan de nommage : celui de MARTEAU (fiche OUT.IA.2.1.1 v2), à l'identique :
+   GROUPE (4 chiffres) _ CODE (3 chiffres) _ PIÈCE _ DATE (AAAAMMJJ), tiret bas,
+   majuscules, sans accent. Le sous-dossier Drive se déduit du code.
+   ============================================================ */
+
+const OAUTH_CLIENT_ID = "82507767087-kr2q7r67r2m4llj6ftldgr4rc2n24gbu.apps.googleusercontent.com"; // même client que TRENTE
+const OAUTH_SCOPE = "https://www.googleapis.com/auth/drive";   // écriture : créer l'arborescence et déposer sous une racine existante
+const DRIVE_RACINE = "1WlORr95eHC9fVz-Fle4Vrq3QSnCX1anB";        // dossier Drive « FIDAL FUSION » : les dossiers société se créent dessous
+
+// Quatre sous-dossiers par groupe. Les trois premiers sont la structure DATA ROOM ;
+// « Notes de travail » reste interne au cabinet (documents déjà rédigés repris,
+// pièces à qualifier) et sera exclu de toute extraction vers un tiers.
+const TYPES_PIECE = {
+  EHF: {libelle:"État hypothécaire",              code:"051", piece:"EHF", dossier:"État hypothécaire",                cle:"ehf", data_room:true},
+  OP:  {libelle:"Titre de propriété (immédiat)",  code:"021", piece:"OP",  dossier:"Origine de propriété",             cle:"op",  data_room:true},
+  OPA: {libelle:"Titre antérieur (trentenaire)",  code:"022", piece:"OPA", dossier:"Origine de propriété antérieure",  cle:"opa", data_room:true},
+  NDT: {libelle:"Note de travail (déjà rédigé)",  code:"020", piece:"NDT", dossier:"Notes de travail",                 cle:"ndt", data_room:false},
+  AQ:  {libelle:"À qualifier",                    code:"020", piece:"AQ",  dossier:"Notes de travail",                 cle:"ndt", data_room:false}
+};
+const ANS_TRENTENAIRE = 30;
+
+/* ---------- connexion Google ---------- */
+etat.drive = {token:null, expire:0, client:null, courriel:null};
+
+function preparerOAuth(){
+  if(typeof google === "undefined" || !google.accounts){ setTimeout(preparerOAuth, 300); return; }
+  etat.drive.client = google.accounts.oauth2.initTokenClient({
+    client_id: OAUTH_CLIENT_ID, scope: OAUTH_SCOPE,
+    callback: r => {
+      if(r && r.access_token){
+        etat.drive.token = r.access_token;
+        etat.drive.expire = Date.now() + (Number(r.expires_in || 3600) - 60) * 1000;
+        majBoutonDrive("Drive connecté", "ok");
+        rendre();
+      }else{
+        majBoutonDrive("Drive : accès refusé", "alerte");
+      }
+    },
+    error_callback: e => {
+      majBoutonDrive("Drive : échec (" + (e && e.type ? e.type : "inconnu") + ")", "alerte");
+      signaler("Connexion Google impossible. Vérifier que l'origine " + location.origin + " est autorisée sur le client OAuth « FIDAL - Apps ».", true);
+    }
+  });
+}
+function majBoutonDrive(texte, classe){
+  const b = document.getElementById("btn-drive");
+  b.textContent = texte; b.className = "btn-drive" + (classe ? " " + classe : "");
+}
+function driveConnecte(){ return Boolean(etat.drive.token) && Date.now() < etat.drive.expire; }
+function exigerDrive(){
+  if(driveConnecte()) return true;
+  signaler("Connectez d'abord votre Drive (bouton en haut à droite).", true);
+  if(etat.drive.client) etat.drive.client.requestAccessToken();
+  return false;
+}
+
+/* ---------- appels Drive ---------- */
+async function driveFetch(url, options){
+  const o = Object.assign({}, options || {});
+  o.headers = Object.assign({Authorization: "Bearer " + etat.drive.token}, o.headers || {});
+  const r = await fetch(url, o);
+  if(r.status === 401){ etat.drive.token = null; majBoutonDrive("Drive : reconnecter", "alerte"); throw new Error("Session Google expirée — reconnectez le Drive"); }
+  if(!r.ok){
+    let m = "HTTP " + r.status;
+    try{ const j = await r.json(); m = (j.error && j.error.message) || m; }catch(e){}
+    throw new Error("Drive : " + m);
+  }
+  return r;
+}
+async function driveChercherDossier(nom, parent){
+  const q = "name = '" + nom.replace(/'/g, "\\'") + "' and '" + parent + "' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
+  const u = "https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(q) + "&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true&pageSize=5";
+  const j = await (await driveFetch(u)).json();
+  return (j.files && j.files[0]) ? j.files[0].id : null;
+}
+async function driveCreerDossier(nom, parent){
+  const r = await driveFetch("https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({name: nom, mimeType: "application/vnd.google-apps.folder", parents:[parent]})
+  });
+  return (await r.json()).id;
+}
+async function driveAssurerDossier(nom, parent){
+  return (await driveChercherDossier(nom, parent)) || (await driveCreerDossier(nom, parent));
+}
+async function driveEnvoyerFichier(fichier, nom, parent){
+  const meta = {name: nom, parents:[parent]};
+  const corps = new FormData();
+  corps.append("metadata", new Blob([JSON.stringify(meta)], {type:"application/json"}));
+  corps.append("file", fichier);
+  const r = await driveFetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink,size", {method:"POST", body: corps});
+  return r.json();
+}
+async function driveRenommerDeplacer(id, nom, ancienParent, nouveauParent){
+  let u = "https://www.googleapis.com/drive/v3/files/" + id + "?supportsAllDrives=true&fields=id,name";
+  if(nouveauParent && nouveauParent !== ancienParent) u += "&addParents=" + nouveauParent + (ancienParent ? "&removeParents=" + ancienParent : "");
+  const r = await driveFetch(u, {method:"PATCH", headers:{"Content-Type":"application/json"}, body: JSON.stringify({name: nom})});
+  return r.json();
+}
+async function driveRenommer(id, nom){ return driveRenommerDeplacer(id, nom, null, null); }
+
+/* ---------- lecture de l'état hypothécaire — passe 1 (code) ---------- */
+/* Contrat de sortie : un en-tête + une ligne par mention, chaque champ portant
+   sa page d'origine et son moteur. La passe 2 (lecture d'image) viendra
+   remplir la même structure sur le seul résidu, sans la modifier.          */
+
+async function driveTelecharger(id){
+  const r = await driveFetch("https://www.googleapis.com/drive/v3/files/" + id + "?alt=media&supportsAllDrives=true");
+  return r.blob();
+}
+
+// Extraction page par page du document entier (le `textePdf` existant s'arrête à 3 pages).
+async function textePdfPages(source, maxPages, progres){
+  const pdfjs = await chargerPdfjs();
+  const data = source instanceof Blob ? await source.arrayBuffer() : source;
+  const doc = await pdfjs.getDocument({data}).promise;
+  const n = Math.min(doc.numPages, maxPages || 800);
+  const pages = [];
+  for(let i = 1; i <= n; i++){
+    const page = await doc.getPage(i);
+    const c = await page.getTextContent();
+    pages.push({page: i, texte: c.items.map(x => x.str).join(" ")});
+    if(progres && (i % 10 === 0 || i === n)) progres(i, n);
+  }
+  return {pages, total: doc.numPages};
+}
+
+async function dessinerPagePdf(source, numero, canvas){
+  const pdfjs = await chargerPdfjs();
+  if(!dessinerPagePdf.cache || dessinerPagePdf.cache.source !== source){
+    const data = source instanceof Blob ? await source.arrayBuffer() : source;
+    dessinerPagePdf.cache = {source, doc: await pdfjs.getDocument({data}).promise};
+  }
+  const doc = dessinerPagePdf.cache.doc;
+  const page = await doc.getPage(Math.min(Math.max(1, numero), doc.numPages));
+  const large = canvas.parentElement.clientWidth - 16;
+  const base = page.getViewport({scale: 1});
+  const vue = page.getViewport({scale: Math.max(0.4, Math.min(2.2, large / base.width))});
+  canvas.width = vue.width; canvas.height = vue.height;
+  await page.render({canvasContext: canvas.getContext("2d"), viewport: vue}).promise;
+}
+
+const EHF_NORMALISER = (t) => String(t || "")
+  .replace(/\\([_*#])/g, "$1")
+  .replace(/ /g, " ")
+  .replace(/[ \t]+/g, " ")
+  .replace(/\s*\n\s*/g, "\n")
+  .trim();
+
+function ehfChamp(valeur, page){
+  return valeur == null || valeur === "" ? null : {valeur, page, moteur: "code"};
+}
+function ehfDate(s){
+  const m = /(\d{1,2})[\/.\-](\d{1,2})[\/.\-]((?:19|20)\d\d)/.exec(String(s || ""));
+  if(!m) return null;
+  const d = new Date(+m[3], +m[2] - 1, +m[1]);
+  return isNaN(d) ? null : String(d.getDate()).padStart(2,"0") + "/" + String(d.getMonth()+1).padStart(2,"0") + "/" + d.getFullYear();
+}
+
+function ehfEntete(pages){
+  const tete = pages.slice(0, 3).map(p => EHF_NORMALISER(p.texte)).join("\n");
+  const pg = (re) => { for(const p of pages.slice(0, 5)){ if(re.test(EHF_NORMALISER(p.texte))) return p.page; } return 1; };
+  const service = /ÉTAT-RÉPONSE[^\n]*\n([A-ZÀ-Ÿ0-9 \-']{2,40})/.exec(tete)
+               || /service de la publicité foncière de ([A-ZÀ-Ÿ0-9 \-']{2,40})/i.exec(tete);
+  const delivre = /délivré le ([^\n]{6,40})/i.exec(tete);
+  const dossier = /Dossier ANF N°\s*:?\s*([A-Z0-9_]+)/i.exec(tete);
+  const demande = /Demande de renseignements N°\s*:?\s*([A-Z0-9]+)/i.exec(tete);
+  const depose  = /Déposée le\s*:?\s*([0-9\/.\-]{8,10})/i.exec(tete);
+  const releve  = /Relevé des formalités[^\n]*\n?Du\s*([0-9\/.\-]{8,10})[\s\S]{0,40}?Au\s*([0-9\/.\-]{8,10})/i.exec(tete);
+  const immeubles = [];
+  const reImm = /^(\d{1,3})\s*-\s*([A-ZÀ-Ÿ0-9 '\-]{2,40}?)\s*-\s*([A-Z]{1,3})\s*(\d{1,4}[A-Z]?)\b/gm;
+  let m;
+  while((m = reImm.exec(tete))) immeubles.push({codeCommune:m[1], commune:m[2].trim(), section:m[3], numero:m[4]});
+  return {
+    service:       ehfChamp(service ? service[1].trim() : null, pg(/ÉTAT-RÉPONSE|publicité foncière/i)),
+    delivreLe:     ehfChamp(delivre ? (ehfDate(delivre[1]) || delivre[1].trim()) : null, pg(/délivré le/i)),
+    dossierANF:    ehfChamp(dossier ? dossier[1] : null, pg(/Dossier ANF/i)),
+    demandeNumero: ehfChamp(demande ? demande[1] : null, pg(/Demande de renseignements/i)),
+    deposeeLe:     ehfChamp(depose ? ehfDate(depose[1]) : null, pg(/Déposée le/i)),
+    periodeReleve: ehfChamp(releve ? (ehfDate(releve[1]) + " au " + ehfDate(releve[2])) : null, pg(/Relevé des formalités/i)),
+    immeubles
+  };
+}
+
+const EHF_RE_FORMALITE = /^([A-ZÀ-Ÿ0-9 ,'’\-\/]{4,120}?)\s+PAGE\s+(\d+)\s+À\s+PAGE\s+(\d+)\s*$/;
+
+function ehfDecouper(pages){
+  const lignes = [];
+  for(const p of pages){ for(const l of EHF_NORMALISER(p.texte).split("\n")) lignes.push({page:p.page, l}); }
+  const debuts = [];
+  lignes.forEach((x,i) => { if(EHF_RE_FORMALITE.test(x.l)) debuts.push(i); });
+  const blocs = [];
+  for(let k = 0; k < debuts.length; k++){
+    const a = debuts[k], b = k+1 < debuts.length ? debuts[k+1] : lignes.length;
+    const m = EHF_RE_FORMALITE.exec(lignes[a].l);
+    let rubrique = null;
+    for(let j = a; j >= 0 && j > a - 40; j--){
+      const r = /Relevé des formalités\s*-\s*(.+)$/.exec(lignes[j].l);
+      if(r){ rubrique = r[1].trim(); break; }
+    }
+    blocs.push({natures:m[1].trim(), pageDebut:+m[2], pageFin:+m[3], rubrique, lignes: lignes.slice(a,b)});
+  }
+  // le bandeau « NATURE PAGE x À PAGE y » est réimprimé sur chaque page de continuation
+  const out = [];
+  for(const b of blocs){
+    const p = out[out.length-1];
+    if(p && p.natures === b.natures && p.pageDebut === b.pageDebut && p.pageFin === b.pageFin) p.lignes = p.lignes.concat(b.lignes);
+    else out.push(b);
+  }
+  return out;
+}
+
+function ehfParties(txt, etiquette){
+  const re = new RegExp(etiquette + "[^\\n]*\\n([\\s\\S]*?)(?=\\n(?:Disposant|Bénéficiaire|Immeuble\\(s\\)|Prix\\/évaluation|Complément|Disposition n°|$))", "i");
+  const m = re.exec(txt);
+  if(!m) return [];
+  const out = [];
+  for(const l of m[1].split("\n")){
+    const p = /^\s*\d+\s+(.+?)\s{0,3}((?:\d[\d\s]{8,13}\d)|-)?\s*$/.exec(l);
+    if(p && p[1] && p[1].length > 2) out.push({nom:p[1].trim(), identite:(p[2]||"").replace(/\s/g,"") || null});
+  }
+  return out;
+}
+
+// « ARMENTIERES AS 461, AS 464, AS 470 à 473 » : la commune n'est portée que par la première.
+function ehfImmeubles(txt){
+  const out = [];
+  const DROIT = /(Toute propriété|Nue propriété|Usufruit|Tréfonds|Bail emphytéotique|Bail à construction)/i;
+  const RE_REF = /\b([A-Z]{1,3})\s*(\d{1,4}[A-Z]?)(?:\s*(?:à|a)\s*(\d{1,4}[A-Z]?))?\b/g;
+  const RE_COMMUNE = /([A-ZÀ-Ÿ][A-ZÀ-Ÿ'\-]{1,}(?:[ '\-][A-ZÀ-Ÿ][A-ZÀ-Ÿ'\-]*)*)\s+[A-Z]{1,3}\s*\d{1,4}/;
+  const HORS = /^(PAGE|DISPOSITION|COMPLEMENT|PRIX|IMMEUBLE|VOLUME|LOT|BENEFICIAIRE|DISPOSANT|DONATEUR|DONATAIRE|RENVOI|DATE|CODE|REFERENCE|NOT|EUR|UD)$/i;
+  const PAS_COMMUNE = /\b(ACTE|DIVISION|CADASTRAL|CADASTRALE|PROPRIETAIRE|PROPRIÉTAIRE|TRANSFERT|RECTIFICATIF|PARCELLE|SECTION|VENTE|APPORT|DEPOT|DÉPÔT|ECHANGE|ÉCHANGE|BAIL|SERVITUDE|COPROPRIETE|COPROPRIÉTÉ|MODIFICATIF|ETAT|ÉTAT|DESCRIPTIF|SYNDICAT|SOCIETE|SOCIÉTÉ|COMMUNE|NUMERO|NUMÉRO|TOUTE|NUE|USUFRUIT)\b/i;
+  let commune = null;
+  for(const ligne of txt.split("\n")){
+    if(!/[A-Z]{1,3}\s*\d/.test(ligne)) continue;
+    if(/^(Date de|Référence d'enliassement|Code sages|Prix\/évaluation|Rédacteur)/i.test(ligne)) continue;
+    const droit = DROIT.exec(ligne);
+    const c = RE_COMMUNE.exec(ligne);
+    if(c){
+      const cand = c[1].trim().split(/\s+/).filter(w => !HORS.test(w)).join(" ");
+      if(cand.length > 2 && !PAS_COMMUNE.test(cand)) commune = cand;
+    }
+    RE_REF.lastIndex = 0;
+    let m;
+    while((m = RE_REF.exec(ligne))){
+      if(HORS.test(m[1])) continue;
+      if(commune && commune.split(/\s+/).indexOf(m[1]) >= 0) continue;
+      const pousser = (num) => out.push({droit: droit ? droit[1] : null, commune, section:m[1], numero:String(num)});
+      if(m[3] && /^\d+$/.test(m[2]) && /^\d+$/.test(m[3]) && +m[3] > +m[2] && +m[3]-+m[2] < 200){
+        for(let n = +m[2]; n <= +m[3]; n++) pousser(n);
+      }else pousser(m[2]);
+    }
+  }
+  const vus = {};
+  return out.filter(x => { const k = (x.commune||"?")+"|"+x.section+"|"+x.numero; if(vus[k]) return false; vus[k] = 1; return true; });
+}
+
+function lireEtatHypothecaire(pages){
+  const entete = ehfEntete(pages);
+  return {
+    entete,
+    mentions: ehfDecouper(pages).map((b, i) => {
+      const t = b.lignes.map(x => x.l).join("\n");
+      const pageDe = (re) => { const x = b.lignes.find(y => re.test(y.l)); return x ? x.page : b.pageDebut; };
+      const redacteur = /Rédacteur\s*:\s*([^\n]*?)(?:\s+Commune\s*:|$)/i.exec(t);
+      const commune   = /Commune\s*:\s*([A-ZÀ-Ÿ0-9 '\-]{2,40}?)(?:\s+Date de l'acte|\n|$)/i.exec(t);
+      const dateActe  = /Date de l'acte\s*:\s*([0-9\/.\-]{8,10})/i.exec(t);
+      const dateDepot = /Date de dépôt\s*:\s*([0-9\/.\-]{8,10})/i.exec(t);
+      const enl       = /Référence d'enliassement\s*:\s*([0-9]{4})\s*([A-Z])\s*([0-9]+)/i.exec(t);
+      const sages     = /Code sages\s*:\s*([0-9A-Z]+)\s*-\s*([A-ZÀ-Ÿ0-9 ]+)/i.exec(t);
+      const prix      = /Prix\/évaluation\s*:\s*([0-9  .,]+)\s*EUR/i.exec(t);
+      const rang      = /(?:de\s+)?(premier|deuxième|second|troisième|quatrième)\s+rang/i.exec(t);
+      const comp      = /Complément\s*:\s*([^\n]+)/i.exec(t);
+      return {
+        index: i + 1, rubrique: b.rubrique, pages: {debut:b.pageDebut, fin:b.pageFin},
+        natures:    ehfChamp(b.natures, b.pageDebut),
+        redacteur:  ehfChamp(redacteur ? redacteur[1].trim() : null, pageDe(/Rédacteur/i)),
+        commune:    ehfChamp(commune ? commune[1].trim() : null, pageDe(/Commune\s*:/i)),
+        dateActe:   ehfChamp(dateActe ? ehfDate(dateActe[1]) : null, pageDe(/Date de l'acte/i)),
+        dateDepot:  ehfChamp(dateDepot ? ehfDate(dateDepot[1]) : null, pageDe(/Date de dépôt/i)),
+        volume:     ehfChamp(enl ? enl[1] + enl[2] : null, pageDe(/Référence d'enliassement/i)),
+        numero:     ehfChamp(enl ? enl[3] : null, pageDe(/Référence d'enliassement/i)),
+        service:    ehfChamp(sages ? sages[2].trim() : null, pageDe(/Code sages/i)),
+        rang:       ehfChamp(rang ? rang[1].toLowerCase() : null, pageDe(/rang/i)),
+        montant:    ehfChamp(prix ? prix[1].replace(/[\s ]/g,"").replace(",",".") : null, pageDe(/Prix\/évaluation/i)),
+        complement: ehfChamp(comp ? comp[1].trim() : null, pageDe(/Complément/i)),
+        disposants:    ehfParties(t, "Disposant"),
+        beneficiaires: ehfParties(t, "Bénéficiaire"),
+        immeubles:     ehfImmeubles(t),
+        valide: false
+      };
+    }),
+    luLe: new Date().toISOString()
+  };
+}
+
+// Une fiche qui couvre deux groupes produit deux résultats : chacun ne garde
+// que les parcelles de son groupe.
+function ehfMentionsDuGroupe(lecture, parcelles){
+  const nz = (t) => sansAccent(String(t || "")).toUpperCase().replace(/[^A-Z]/g, "");
+  const cles = {}, communes = {};
+  parcelles.forEach(p => {
+    cles[nz(p.section) + "|" + String(+p.numero)] = 1;
+    if(p.commune) communes[nz(p.commune)] = 1;
+  });
+  const avecCommune = Object.keys(communes).length > 0;
+  return lecture.mentions.filter(m => m.immeubles.some(i => {
+    if(!cles[nz(i.section) + "|" + String(+i.numero)]) return false;
+    if(avecCommune && i.commune && !communes[nz(i.commune)]) return false;
+    return true;
+  }));
+}
+
+const EHF_MUTATIONS = /VENTE|APPORT|ECHANGE|ÉCHANGE|ADJUDICATION|DONATION|FUSION|TRANSFERT|LICITATION|ATTRIBUTION|PARTAGE|EMPHYTEOTIQUE|EMPHYTÉOTIQUE|CONSTRUCTION/i;
+function ehfDerniereMutation(mentions){
+  const horodate = (m) => {
+    const d = (m.dateDepot && m.dateDepot.valeur) || (m.dateActe && m.dateActe.valeur);
+    if(!d) return 0;
+    const p = d.split("/").map(Number);
+    return new Date(p[2], p[1]-1, p[0]).getTime();
+  };
+  return mentions
+    .filter(m => EHF_MUTATIONS.test(sansAccent(m.natures ? m.natures.valeur : "")))
+    .sort((a,b) => horodate(b) - horodate(a))[0] || null;
+}
+
+function ehfPhraseEffetRelatif(m){
+  if(!m) return "";
+  // La nature est reprise telle que l'ANF l'écrit — en capitales, sans accents :
+  // c'est volontaire, le rédacteur doit la remettre en forme avant de coller.
+  const v = (c) => (c && c.valeur) ? c.valeur : null;
+  let p = "Acquisition aux termes d'un acte";
+  if(v(m.natures)) p += " contenant " + v(m.natures);
+  if(v(m.redacteur)){
+    p += " reçu par " + v(m.redacteur).replace(/^NOT\s+/i, "Maître ");
+    if(v(m.commune)) p += ", notaire à " + v(m.commune);
+  }
+  if(v(m.dateActe)) p += ", le " + v(m.dateActe);
+  if(v(m.service)){
+    p += ", publié au service de la publicité foncière de " + v(m.service);
+    if(v(m.dateDepot)) p += " le " + v(m.dateDepot);
+  }else if(v(m.dateDepot)){
+    p += ", déposé le " + v(m.dateDepot);
+  }
+  if(v(m.volume)) p += ", volume " + v(m.volume);
+  if(v(m.numero)) p += ", numéro " + v(m.numero);
+  return p + ".";
+}
+
+/* ---------- écran de contrôle ---------- */
+const EHF_CHAMPS = [
+  ["natures", "Nature"], ["dateActe", "Date de l'acte"], ["dateDepot", "Date de dépôt"],
+  ["redacteur", "Rédacteur"], ["commune", "Commune"], ["volume", "Volume"],
+  ["numero", "Numéro"], ["service", "Service"], ["rang", "Rang"], ["montant", "Montant"]
+];
+
+async function ouvrirLectureEHF(doc, g){
+  if(!driveConnecte()){ exigerDrive(); return; }
+  const fond = document.createElement("div");
+  fond.className = "lect-fond";
+  fond.innerHTML = '<div class="lect"><div class="lect-tete"><b>Lecture de l\'état hypothécaire</b>'
+    + '<span class="lect-sous">' + echap(doc.nom) + ' — groupe ' + numeroGroupe4(g.num) + '</span>'
+    + '<button class="btn" data-act="fermer" type="button">Fermer</button></div>'
+    + '<div class="lect-corps"><div class="lect-gauche"><p class="lect-etat">Téléchargement du document…</p></div>'
+    + '<div class="lect-droite"><p class="lect-aide">Cliquez sur une page pour l\'afficher ici.</p><canvas></canvas></div></div></div>';
+  document.body.appendChild(fond);
+  const gauche = fond.querySelector(".lect-gauche");
+  const toile  = fond.querySelector(".lect-droite canvas");
+  const etatTxt = () => fond.querySelector(".lect-etat");
+  fond.querySelector('[data-act="fermer"]').addEventListener("click", () => fond.remove());
+  fond.addEventListener("click", e => { if(e.target === fond) fond.remove(); });
+
+  let blob, lecture, retenues;
+  try{
+    blob = await driveTelecharger(doc.drive_id);
+    etatTxt().textContent = "Lecture du texte…";
+    const r = await textePdfPages(blob, 800, (i, n) => { const e = etatTxt(); if(e) e.textContent = "Lecture du texte… page " + i + " / " + n; });
+    if(!r.pages.some(p => p.texte.replace(/\s/g, "").length > 40)){
+      gauche.innerHTML = '<p class="lect-vide">Aucune couche de texte dans ce document : il relève de la passe 2 (lecture d\'image), qui n\'est pas encore branchée.</p>';
+      return;
+    }
+    lecture = lireEtatHypothecaire(r.pages);
+    lecture.pagesLues = r.pages.length;
+    lecture.pagesTotal = r.total;
+    const parcelles = (g.parcelles || []).map(i => etat.parcelles[i]).filter(Boolean)
+      .map(p => ({section: p.props.section, numero: p.props.numero, commune: p.props.commune || p.props.nom_com}));
+    retenues = ehfMentionsDuGroupe(lecture, parcelles);
+  }catch(e){
+    gauche.innerHTML = '<p class="lect-vide">Échec : ' + echap(e.message || String(e)) + '</p>';
+    return;
+  }
+
+  const rendreLecture = () => {
+    const ent = lecture.entete;
+    let h = '<div class="lect-entete"><b>En-tête</b><ul>';
+    [["service","Service"],["delivreLe","Délivré le"],["dossierANF","Dossier ANF"],["demandeNumero","N° de demande"],["deposeeLe","Déposée le"],["periodeReleve","Période couverte"]]
+      .forEach(([k, lib]) => { if(ent[k]) h += '<li>' + lib + ' : <b>' + echap(ent[k].valeur) + '</b> <button class="pg" data-page="' + ent[k].page + '">p.' + ent[k].page + '</button></li>'; });
+    h += '</ul><p class="lect-compte">' + lecture.mentions.length + ' formalité' + (lecture.mentions.length > 1 ? 's' : '') + ' lue' + (lecture.mentions.length > 1 ? 's' : '')
+      + ' sur ' + lecture.pagesLues + ' page' + (lecture.pagesLues > 1 ? 's' : '')
+      + (lecture.pagesTotal > lecture.pagesLues ? ' (document de ' + lecture.pagesTotal + ')' : '')
+      + ' — <b>' + retenues.length + '</b> concernant le groupe.</p></div>';
+
+    if(!retenues.length){
+      h += '<p class="lect-vide">Aucune formalité ne cite les parcelles du groupe. À vérifier à l\'œil avant de conclure.</p>';
+    }
+    retenues.forEach((m, k) => {
+      h += '<div class="lect-mention" data-k="' + k + '"><div class="lect-mtete"><b>' + echap((m.natures && m.natures.valeur) || "—") + '</b>'
+        + '<span class="lect-rub">' + echap(m.rubrique || "") + '</span>'
+        + '<button class="pg" data-page="' + m.pages.debut + '">p.' + m.pages.debut + '</button>'
+        + '<label class="lect-ok"><input type="checkbox" data-act="valider"' + (m.valide ? " checked" : "") + '> validée</label></div><div class="lect-champs">';
+      EHF_CHAMPS.forEach(([cle, lib]) => {
+        const c = m[cle];
+        h += '<label>' + lib + '<input data-champ="' + cle + '" value="' + echap(c ? c.valeur : "") + '">'
+          + '<span class="lect-src">' + (c ? '<button class="pg" data-page="' + c.page + '">p.' + c.page + '</button><em>' + echap(c.moteur) + '</em>' : '<em>non lu</em>') + '</span></label>';
+      });
+      h += '</div>';
+      if(m.immeubles.length) h += '<p class="lect-parc">Parcelles citées : ' + echap(m.immeubles.map(i => (i.commune ? i.commune + " " : "") + i.section + " " + i.numero).join(" · ")) + '</p>';
+      if(m.disposants.length || m.beneficiaires.length){
+        h += '<p class="lect-parties">De : ' + echap(m.disposants.map(x => x.nom).join(" · ") || "—")
+          + '<br>Au profit de : ' + echap(m.beneficiaires.map(x => x.nom).join(" · ") || "—") + '</p>';
+      }
+      if(m.complement && m.complement.valeur) h += '<p class="lect-comp">' + echap(m.complement.valeur) + '</p>';
+      h += '</div>';
+    });
+
+    const der = ehfDerniereMutation(retenues);
+    h += '<div class="lect-pied"><b>Effet relatif proposé</b>'
+      + '<textarea rows="3" data-act="effet">' + echap(ehfPhraseEffetRelatif(der)) + '</textarea>'
+      + '<p class="lect-note">Dernière mutation retenue : ' + (der ? echap((der.natures && der.natures.valeur) || "") + ' — page ' + der.pages.debut : 'aucune mutation identifiée') + '.</p>'
+      + '<div class="lect-boutons"><button class="btn" data-act="tout">Tout valider</button>'
+      + '<button class="btn plein" data-act="enregistrer">Enregistrer la lecture</button></div>'
+      + '<p class="lect-msg"></p></div>';
+    gauche.innerHTML = h;
+
+    gauche.querySelectorAll("button.pg").forEach(b => b.addEventListener("click", async () => {
+      gauche.querySelectorAll("button.pg").forEach(x => x.classList.remove("actif"));
+      b.classList.add("actif");
+      const aide = fond.querySelector(".lect-aide"); if(aide) aide.remove();
+      try{ await dessinerPagePdf(blob, Number(b.dataset.page), toile); }
+      catch(e){ /* page non rendue : on laisse la toile en l'état */ }
+    }));
+    gauche.querySelectorAll("input[data-champ]").forEach(inp => inp.addEventListener("change", e => {
+      const k = Number(e.target.closest(".lect-mention").dataset.k);
+      const cle = e.target.dataset.champ;
+      const m = retenues[k];
+      const v = e.target.value.trim();
+      if(!v){ m[cle] = null; return; }
+      m[cle] = {valeur: v, page: m[cle] ? m[cle].page : m.pages.debut, moteur: "humain"};
+      e.target.closest("label").querySelector(".lect-src em").textContent = "humain";
+    }));
+    gauche.querySelectorAll('input[data-act="valider"]').forEach(inp => inp.addEventListener("change", e => {
+      retenues[Number(e.target.closest(".lect-mention").dataset.k)].valide = e.target.checked;
+    }));
+    gauche.querySelector('[data-act="tout"]').addEventListener("click", () => {
+      retenues.forEach(m => m.valide = true);
+      gauche.querySelectorAll('input[data-act="valider"]').forEach(x => x.checked = true);
+    });
+    gauche.querySelector('[data-act="enregistrer"]').addEventListener("click", async () => {
+      const msg = gauche.querySelector(".lect-msg");
+      msg.textContent = "Enregistrement…";
+      try{
+        const moteurs = {};
+        retenues.forEach(m => EHF_CHAMPS.forEach(([c]) => { if(m[c]) moteurs[m[c].moteur] = (moteurs[m[c].moteur] || 0) + 1; }));
+        doc.lecture = Object.assign({}, doc.lecture, {ehf: {
+          entete: lecture.entete,
+          mentions: retenues,
+          effetRelatif: gauche.querySelector('[data-act="effet"]').value,
+          pagesLues: lecture.pagesLues, pagesTotal: lecture.pagesTotal,
+          luLe: lecture.luLe, moteurs
+        }});
+        await appelDossier({action:"document", siren: etat.dossier.siren, document: doc});
+        await appelDossier({action:"journal", siren: etat.dossier.siren, quoi:"lecture-ehf",
+          detail:{document: doc.drive_id, groupe: g.num, formalites: lecture.mentions.length,
+                  retenues: retenues.length, validees: retenues.filter(m => m.valide).length,
+                  pages_lues: lecture.pagesLues, pages_total: lecture.pagesTotal, moteurs}});
+        msg.textContent = "Lecture enregistrée.";
+        msg.className = "lect-msg ok";
+      }catch(e){
+        msg.textContent = "Non enregistré — " + (e.message || "base indisponible");
+        msg.className = "lect-msg alerte";
+      }
+    });
+  };
+  rendreLecture();
+}
+
+/* ---------- plan de nommage ---------- */
+function sansAccent(t){ return String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
+function numeroGroupe4(n){ return String(n).padStart(4, "0"); }
+// Dates de pièce : toujours en HEURE LOCALE, jamais via toISOString (qui bascule en UTC
+// et fait reculer d'un jour toute date de minuit heure de Paris).
+function dateISOlocale(d){
+  if(!(d instanceof Date) || isNaN(d)) return null;
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+function dateDepuisISO(t){
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(t || ""));
+  return m ? new Date(+m[1], +m[2]-1, +m[3]) : null;
+}
+function dateAAAAMMJJ(d){
+  if(!(d instanceof Date) || isNaN(d)) return "00000000";
+  return d.getFullYear() + String(d.getMonth()+1).padStart(2,"0") + String(d.getDate()).padStart(2,"0");
+}
+function composerNomPiece(groupe, type, date, extension){
+  const t = TYPES_PIECE[type] || TYPES_PIECE.AQ;
+  return [numeroGroupe4(groupe), t.code, t.piece, dateAAAAMMJJ(date)].join("_") + (extension ? "." + extension.toLowerCase() : "");
+}
+function nomDossierSociete(denomination, date){
+  const d = date instanceof Date ? date : new Date();
+  const iso = d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  const nom = String(denomination || "societe").trim().replace(/[\s'’"`,;:./\\|()\[\]-]+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+  return "fusion_" + nom + "_" + iso;
+}
+function extensionDe(nom){ const m = /\.([a-z0-9]{1,5})$/i.exec(nom || ""); return m ? m[1].toLowerCase() : ""; }
+
+/* ---------- numérotation définitive (SPF → commune → section) ---------- */
+function cleGeographique(g){
+  const membres = [...g.membres].map(i => etat.parcelles[i]);
+  const insee = [...new Set(membres.map(p => p.props.commune).filter(Boolean))].sort();
+  const communes = [...new Set(membres.map(p => p.props.nom_commune).filter(Boolean))].sort();
+  const sections = [...new Set(membres.map(p => p.props.section).filter(Boolean))].sort();
+  const spf = insee.map(spfDe).filter(Boolean).sort()[0] || "~";
+  return [spf, communes[0] || "~", sections.join(" "), String(g.num).padStart(6,"0")].join("|");
+}
+function calculerConcordanceGeographique(){
+  const ordre = etat.groupes.slice().sort((a,b) => cleGeographique(a).localeCompare(cleGeographique(b), "fr"));
+  return ordre.map((g, k) => ({ancien: g.num, nouveau: k+1})).filter(c => c.ancien !== c.nouveau);
+}
+async function numerotationDefinitive(){
+  if(!etat.dossier || !etat.persist.actif){ signaler("Le dossier doit être enregistré avant la numérotation définitive.", true); return false; }
+  const conc = calculerConcordanceGeographique();
+  if(!conc.length){ etat.numerotationFaite = true; etat.numerotationDate = new Date().toISOString(); await appelDossier({action:"groupes", siren: etat.dossier.siren, groupes: groupesPersistables(), etat: etatPersistable(), quoi:"numerotation-definitive", detail:{inchangee:true}}); return true; }
+  const documentsARenommer = (etat.documents || []).filter(d => conc.some(c => c.ancien === d.groupe));
+  if(documentsARenommer.length && !exigerDrive()) return false;
+  afficherPersist("Renumérotation…");
+  try{
+    await appelDossier({action:"renumeroter", siren: etat.dossier.siren, concordance: conc, ordre: "SPF > commune > section"});
+    const table = new Map(conc.map(c => [c.ancien, c.nouveau]));
+    etat.groupes.forEach(g => { if(table.has(g.num)) g.num = table.get(g.num); });
+    etat.compteurGroupe = etat.groupes.reduce((m,g) => Math.max(m, g.num), 0);
+    // les pièces déjà déposées portent l'ancien numéro : on les renomme sur le Drive
+    for(const doc of documentsARenommer){
+      const nouveau = table.get(doc.groupe);
+      const nom = composerNomPiece(nouveau, doc.type, dateDepuisISO(doc.date_doc), extensionDe(doc.nom));
+      await driveRenommer(doc.drive_id, nom);
+      doc.groupe = nouveau; doc.nom = nom;
+      await appelDossier({action:"document", siren: etat.dossier.siren, document: doc});
+    }
+    // les identifiants Drive suivent leur groupe : en base la permutation a porté la colonne drive avec le numéro,
+    // à l'écran ils restent attachés à l'objet groupe — rien d'autre à faire
+    etat.numerotationFaite = true;
+    etat.numerotationDate = new Date().toISOString();
+    etat.ouvert = null;
+    rendre();
+    afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), "ok");
+    signaler("Numérotation définitive posée : " + conc.length + " groupe" + (conc.length > 1 ? "s renumérotés" : " renuméroté") + ", tableau de concordance au journal.");
+    return true;
+  }catch(e){
+    afficherPersist("Renumérotation non aboutie — " + e.message, "alerte");
+    return false;
+  }
+}
+
+/* ---------- arborescence Drive ---------- */
+async function assurerDriveSociete(){
+  if(!exigerDrive()) return null;
+  if(etat.driveSociete && etat.driveSociete.societe) return etat.driveSociete.societe;
+  const nom = (etat.driveSociete && etat.driveSociete.nom) || nomDossierSociete(etat.dossier.denomination, new Date());
+  const id = await driveAssurerDossier(nom, DRIVE_RACINE);
+  etat.driveSociete = {racine: DRIVE_RACINE, societe: id, nom, cree_le: new Date().toISOString()};
+  await appelDossier({action:"drive", siren: etat.dossier.siren, dossier: etat.driveSociete});
+  return id;
+}
+async function assurerDriveGroupe(g){
+  const societe = await assurerDriveSociete();
+  if(!societe) return null;
+  g.drive = g.drive || {};
+  if(!g.drive.dossier) g.drive.dossier = await driveAssurerDossier(numeroGroupe4(g.num), societe);
+  const manquants = [];
+  for(const t of Object.values(TYPES_PIECE)){
+    if(g.drive[t.cle]) continue;
+    g.drive[t.cle] = await driveAssurerDossier(t.dossier, g.drive.dossier);
+    manquants.push(t.cle);
+  }
+  await appelDossier({action:"drive", siren: etat.dossier.siren, groupes:[{numero: g.num, drive: g.drive}]});
+  return g.drive;
+}
+async function creerArborescenceDrive(){
+  if(!etat.dossier || !etat.persist.actif){ signaler("Le dossier doit être enregistré avant de créer son Drive.", true); return; }
+  if(!exigerDrive()) return;
+  if(!etat.numerotationFaite){
+    if(!confirm("Créer l'arborescence pose d'abord la numérotation définitive des groupes (service de publicité foncière, puis commune, puis section). Les numéros actuels changent. Continuer ?")) return;
+    if(!(await numerotationDefinitive())) return;
+  }
+  const bouton = document.getElementById("btn-arbo"); bouton.disabled = true;
+  const total = etat.groupes.length;
+  const sablier = {texte:"Dossier société…"};
+  let attenteOuverte = false;
+  const relais = setTimeout(() => { if(window.ATTENTE){ attenteOuverte = true; window.ATTENTE.demarrer({titre:"FUSION", sousTitre:"Création de l'arborescence Drive — " + (etat.dossier.denomination || ""), source: () => sablier.texte}); } }, ATTENTE_SEUIL_MS);
+  try{
+    await assurerDriveSociete();
+    let faits = 0;
+    const file = etat.groupes.slice();
+    async function ouvrier(){
+      while(file.length){
+        const g = file.shift();
+        await assurerDriveGroupe(g);
+        faits++; sablier.texte = "Arborescence : " + faits + " sur " + total + " groupes"; afficherPersist(sablier.texte);
+      }
+    }
+    await Promise.all(Array.from({length: 4}, ouvrier));
+    clearTimeout(relais); if(attenteOuverte && window.ATTENTE) window.ATTENTE.terminer();
+    afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), "ok");
+    signaler("Arborescence Drive créée : " + total + " groupes, quatre sous-dossiers chacun.");
+    rendre();
+  }catch(e){
+    clearTimeout(relais); if(attenteOuverte && window.ATTENTE) window.ATTENTE.echec(e.message);
+    afficherPersist("Arborescence incomplète — " + e.message, "alerte");
+    signaler(e.message, true);
+  }finally{ bouton.disabled = false; }
+}
+
+/* ---------- détection du type et de la date ---------- */
+let pdfjsPromesse = null;
+async function chargerPdfjs(){
+  if(!pdfjsPromesse){
+    pdfjsPromesse = import("https://unpkg.com/pdfjs-dist@4.6.82/build/pdf.min.mjs").then(m => {
+      m.GlobalWorkerOptions.workerSrc = "https://unpkg.com/pdfjs-dist@4.6.82/build/pdf.worker.min.mjs";
+      return m;
+    });
+  }
+  return pdfjsPromesse;
+}
+async function textePdf(fichier, maxPages){
+  try{
+    const pdfjs = await chargerPdfjs();
+    const doc = await pdfjs.getDocument({data: await fichier.arrayBuffer()}).promise;
+    const n = Math.min(doc.numPages, maxPages || 3);
+    let texte = "";
+    for(let i = 1; i <= n; i++){
+      const page = await doc.getPage(i);
+      const c = await page.getTextContent();
+      texte += c.items.map(x => x.str).join(" ") + "\n";
+    }
+    return {texte, pages: doc.numPages};
+  }catch(e){ return {texte:"", pages:0, erreur: e.message}; }
+}
+const MOIS = {janvier:1,fevrier:2,mars:3,avril:4,mai:5,juin:6,juillet:7,aout:8,septembre:9,octobre:10,novembre:11,decembre:12};
+function datesDans(texte){
+  const t = sansAccent(texte).toLowerCase();
+  const out = [];
+  let m;
+  const re1 = /(\b[0-3]?\d)[\/.\-]([01]?\d)[\/.\-]((?:19|20)\d\d)\b/g;
+  while((m = re1.exec(t))){ const d = new Date(+m[3], +m[2]-1, +m[1]); if(!isNaN(d) && d.getFullYear() >= 1900) out.push({d, i: m.index}); }
+  const re2 = /\b(1er|[0-3]?\d)\s+(janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre)\s+((?:19|20)\d\d)\b/g;
+  while((m = re2.exec(t))){ const j = m[1] === "1er" ? 1 : +m[1]; const d = new Date(+m[3], MOIS[m[2]]-1, j); if(!isNaN(d)) out.push({d, i: m.index}); }
+  return out;
+}
+function detecterPiece(nomFichier, texte){
+  const n = sansAccent(nomFichier).toLowerCase();
+  const t = sansAccent(texte || "").toLowerCase();
+  const ext = extensionDe(nomFichier);
+  const score = {EHF:0, OP:0, NDT:0};
+  // état hypothécaire
+  if(/etat hypothecaire|releve des formalites|relevé des formalites|service de la publicite fonciere|publicite fonciere|formalites publiees|fichier immobilier|certificat de depot|copie de fiche|hypotheques|inscription/.test(t)) score.EHF += 3;
+  if(/ehf|etat.?hyp|hypoth|spf|formalit/.test(n)) score.EHF += 2;
+  // titre
+  if(/par.devant|maitre|notaire|a recu le present acte|acte authentique|vente|acquisition|apport|donation|adjudication|echange|licitation|attestation.*propriete|origine de propriete/.test(t)) score.OP += 2;
+  if(/l'an .{1,30} le|comparu|ont comparu|soussigne/.test(t)) score.OP += 1;
+  if(/titre|acte|vente|acqui|donation|apport|op\b|opa\b/.test(n)) score.OP += 1;
+  // note de travail déjà rédigée
+  if(/^(docx?|rtf|odt)$/.test(ext)) score.NDT += 3;
+  if(/designation|origine de propriete|effet relatif/.test(t) && !/notaire|par devant/.test(t)) score.NDT += 2;
+  if(/note|designation|origine|fusion|travail/.test(n)) score.NDT += 1;
+  const meilleur = Object.entries(score).sort((a,b) => b[1]-a[1])[0];
+  if(!meilleur[1]) return {type:"AQ", confiance:0};
+  return {type: meilleur[0], confiance: meilleur[1]};
+}
+function dateProbable(type, texte){
+  const ds = datesDans(texte);
+  if(!ds.length) return null;
+  const t = sansAccent(texte).toLowerCase();
+  if(type === "EHF"){
+    // la date de délivrance / d'arrêté de l'état prime sur les dates des formalités
+    const k = t.search(/delivre le|delivrance|arrete au|situation au|etabli le|certifie le|date de l'etat|edite le/);
+    if(k >= 0){ const proche = ds.filter(x => Math.abs(x.i - k) < 160).sort((a,b) => Math.abs(a.i-k) - Math.abs(b.i-k))[0]; if(proche) return proche.d; }
+    return ds.slice().sort((a,b) => b.d - a.d)[0].d;          // sinon la plus récente
+  }
+  if(type === "OP" || type === "OPA"){
+    const k = t.search(/l'an |le present acte|recu le|en date du|a la date du/);
+    if(k >= 0){ const proche = ds.filter(x => x.i >= k && x.i - k < 200).sort((a,b) => a.i-b.i)[0]; if(proche) return proche.d; }
+    return ds[0].d;                                            // sinon la première du corps
+  }
+  return ds[0].d;
+}
+async function analyserFichier(fichier){
+  const ext = extensionDe(fichier.name);
+  let texte = "", pages = 0, couche = null;
+  if(ext === "pdf"){ const r = await textePdf(fichier, 3); texte = r.texte; pages = r.pages; couche = r.texte.replace(/\s+/g, "").length > 80; }
+  const det = detecterPiece(fichier.name, texte);
+  let type = det.type;
+  let date = texte ? dateProbable(type, texte) : null;
+  if(type === "OP" && date && (Date.now() - date.getTime()) > ANS_TRENTENAIRE * 365.25 * 86400000) type = "OPA";
+  const empreinte = await empreinteSha256(fichier);
+  const citees = texte ? referencesCitees(texte) : {references:[], groupes:[]};
+  return {type, confiance: det.confiance, date, date_sure: Boolean(date), couche_texte: couche, pages, empreinte, extension: ext, citees};
+}
+async function empreinteSha256(fichier){
+  try{
+    const h = await crypto.subtle.digest("SHA-256", await fichier.arrayBuffer());
+    return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2,"0")).join("");
+  }catch(e){ return null; }
+}
+
+/* ---------- dépôt dans un groupe ---------- */
+async function deposerFichiers(g, fichiers){
+  if(!etat.dossier || !etat.persist.actif){ signaler("Le dossier doit être enregistré pour déposer des pièces.", true); return; }
+  if(!exigerDrive()) return;
+  if(!etat.numerotationFaite && !confirm("La numérotation définitive n'est pas posée : les pièces porteront le numéro provisoire du groupe et seront renommées à la numérotation. Déposer quand même ?")) return;
+  const liste = [...fichiers];
+  const zone = document.getElementById("depot-etat-" + g.num);
+  const dire = t => { if(zone) zone.textContent = t; afficherPersist(t); };
+  try{
+    dire("Préparation du dossier Drive du groupe…");
+    await assurerDriveGroupe(g);
+    let k = 0;
+    for(const f of liste){
+      k++;
+      dire("Analyse " + k + "/" + liste.length + " : " + f.name);
+      const a = await analyserFichier(f);
+      const t = TYPES_PIECE[a.type] || TYPES_PIECE.AQ;
+      const nom = composerNomPiece(g.num, a.type, a.date, a.extension);
+      dire("Envoi " + k + "/" + liste.length + " : " + nom);
+      const parent = g.drive[t.cle];
+      const envoye = await driveEnvoyerFichier(f, nom, parent);
+      const doc = {
+        drive_id: envoye.id, drive_parent: parent, groupe: g.num, nom, nom_origine: f.name, type: a.type, code: t.code, piece: t.piece,
+        date_doc: dateISOlocale(a.date), date_sure: a.date_sure, empreinte: a.empreinte, taille: f.size, mime: f.type || null,
+        couche_texte: a.couche_texte, statut: a.type === "AQ" ? "a_qualifier" : (a.couche_texte === false ? "scan" : "depose"),
+        lecture: {references: a.citees.references, groupes: a.citees.groupes}
+      };
+      const r = await appelDossier({action:"document", siren: etat.dossier.siren, document: doc});
+      doc.id = r.id; doc.depose_le = new Date().toISOString();
+      etat.documents = (etat.documents || []).filter(x => x.drive_id !== doc.drive_id).concat([doc]);
+      proposerRapprochements();
+      rendre();
+    }
+    dire("");
+    afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), "ok");
+    signaler(liste.length + " pièce" + (liste.length > 1 ? "s déposées" : " déposée") + " dans le groupe G" + g.num + ".");
+  }catch(e){
+    dire("");
+    afficherPersist("Dépôt interrompu — " + e.message, "alerte");
+    signaler(e.message, true);
+  }
+}
+async function requalifierDocument(doc, nouveauType, nouvelleDate){
+  if(!exigerDrive()) return;
+  const g = etat.groupes.find(x => x.num === doc.groupe); if(!g) return;
+  try{
+    await assurerDriveGroupe(g);
+    const t = TYPES_PIECE[nouveauType] || TYPES_PIECE.AQ;
+    const date = nouvelleDate ? dateDepuisISO(nouvelleDate) : dateDepuisISO(doc.date_doc);
+    const nom = composerNomPiece(doc.groupe, nouveauType, date, extensionDe(doc.nom));
+    const parent = g.drive[t.cle];
+    await driveRenommerDeplacer(doc.drive_id, nom, doc.drive_parent, parent);
+    Object.assign(doc, {nom, type: nouveauType, code: t.code, piece: t.piece, drive_parent: parent,
+      date_doc: dateISOlocale(date), date_sure: Boolean(nouvelleDate) || doc.date_sure,
+      statut: nouveauType === "AQ" ? "a_qualifier" : (doc.couche_texte === false ? "scan" : "depose")});
+    await appelDossier({action:"document", siren: etat.dossier.siren, document: doc});
+    rendre();
+    afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), "ok");
+  }catch(e){ signaler(e.message, true); }
+}
+
+
+/* ---------- rattachement : les parcelles que cite la pièce ---------- */
+// Première version, sur la couche de texte : on cherche les références
+// cadastrales (section + numéro) au voisinage d'un nom de commune du dossier,
+// on les rapporte aux parcelles connues, donc aux groupes. Le groupe de dépôt
+// fait foi ; si la pièce cite d'autres groupes, FUSION le dit et propose de
+// déplacer ou de copier (vraie copie Drive, chaque dossier de groupe restant
+// autonome pour la data room). Rien ne bouge sans un clic.
+function indexReferencesDossier(){
+  const parCommune = new Map();   // nom commune normalisé → {insee:Set, prefixes:Set}
+  const parIdu = new Map();       // idu → groupe
+  etat.parcelles.forEach(p => {
+    const idu = p.props.idu; if(!idu) return;
+    const g = etat.groupes.find(x => x.membres.has(p.i)); if(!g) return;
+    parIdu.set(idu, g.num);
+    const nom = sansAccent(p.props.nom_commune || "").toUpperCase().replace(/[^A-Z]+/g, " ").trim();
+    if(!nom) return;
+    if(!parCommune.has(nom)) parCommune.set(nom, {insee:new Set(), prefixes:new Set()});
+    parCommune.get(nom).insee.add(idu.slice(0,5));
+    parCommune.get(nom).prefixes.add(idu.slice(5,8));
+  });
+  return {parCommune, parIdu};
+}
+function referencesCitees(texte){
+  const idx = indexReferencesDossier();
+  const t = sansAccent(texte || "").toUpperCase().replace(/[^A-Z0-9°,\n]+/g, " ").replace(/\s*,\s*/g, ", ");
+  // positions des noms de communes du dossier dans le texte
+  const communes = [];
+  idx.parCommune.forEach((v, nom) => {
+    let k = -1;
+    while((k = t.indexOf(" " + nom + " ", k + 1)) >= 0) communes.push({pos:k, nom, v});
+  });
+  communes.sort((a,b) => a.pos - b.pos);
+  const communeAvant = pos => { let c = null; for(const x of communes){ if(x.pos <= pos) c = x; else break; } return c || (communes.length === 1 ? communes[0] : null); };
+  const uniqueCommune = idx.parCommune.size === 1 ? [...idx.parCommune.values()][0] : null;
+
+  const trouvees = new Map();  // idu → groupe
+  const re = /(?:SECTION\s+)?\b([A-Z]{1,2}|0[A-Z])\s*(?:N°|NO|N|NUMERO|NUMEROS)?\s*(\d{1,4})\b/g;
+  let m;
+  while((m = re.exec(t))){
+    const section = m[1].replace(/^0/, "").padStart(2, "0"), numero = m[2].padStart(4, "0");
+    // on exige soit le mot SECTION juste avant, soit une commune déjà nommée dans le texte
+    const explicite = /SECTION\s+$/.test(t.slice(Math.max(0, m.index - 10), m.index)) || t.slice(m.index, m.index + 8).startsWith("SECTION");
+    const c = communeAvant(m.index);
+    const cible = c ? c.v : uniqueCommune;
+    if(!cible) continue;
+    if(!explicite && !c) continue;
+    // énumération : « n° 12, 13 et 14 » → les numéros qui suivent la référence partagent sa section
+    const numeros = [numero];
+    let fin = m.index + m[0].length, e;
+    const reSuite = /^\s*(?:,|ET)\s*(\d{1,4})\b/;
+    while((e = reSuite.exec(t.slice(fin, fin + 12)))){ numeros.push(e[1].padStart(4, "0")); fin += e[0].length; }
+    for(const num of numeros) for(const insee of cible.insee) for(const pre of cible.prefixes){
+      const idu = insee + pre + section + num;
+      if(idx.parIdu.has(idu)) trouvees.set(idu, idx.parIdu.get(idu));
+    }
+  }
+  const groupes = [...new Set(trouvees.values())].sort((a,b) => a-b);
+  return {references:[...trouvees.keys()], groupes};
+}
+async function driveCopier(id, nom, parent){
+  const r = await driveFetch("https://www.googleapis.com/drive/v3/files/" + id + "/copy?supportsAllDrives=true&fields=id,name", {
+    method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({name: nom, parents:[parent]})
+  });
+  return r.json();
+}
+async function deplacerDocument(doc, versNum){
+  if(!exigerDrive()) return;
+  const g = etat.groupes.find(x => x.num === versNum); if(!g) return;
+  try{
+    await assurerDriveGroupe(g);
+    const t = TYPES_PIECE[doc.type] || TYPES_PIECE.AQ;
+    const nom = composerNomPiece(versNum, doc.type, dateDepuisISO(doc.date_doc), extensionDe(doc.nom));
+    const parent = g.drive[t.cle];
+    await driveRenommerDeplacer(doc.drive_id, nom, doc.drive_parent, parent);
+    const ancien = doc.groupe;
+    Object.assign(doc, {nom, groupe: versNum, drive_parent: parent});
+    await appelDossier({action:"document", siren: etat.dossier.siren, document: doc});
+    await appelDossier({action:"journal", siren: etat.dossier.siren, quoi:"deplacement", detail:{document: doc.id, de: ancien, vers: versNum, nom}});
+    etat.ouvert = versNum; etat.zoomSur = versNum;
+    rendre();
+    signaler("Pièce déplacée dans G" + versNum + ".");
+  }catch(e){ signaler(e.message, true); }
+}
+async function copierDocument(doc, versNum){
+  if(!exigerDrive()) return;
+  const g = etat.groupes.find(x => x.num === versNum); if(!g) return;
+  try{
+    await assurerDriveGroupe(g);
+    const t = TYPES_PIECE[doc.type] || TYPES_PIECE.AQ;
+    const nom = composerNomPiece(versNum, doc.type, dateDepuisISO(doc.date_doc), extensionDe(doc.nom));
+    const parent = g.drive[t.cle];
+    const c = await driveCopier(doc.drive_id, nom, parent);
+    const copie = Object.assign({}, doc, {id: undefined, drive_id: c.id, drive_parent: parent, nom, groupe: versNum, statut: "copie", lecture: doc.lecture});
+    const r = await appelDossier({action:"document", siren: etat.dossier.siren, document: copie});
+    copie.id = r.id;
+    etat.documents.push(copie);
+    await appelDossier({action:"journal", siren: etat.dossier.siren, quoi:"copie", detail:{source: doc.id, copie: r.id, de: doc.groupe, vers: versNum, nom, motif:"data room — dossier de groupe autonome"}});
+    rendre();
+    signaler("Copie déposée dans G" + versNum + ".");
+  }catch(e){ signaler(e.message, true); }
+}
+
+
+function groupesDesReferences(refs){
+  const idx = new Map(etat.parcelles.map(p => [p.props.idu, p.i]));
+  const nums = new Set();
+  (refs || []).forEach(idu => { const i = idx.get(idu); if(i == null) return; const g = etat.groupes.find(x => x.membres.has(i)); if(g) nums.add(g.num); });
+  return [...nums].sort((a,b) => a-b);
+}
+function rattachementHtml(d, g){
+  const l = d.lecture || {};
+  const cites = groupesDesReferences(l.references);   // jamais les numéros figés au dépôt : une renumérotation ne les rendrait plus faux
+  if(l.rattachement_confirme || d.statut === "copie") return "";
+  if(!cites.length){
+    if(d.couche_texte === false) return '<span class="ratt neutre">scan : parcelles non lues, rattachement au groupe de dépôt</span>';
+    if(d.type === "EHF" || d.type === "OP" || d.type === "OPA") return '<span class="ratt neutre">aucune parcelle du dossier reconnue dans la pièce — rattachement au groupe de dépôt</span>';
+    return "";
+  }
+  const autres = cites.filter(n => n !== g.num);
+  if(!autres.length) return '<span class="ratt ok">✓ cite ' + (l.references||[]).length + ' parcelle' + ((l.references||[]).length>1?"s":"") + ' de ce groupe</span>';
+  const ici = cites.includes(g.num);
+  let h = '<span class="ratt alerte">' + (ici ? "cite aussi " : "ne cite pas ce groupe mais ") + autres.map(n => "G" + n).join(", ") + '</span><span class="ratt-actions">';
+  if(autres.length > 1) h += '<button type="button" class="btn plein" data-ratt="copier-tous" data-vers="' + autres.join(",") + '">Copier dans les ' + autres.length + '</button>';
+  autres.forEach(n => {
+    h += '<button type="button" class="btn" data-ratt="copier" data-vers="' + n + '">Copier dans G' + n + '</button>';
+    if(!ici) h += '<button type="button" class="btn" data-ratt="deplacer" data-vers="' + n + '">Déplacer vers G' + n + '</button>';
+  });
+  h += '<button type="button" class="btn" data-ratt="laisser">Laisser ici</button></span>';
+  return h;
+}
+
+/* ---------- rendu de la zone de dépôt d'un groupe ---------- */
+function rendreDepot(g){
+  const bloc = document.createElement("div");
+  bloc.className = "depot";
+  const docs = (etat.documents || []).filter(d => d.groupe === g.num).sort((a,b) => a.nom.localeCompare(b.nom));
+  const persistant = Boolean(etat.dossier && etat.persist.actif);
+  let html = '<div class="depot-zone' + (persistant ? "" : " inactif") + '" tabindex="0">'
+    + '<p>' + (persistant ? "Déposez ici les titres et états hypothécaires du groupe" : "Enregistrez le dossier pour déposer des pièces") + '</p>'
+    + '<button class="btn" type="button" data-act="choisir"' + (persistant ? "" : " disabled") + '>Choisir des fichiers</button>'
+    + '<input type="file" multiple hidden accept=".pdf,.doc,.docx,.rtf,.odt,.jpg,.jpeg,.png,.tif,.tiff">'
+    + '<div class="depot-etat" id="depot-etat-' + g.num + '"></div></div>';
+  if(docs.length){
+    html += '<ul class="pieces">';
+    docs.forEach(d => {
+      const t = TYPES_PIECE[d.type] || TYPES_PIECE.AQ;
+      const classe = d.type === "AQ" ? "aq" : (d.statut === "scan" ? "scan" : "");
+      html += '<li class="' + classe + '" data-id="' + d.drive_id + '">'
+        + '<a class="nom" href="https://drive.google.com/file/d/' + d.drive_id + '/view" target="_blank" rel="noopener" title="Ouvrir dans le Drive">' + echap(d.nom) + '</a>'
+        + '<span class="orig" title="Nom d\u2019origine">' + echap(d.nom_origine || "") + '</span>'
+        + '<select data-act="type" title="Type de pièce">' + Object.entries(TYPES_PIECE).map(([k,v]) => '<option value="' + k + '"' + (k === d.type ? " selected" : "") + '>' + echap(v.libelle) + '</option>').join("") + '</select>'
+        + '<input type="date" data-act="date" value="' + (d.date_doc || "") + '" title="' + (d.date_sure ? "Date lue dans la pièce" : "Date à confirmer") + '" class="' + (d.date_sure ? "" : "adate") + '">'
+        + (d.type === "EHF" ? '<button class="lire" type="button" data-act="lire" title="Lire l\u2019\u00e9tat hypoth\u00e9caire">' + (d.lecture && d.lecture.ehf ? "Relire" : "Lire") + '</button>' : "")
+        + (d.lecture && d.lecture.ehf ? '<span class="tag">lu — ' + (d.lecture.ehf.mentions || []).filter(m => m.valide).length + '/' + (d.lecture.ehf.mentions || []).length + ' validées</span>' : "")
+        + (d.statut === "scan" ? '<span class="tag">scan — passe API</span>' : "")
+        + (d.type === "AQ" ? '<span class="tag aq">à qualifier</span>' : "")
+        + (d.statut === "copie" ? '<span class="tag">copie</span>' : "")
+        + rattachementHtml(d, g)
+        + '</li>';
+    });
+    html += '</ul>';
+  }
+  bloc.innerHTML = html;
+  bloc.querySelectorAll('button[data-ratt]').forEach(b => b.addEventListener("click", e => {
+    const doc = (etat.documents || []).find(x => x.drive_id === e.target.closest("li").dataset.id); if(!doc) return;
+    const vers = Number(b.dataset.vers);
+    if(b.dataset.ratt === "deplacer") deplacerDocument(doc, vers);
+    else if(b.dataset.ratt === "copier") copierDocument(doc, vers);
+    else if(b.dataset.ratt === "copier-tous"){
+      const nums = b.dataset.vers.split(",").map(Number).filter(Number.isInteger);
+      (async () => { for(const n of nums) await copierDocument(doc, n); doc.lecture = Object.assign({}, doc.lecture, {rattachement_confirme: true}); await appelDossier({action:"document", siren: etat.dossier.siren, document: doc}); rendre(); })();
+    }
+    else if(b.dataset.ratt === "laisser"){ doc.lecture = Object.assign({}, doc.lecture, {rattachement_confirme: true}); appelDossier({action:"document", siren: etat.dossier.siren, document: doc}); rendre(); }
+  }));
+
+  const zone = bloc.querySelector(".depot-zone");
+  const champ = bloc.querySelector('input[type="file"]');
+  bloc.querySelector('[data-act="choisir"]').addEventListener("click", e => { e.stopPropagation(); champ.click(); });
+  champ.addEventListener("change", () => { if(champ.files.length) deposerFichiers(g, champ.files); champ.value = ""; });
+  ["dragenter","dragover"].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zone.classList.add("actif"); }));
+  ["dragleave","drop"].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zone.classList.remove("actif"); }));
+  zone.addEventListener("drop", e => { if(persistant && e.dataTransfer.files.length) deposerFichiers(g, e.dataTransfer.files); });
+  bloc.querySelectorAll('button[data-act="lire"]').forEach(b => b.addEventListener("click", e => {
+    const doc = (etat.documents || []).find(x => x.drive_id === e.target.closest("li").dataset.id);
+    if(doc) ouvrirLectureEHF(doc, g);
+  }));
+  bloc.querySelectorAll('select[data-act="type"]').forEach(sel => sel.addEventListener("change", e => {
+    const doc = (etat.documents || []).find(x => x.drive_id === e.target.closest("li").dataset.id); if(doc) requalifierDocument(doc, e.target.value, null);
+  }));
+  bloc.querySelectorAll('input[data-act="date"]').forEach(inp => inp.addEventListener("change", e => {
+    const doc = (etat.documents || []).find(x => x.drive_id === e.target.closest("li").dataset.id); if(doc && e.target.value) requalifierDocument(doc, doc.type, e.target.value);
+  }));
+  return bloc;
+}
+
+/* ---------- rendu du panneau ---------- */
+function formatSurface(m2){
+  if(m2 >= 10000) return (m2/10000).toLocaleString("fr-FR",{maximumFractionDigits:2}) + " ha";
+  return Math.round(m2).toLocaleString("fr-FR") + " m²";
+}
+
+function rendre(){
+  const liste = document.getElementById("liste");
+  liste.innerHTML = "";
+
+  if(!etat.parcelles.length){
+    liste.innerHTML = '<p class="vide">Aucune parcelle chargée. Déposez un GeoJSON, ou ouvrez le jeu d\'essai pour voir le regroupement à l\'œuvre.</p>';
+  }else{
+    // ---- rapprochements proposés ----
+    if(etat.suggestions.length){
+      const bloc = document.createElement("div");
+      bloc.className = "sugg";
+      const MAX = 40;
+      let html = '<div class="sugg-tete"><span class="n">' + etat.suggestions.length + '</span> rapprochement'
+        + (etat.suggestions.length > 1 ? "s proposés" : " proposé")
+        + '<span class="aide">à valider un par un</span></div><ul>';
+      etat.suggestions.slice(0, MAX).forEach((sg, k) => {
+        const actif = etat.suggActive === sg.cle;
+        const extras = actif ? [...etat.suggExtras] : [];
+        html += '<li data-k="' + k + '" tabindex="0" class="' + (actif ? 'active ' : '') + (sg.piece ? 'par-piece' : '') + '"><span class="paire">G' + sg.a + ' + G' + sg.b
+          + extras.map(n => ' <span class="extra">+ G' + n + '</span>').join("")
+          + (actif ? '<span class="aide-carte">cliquez une parcelle sur la carte pour l\'ajouter</span>' : "") + '</span>'
+          + '<span class="motif">' + sg.motifs.map(m =>
+              m.startsWith("même voie : ") ? 'même voie : <span class="voie">' + echap(m.slice(12)) + '</span>'
+            : (sg.piece && sg.docs && (m.startsWith("même état") || m.startsWith("même titre"))) ? '<span class="piece">' + echap(m.split(" : ")[0]) + ' : <a href="https://drive.google.com/file/d/' + sg.docs[0].drive_id + '/view" target="_blank" rel="noopener">' + echap(sg.docs[0].nom) + '</a></span>'
+            : echap(m)).join(" · ") + '</span>'
+          + '<button class="btn plein" data-act="fusionner">Fusionner' + (extras.length ? " (" + (2 + extras.length) + ")" : "") + '</button>'
+          + '<button class="btn" data-act="ignorer">Ignorer</button></li>';
+      });
+      html += '</ul>' + (etat.suggestions.length > MAX ? '<div class="plus">… et ' + (etat.suggestions.length - MAX) + ' autres, visibles après traitement des premiers</div>' : '');
+      bloc.innerHTML = html;
+      const epingler = (sg) => {
+        etat.suggActive = sg.cle;
+        etat.suggExtras = new Set();
+        etat.surlignes = new Set([sg.a, sg.b]);
+        etat.zoomSurGroupes = [sg.a, sg.b];
+        bloc.querySelectorAll("li").forEach(x => x.classList.toggle("active", etat.suggestions[Number(x.dataset.k)]?.cle === sg.cle));
+        dessiner();
+      };
+      bloc.addEventListener("click", e => {
+        const li = e.target.closest("li"); if(!li) return;
+        const sg = etat.suggestions[Number(li.dataset.k)]; if(!sg) return;
+        const btn = e.target.closest("button[data-act]");
+        if(!btn){ if(etat.suggActive !== sg.cle) epingler(sg); return; }   // clic sur la ligne : on regarde avant de décider
+        const extras = etat.suggActive === sg.cle ? [...etat.suggExtras] : [];
+        etat.suggActive = null; etat.surlignes = null; etat.suggExtras = new Set();
+        if(btn.dataset.act === "fusionner"){ fusionnerNums([sg.a, sg.b, ...extras]); proposerRapprochements(); rendre(); }
+        else { etat.ignores.add(sg.cle); marquerModifie("rapprochement-ecarte", {groupes:[sg.a, sg.b]}); proposerRapprochements(); rendre(); }
+      });
+      bloc.addEventListener("keydown", e => {
+        if(e.key !== "Enter" && e.key !== " ") return;
+        const li = e.target.closest("li"); if(!li || e.target.tagName === "BUTTON") return;
+        e.preventDefault(); const sg = etat.suggestions[Number(li.dataset.k)]; if(sg) epingler(sg);
+      });
+      bloc.addEventListener("mouseover", e => {
+        if(etat.suggActive) return;                            // un rapprochement épinglé ne bouge pas au survol
+        const li = e.target.closest("li"); if(!li) return;
+        const sg = etat.suggestions[Number(li.dataset.k)]; if(sg) surlignerGroupes([sg.a, sg.b]);
+      });
+      bloc.addEventListener("mouseleave", () => { if(!etat.suggActive) surlignerGroupes(null); });
+      liste.appendChild(bloc);
+    }
+
+    // ---- tri : SPF → commune → sections → numéro ----
+    const cleTri = (g) => {
+      const membres = [...g.membres].map(i => etat.parcelles[i]);
+      const communes = [...new Set(membres.map(p => p.props.nom_commune).filter(Boolean))].sort();
+      const insee = [...new Set(membres.map(p => p.props.commune).filter(Boolean))].sort();
+      const sections = [...new Set(membres.map(p => p.props.section).filter(Boolean))].sort();
+      const spf = insee.map(spfDe).filter(Boolean).sort()[0] || "";
+      const dep = insee.length ? departementDe(insee[0]) : "";
+      return {spf, dep, commune: communes[0] || "", sections: sections.join(" "), num: g.num};
+    };
+    const ordonnes = etat.groupes.map(g => ({g, k: cleTri(g)})).sort((u,v) =>
+      u.k.spf.localeCompare(v.k.spf, "fr") || u.k.commune.localeCompare(v.k.commune, "fr")
+      || u.k.sections.localeCompare(v.k.sections, "fr") || (u.k.num - v.k.num));
+
+    let teteCourante = null;
+    ordonnes.forEach(({g, k}) => {
+      const enTete = (k.spf ? "SPF " + k.spf
+                      : (SPF.multiples[k.dep] ? "SPF à préciser (" + SPF.multiples[k.dep].join(" / ") + ")" : "SPF inconnu"))
+                    + " — " + (k.commune || "Commune inconnue");
+      if(enTete !== teteCourante){
+        const h = document.createElement("div"); h.className = "tete-tri"; h.textContent = enTete;
+        liste.appendChild(h); teteCourante = enTete;
+      }
+      const membres = [...g.membres].map(i => etat.parcelles[i])
+        .sort((a,b) => a.ref.localeCompare(b.ref,"fr",{numeric:true}));
+      const surface = membres.reduce((s,p) => s + p.surface, 0);
+
+      const bloc = document.createElement("div");
+      bloc.className = "groupe" + (g.num === etat.ouvert ? " ouvert" : "");
+
+      const communes = [...new Set(membres.map(p => p.props.nom_commune).filter(Boolean))];
+      const sections = [...new Set(membres.map(p => p.props.section).filter(Boolean))].sort();
+      const lieu = (communes.length ? communes.join(" / ") : "") +
+                   (sections.length ? " · " + sections.slice(0,4).join(" ") + (sections.length > 4 ? " …" : "") : "");
+
+      const tete = document.createElement("button");
+      tete.className = "groupe-tete";
+      tete.type = "button";
+      tete.innerHTML =
+        '<input type="checkbox" ' + (g.coche ? "checked" : "") + ' aria-label="Sélectionner le groupe ' + g.num + '">' +
+        '<span class="num' + (g.manuel ? " manuel" : "") + '">G' + g.num + '</span>' +
+        '<span class="info">' +
+          (lieu ? '<span class="lieu">' + lieu + '</span>' : "") +
+          '<span class="chiffres">' + membres.length + ' parcelle' + (membres.length>1?"s":"") + ' · ' + formatSurface(surface) + '</span>' +
+        '</span>' +
+        '<span class="pastille" style="background:' + (g.num === etat.ouvert ? "#A01040" : "#8C97A3") + '"></span>';
+      tete.addEventListener("click", (e) => {
+        if(e.target.type === "checkbox"){
+          g.coche = e.target.checked;
+          majBoutons();
+          e.stopPropagation();
+          return;
+        }
+        etat.ouvert = (etat.ouvert === g.num) ? null : g.num;
+        etat.zoomSur = etat.ouvert;      // la carte se cale sur le groupe qu'on ouvre
+        etat.suggActive = null; etat.surlignes = null; etat.suggExtras = new Set();
+        rendre();
+      });
+      bloc.appendChild(tete);
+
+      if(g.num === etat.ouvert){
+        const ul = document.createElement("ul");
+        ul.className = "parcelles";
+        membres.forEach(p => {
+          const li = document.createElement("li");
+          const id = "p" + p.i;
+          li.innerHTML =
+            '<input type="checkbox" id="' + id + '" checked>' +
+            '<label for="' + id + '">' + p.ref + '</label>' +
+            '<span class="surf">' + formatSurface(p.surface) + '</span>';
+          li.querySelector("input").addEventListener("change", () => {
+            if(g.membres.size === 1){ signaler("Ce groupe ne compte qu'une parcelle : rien à détacher."); rendre(); return; }
+            retirerDuGroupe(g.num, [p.i]);
+            rendre();
+          });
+          li.addEventListener("mouseenter", () => surligner(p.i, true));
+          li.addEventListener("mouseleave", () => surligner(p.i, false));
+          ul.appendChild(li);
+        });
+        bloc.appendChild(ul);
+        bloc.appendChild(rendreDepot(g));
+      }
+      liste.appendChild(bloc);
+    });
+  }
+
+  const vivant = document.getElementById("groupes-vivant");
+  if(vivant) vivant.textContent = etat.groupes.length + " groupe" + (etat.groupes.length > 1 ? "s" : "");
+  document.getElementById("c-parcelles").textContent = etat.parcelles.length;
+  document.getElementById("c-groupes").textContent = etat.groupes.length;
+  document.getElementById("c-surface").textContent =
+    formatSurface(etat.parcelles.reduce((s,p) => s + p.surface, 0));
+
+  majBoutons();
+  dessiner();
+}
+
+function surligner(){ /* réservé : mise en avant au survol */ }
+function surlignerGroupes(nums){
+  etat.surlignes = nums ? new Set(nums) : null;
+  dessiner();
+}
+
+function majBoutons(){
+  const charge = etat.parcelles.length > 0;
+  document.getElementById("btn-recalculer").disabled = !charge;
+  document.getElementById("btn-export").disabled = !charge;
+  document.getElementById("btn-fusionner").disabled =
+    etat.groupes.filter(g => g.coche).length < 2;
+  document.getElementById("btn-arbo").disabled = !(charge && etat.dossier && etat.persist.actif);
+  // Découpage GELÉ dès la numérotation définitive : les numéros nomment les dossiers Drive et les pièces,
+  // un recalcul sans table de concordance les rendrait tous faux. Repartir = Réinitialiser depuis REDPAR.
+  const gele = Boolean(etat.numerotationFaite);
+  const motif = gele ? "Découpage gelé : la numérotation définitive nomme les dossiers Drive et les pièces. Pour repartir, Réinitialiser depuis REDPAR." : "";
+  ["btn-recalculer", "tolerance", "mini"].forEach(id => { const el = document.getElementById(id); el.disabled = gele || (id === "btn-recalculer" ? !charge : false); el.title = motif; });
+  const arbo = document.getElementById("btn-arbo");
+  arbo.textContent = gele ? "Créer / compléter le Drive" : "Numéroter et créer le Drive";
+}
+
+let minuteurMessage;
+function signaler(texte, alerte){
+  const ancien = document.querySelector(".message");
+  if(ancien) ancien.remove();
+  const d = document.createElement("div");
+  d.className = "message" + (alerte ? " alerte" : "");
+  d.textContent = texte;
+  document.querySelector(".carte-zone").appendChild(d);
+  clearTimeout(minuteurMessage);
+  minuteurMessage = setTimeout(() => d.remove(), 4200);
+}
+
+/* ---------- entrées ---------- */
+function traiterTexte(texte){
+  let objet;
+  try{ objet = JSON.parse(texte); }
+  catch(e){ signaler("Fichier illisible : ce n'est pas du JSON valide.", true); return; }
+  try{
+    chargerGeoJSON(objet);
+    dessiner.cadre = false;
+    etat.dossier = null; etat.persist.actif = false; etat.ignores = new Set();
+    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false;
+    afficherPersist("Jeu local — non enregistré");
+    regrouperAutomatiquement();
+    rendre();
+    signaler(etat.parcelles.length + " parcelles chargées, " + etat.groupes.length + " unités foncières détectées.");
+  }catch(e){
+    signaler(e.message, true);
+  }
+}
+
+/* ---------- recherche par société (via /api/redpar → REDPAR) ---------- */
+function afficherEtatSociete(html){ document.getElementById("societe-etat").innerHTML = html; }
+
+/* ---------- persistance Neon (via /api/dossier) ---------- */
+function afficherPersist(texte, classe){
+  const el = document.getElementById("persist");
+  el.textContent = texte || "";
+  el.className = "persist" + (classe ? " " + classe : "");
+}
+function etatPersistable(){
+  return {
+    ignores: [...etat.ignores],
+    seuils: {
+      limiteCommuneMinimale_m: parseFloat(document.getElementById("mini").value) || 0,
+      rapprochement_m: parseFloat(document.getElementById("rapproch").value) || 0,
+      voisinage_m: parseFloat(document.getElementById("rayon").value) || 0,
+      toleranceContact_m: parseFloat(document.getElementById("tolerance").value) || 0
+    },
+    sansGeometrie: (etat.sansGeometrie || []).map(x => x.idu).filter(Boolean),
+    numerotation_definitive: etat.numerotationFaite ? (etat.numerotationDate || new Date().toISOString()) : null
+  };
+}
+function groupesPersistables(){
+  return etat.groupes.map(g => ({numero: g.num, manuel: Boolean(g.manuel), idus: [...g.membres].map(i => etat.parcelles[i].props.idu).filter(Boolean)}));
+}
+async function appelDossier(corps){
+  const r = await fetch("/api/dossier", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(corps)});
+  const d = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(d.erreur || ("HTTP " + r.status));
+  return d;
+}
+
+// Enregistrement complet après un relevé REDPAR : dossier, puis parcelles par lots, puis découpage.
+async function sauverInitial(){
+  if(!etat.dossier) return;
+  afficherPersist("Enregistrement du dossier…");
+  try{
+    await appelDossier({action:"initialiser", siren: etat.dossier.siren, denomination: etat.dossier.denomination,
+                        millesime: etat.dossier.millesime, etat: etatPersistable()});
+    const lignes = etat.parcelles.map(p => ({idu: p.props.idu, props: p.props, contour: p.geometrie, groupe: null}))
+      .concat((etat.sansGeometrie || []).map(x => ({idu: x.idu, props: x, contour: null, groupe: null})))
+      .filter(x => x.idu);
+    for(let d = 0; d < lignes.length; d += 400){
+      await appelDossier({action:"parcelles", siren: etat.dossier.siren, parcelles: lignes.slice(d, d+400)});
+      afficherPersist("Enregistrement… " + Math.min(d+400, lignes.length) + " / " + lignes.length + " parcelles");
+    }
+    await appelDossier({action:"groupes", siren: etat.dossier.siren, groupes: groupesPersistables(), etat: etatPersistable(),
+                        quoi: "decoupage-automatique", detail:{groupes: etat.groupes.length}});
+    etat.persist.actif = true;
+    afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), "ok");
+  }catch(e){
+    etat.persist.actif = false;
+    afficherPersist("Non enregistré — " + (e.message || "base indisponible"), "alerte");
+  }
+}
+
+// Après chaque geste sur le découpage : enregistrement différé de 800 ms (les gestes rapides se regroupent).
+function marquerModifie(quoi, detail){
+  if(!etat.dossier || !etat.persist.actif) return;
+  etat.persist.quoi = quoi; etat.persist.detail = detail || {};
+  afficherPersist("Modifié…");
+  clearTimeout(etat.persist.minuteur);
+  etat.persist.minuteur = setTimeout(sauverGroupes, 800);
+}
+async function sauverGroupes(){
+  if(!etat.dossier || etat.persist.enCours){ if(etat.persist.enCours) etat.persist.minuteur = setTimeout(sauverGroupes, 500); return; }
+  etat.persist.enCours = true;
+  afficherPersist("Enregistrement…");
+  try{
+    await appelDossier({action:"groupes", siren: etat.dossier.siren, groupes: groupesPersistables(), etat: etatPersistable(),
+                        quoi: etat.persist.quoi, detail: etat.persist.detail});
+    afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), "ok");
+  }catch(e){
+    afficherPersist("Non enregistré — " + (e.message || "base indisponible"), "alerte");
+  }finally{
+    etat.persist.enCours = false;
+  }
+}
+
+// Réouverture d'un dossier depuis la base : parcelles, contours et découpage tels qu'ils ont été laissés.
+function ouvrirDepuisBase(d){
+  const avec = d.parcelles.filter(p => p.contour);
+  const sans = d.parcelles.filter(p => !p.contour);
+  chargerGeoJSON({type:"FeatureCollection", features: avec.map(p => ({type:"Feature", properties: p.props, geometry: p.contour}))});
+  dessiner.cadre = false;
+  calculerAdjacence(parseFloat(document.getElementById("mini").value) || 0);
+
+  const indexParIdu = new Map(etat.parcelles.map(p => [p.props.idu, p.i]));
+  const parNumero = new Map();
+  avec.forEach(p => {
+    if(!Number.isInteger(p.groupe)) return;
+    const i = indexParIdu.get(p.idu); if(i == null) return;
+    if(!parNumero.has(p.groupe)) parNumero.set(p.groupe, new Set());
+    parNumero.get(p.groupe).add(i);
+  });
+  const manuels = new Set(d.groupes.filter(g => g.manuel).map(g => g.numero));
+  const driveParNumero = new Map(d.groupes.map(g => [g.numero, g.drive || {}]));
+  etat.groupes = [...parNumero.entries()].sort((a,b) => a[0]-b[0]).map(([num, membres]) => ({num, membres, coche:false, manuel: manuels.has(num), drive: driveParNumero.get(num) || {}}));
+  etat.documents = (d.documents || []).map(x => Object.assign({}, x, {date_doc: x.date_doc ? String(x.date_doc).slice(0,10) : null}));
+  etat.driveSociete = (d.dossier.drive && d.dossier.drive.societe) ? d.dossier.drive : null;
+  etat.numerotationFaite = Boolean(d.dossier.etat && d.dossier.etat.numerotation_definitive);
+  etat.numerotationDate = (d.dossier.etat && d.dossier.etat.numerotation_definitive) || null;
+  etat.documents.forEach(x => { if(typeof x.lecture === "string"){ try{ x.lecture = JSON.parse(x.lecture); }catch(e){ x.lecture = {}; } } });
+  etat.compteurGroupe = etat.groupes.reduce((m,g) => Math.max(m, g.num), 0);
+  // parcelles orphelines (sans groupe en base) : un groupe chacune, plutôt que de les perdre
+  const groupees = new Set(); etat.groupes.forEach(g => g.membres.forEach(i => groupees.add(i)));
+  etat.parcelles.forEach(p => { if(!groupees.has(p.i)) etat.groupes.push(numeroterGroupe(new Set([p.i]))); });
+
+  const e = d.dossier.etat || {};
+  etat.ignores = new Set(e.ignores || []);
+  if(e.seuils){
+    if(e.seuils.rapprochement_m != null){ document.getElementById("rapproch").value = e.seuils.rapprochement_m; document.getElementById("rapproch-val").textContent = e.seuils.rapprochement_m + " m"; }
+    if(e.seuils.voisinage_m != null){ document.getElementById("rayon").value = e.seuils.voisinage_m; document.getElementById("rayon-val").textContent = e.seuils.voisinage_m + " m"; }
+    if(e.seuils.toleranceContact_m != null){ document.getElementById("tolerance").value = e.seuils.toleranceContact_m; }
+  }
+  etat.sansGeometrie = sans.map(p => ({...(p.props||{}), idu: p.idu, motif: "absente du plan au dernier relevé"}));
+  etat.ouvert = null;
+  etat.dossier = {siren: d.dossier.siren, denomination: d.dossier.denomination, millesime: d.dossier.millesime};
+  etat.persist.actif = true;
+  proposerRapprochements();
+  rendre();
+
+  const quand = d.dossier.modifie_le ? new Date(d.dossier.modifie_le).toLocaleString("fr-FR",{dateStyle:"short", timeStyle:"short"}) : "";
+  afficherEtatSociete("<b>" + echap(d.dossier.denomination || d.dossier.siren) + "</b> — SIREN " + echap(d.dossier.siren)
+    + (d.dossier.millesime ? " — matrice " + echap(d.dossier.millesime) : "")
+    + "<br>Dossier rouvert depuis la base" + (quand ? ", dernière modification le " + quand : "")
+    + " : " + avec.length + ' parcelles, <span id="groupes-vivant">' + etat.groupes.length + " groupes</span>"
+    + (sans.length ? ', <span class="alerte">' + sans.length + " sans géométrie</span>" : "")
+    + '<div class="reinit"><button class="btn danger" id="btn-reinit">Réinitialiser depuis REDPAR</button></div>');
+  document.getElementById("btn-reinit").addEventListener("click", () => {
+    if(confirm("Repartir du relevé REDPAR efface le découpage enregistré pour cette société, y compris les groupes retouchés à la main. Continuer ?")){
+      chercherParcelles(etat.dossier.siren, etat.dossier.denomination, true);
+    }
+  });
+  afficherPersist("Enregistré (rouvert)", "ok");
+  signaler("Dossier rouvert : " + etat.parcelles.length + " parcelles, " + etat.groupes.length + " groupes.");
+}
+
+async function listerDossiers(){
+  const zone = document.getElementById("dossiers");
+  try{
+    const r = await fetch("/api/dossier?liste=1", {headers:{Accept:"application/json"}});
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.erreur || ("HTTP " + r.status));
+    if(!d.dossiers || !d.dossiers.length){ zone.innerHTML = ""; return; }
+    let html = "<h3>Dossiers enregistrés</h3><ul>";
+    d.dossiers.forEach(x => {
+      const quand = x.modifie_le ? new Date(x.modifie_le).toLocaleDateString("fr-FR") : "";
+      html += '<li><button type="button" data-siren="' + echap(x.siren) + '">'
+        + '<span class="d-nom">' + echap(x.denomination || x.siren) + '</span>'
+        + '<span class="d-inf">' + x.groupes + " groupe" + (x.groupes>1?"s":"") + (x.groupes_manuels ? " · <b>" + x.groupes_manuels + " ✎</b>" : "")
+        + " · " + quand + '</span></button></li>';
+    });
+    zone.innerHTML = html + "</ul>";
+    zone.querySelectorAll("button[data-siren]").forEach(b => b.addEventListener("click", () => {
+      document.getElementById("societe-saisie").value = b.querySelector(".d-nom").textContent;
+      chercherParcelles(b.dataset.siren, b.querySelector(".d-nom").textContent, false);
+    }));
+  }catch(e){
+    zone.innerHTML = "";
+    afficherPersist("Base indisponible — travail non enregistré", "alerte");
+  }
+}
+
+/* ---------- étape 0 : l'annuaire officiel, une carte par société ---------- */
+function echap(t){ return String(t == null ? "" : t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function formaterDate(d){
+  if(!d || !/^\d{4}-\d{2}-\d{2}/.test(d)) return d || "N/C";
+  return d.slice(8,10) + "/" + d.slice(5,7) + "/" + d.slice(0,4);
+}
+
+async function chercherSociete(saisie){
+  const brut = (saisie || "").trim();
+  if(!brut){ afficherEtatSociete('<span class="alerte">Saisissez un SIREN ou une dénomination.</span>'); return; }
+  const chiffres = brut.replace(/\s+/g, "");
+  document.getElementById("candidats").innerHTML = "";
+
+  // Un SIREN saisi directement part tout de suite au cadastre
+  if(/^\d{9}$/.test(chiffres)){ chercherParcelles(chiffres, null); return; }
+
+  const bouton = document.getElementById("btn-societe");
+  bouton.disabled = true;
+  afficherEtatSociete("Recherche dans l'annuaire officiel des entreprises…");
+  try{
+    const r = await fetch("/api/redpar?etape=societes&q=" + encodeURIComponent(brut), {headers:{Accept:"application/json"}});
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.erreur || ("HTTP " + r.status));
+    const liste = d.societes || [];
+    if(!liste.length){
+      afficherEtatSociete('<span class="alerte">Aucune société trouvée pour « ' + echap(brut) + ' ».</span>');
+      return;
+    }
+    afficherEtatSociete(liste.length + " société" + (liste.length > 1 ? "s trouvées" : " trouvée")
+      + " — choisissez celle à traiter :");
+    const ul = document.getElementById("candidats");
+    liste.forEach(c => {
+      const active = c.statut === "Active";
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.type = "button";
+      b.innerHTML =
+        '<span class="nom">' + echap(c.nom) + '</span>' +
+        '<span class="badge">' + echap(c.formeJuridique) + '</span>' +
+        '<span class="badge ' + (active ? "actif" : "cesse") + '">' + echap(c.statut) + '</span>' +
+        '<span class="det">SIREN <b>' + echap(c.siren) + '</b> · créée le ' + echap(formaterDate(c.dateCreation)) + '</span>' +
+        '<span class="det">' + echap(c.adresse) + '</span>' +
+        '<span class="det">APE ' + echap(c.codeApe) + '</span>' +
+        (c.dirigeants && c.dirigeants.length ? '<span class="det">Dirigeants : ' + echap(c.dirigeants.join(", ")) + '</span>' : "");
+      b.addEventListener("click", () => {
+        document.getElementById("societe-saisie").value = c.nom;
+        ul.innerHTML = "";
+        chercherParcelles(c.siren, c.nom);
+      });
+      li.appendChild(b);
+      ul.appendChild(li);
+    });
+    const src = document.createElement("p");
+    src.className = "src";
+    src.textContent = "Source : annuaire officiel des entreprises (gouv.fr)";
+    ul.appendChild(src);
+  }catch(e){
+    afficherEtatSociete('<span class="alerte">' + echap(e.message || "Annuaire inaccessible") + "</span>");
+  }finally{
+    bouton.disabled = false;
+  }
+}
+
+async function chercherParcelles(siren, libelle, forcer){
+  const brut = libelle || siren;
+  const param = "siren=" + siren;
+
+  // Un dossier déjà en base se rouvre tel quel : le relevé REDPAR n'écrase jamais un découpage sans demande explicite.
+  if(!forcer){
+    try{
+      const r0 = await fetch("/api/dossier?siren=" + siren, {headers:{Accept:"application/json"}});
+      if(r0.ok){ const d0 = await r0.json(); ouvrirDepuisBase(d0); return; }
+      if(r0.status !== 404){ const e0 = await r0.json().catch(() => ({})); afficherPersist("Base indisponible — " + (e0.erreur || "HTTP " + r0.status), "alerte"); }
+    }catch(e){ afficherPersist("Base indisponible — travail non enregistré", "alerte"); }
+  }
+
+  const bouton = document.getElementById("btn-societe");
+  bouton.disabled = true;
+  document.getElementById("candidats").innerHTML = "";
+
+  // Sablier textuel : ATTENTE le relit toutes les 400 ms (« 12 sur 47 »)
+  const sablier = { texte: "Recherche des références…" };
+  const poserSablier = (t) => { sablier.texte = t; afficherEtatSociete(t); };
+  poserSablier(sablier.texte);
+
+  let attenteOuverte = false;
+  const relais = setTimeout(() => {
+    if(!window.ATTENTE) return;
+    attenteOuverte = true;
+    window.ATTENTE.demarrer({
+      titre: "FUSION",
+      sousTitre: "Lecture du parcellaire de la société — " + brut,
+      source: () => sablier.texte
+    });
+  }, ATTENTE_SEUIL_MS);
+  const fermer = () => { clearTimeout(relais); if(attenteOuverte && window.ATTENTE) window.ATTENTE.terminer(); };
+
+  try{
+    // ---- étape 1 : la société et ses références, par commune ----
+    const r1 = await fetch("/api/redpar?etape=references&" + param, {headers:{Accept:"application/json"}});
+    const d1 = await r1.json();
+    if(!r1.ok) throw new Error(d1.erreur || ("HTTP " + r1.status));
+
+    if(!d1.communes || !d1.communes.length){
+      fermer();
+      afficherEtatSociete('<span class="alerte">Aucune parcelle au relevé pour cette société.</span>');
+      return;
+    }
+
+    // ---- étape 2 : les contours, commune par commune, quatre à la fois ----
+    const communes = d1.communes;
+    const lot = d1.lotReferences || 150;
+    const taches = [];
+    communes.forEach(c => {
+      for(let d = 0; d < c.references.length; d += lot){
+        taches.push({insee: c.insee, refs: c.references.slice(d, d + lot)});
+      }
+    });
+    const features = [], sansGeometrie = [], indisponible = new Map();
+    let faites = 0;
+    const totalRefs = communes.reduce((n,c) => n + c.references.length, 0);
+    poserSablier("Contours : 0 sur " + communes.length + " communes");
+
+    const communesFaites = new Set();
+    let curseur = 0;
+    async function ouvrier(){
+      while(curseur < taches.length){
+        const t = taches[curseur++];
+        let geo = {}, erreur = null;
+        try{
+          const u = "/api/redpar?etape=contours&insee=" + t.insee + "&ids=" + t.refs.map(x => x.idu).join(",")
+                  + (d1.cible ? "&cible=" + d1.cible : "");
+          const r2 = await fetch(u, {headers:{Accept:"application/json"}});
+          const d2 = await r2.json();
+          if(!r2.ok) throw new Error(d2.erreur || ("HTTP " + r2.status));
+          geo = d2.geo || {};
+        }catch(e){ erreur = e.message || "plan indisponible"; indisponible.set(t.insee, erreur); }
+
+        t.refs.forEach(x => {
+          const g = geo[x.idu];
+          const props = {
+            idu: x.idu, commune: t.insee, nom_commune: x.nom_commune,
+            prefixe: x.idu.slice(5,8), section: x.idu.slice(8,10).trim(), numero: x.idu.slice(10,14),
+            contenance: x.contenance, droit: x.droit, nature: x.nature, adresse: x.adresse,
+            millesime_plan: g ? g.millesime_plan || null : null
+          };
+          if(g && g.contour) features.push({type:"Feature", properties:props, geometry:g.contour});
+          else sansGeometrie.push({...props, motif: erreur ? "plan indisponible" : "absente de tous les millésimes essayés"});
+        });
+        faites += t.refs.length;
+        communesFaites.add(t.insee);
+        poserSablier("Contours : " + communesFaites.size + " sur " + communes.length + " communes — "
+          + faites + " / " + totalRefs + " références");
+      }
+    }
+    await Promise.all(Array.from({length: Math.min(4, taches.length)}, ouvrier));
+
+    if(!features.length){
+      fermer();
+      afficherEtatSociete('<span class="alerte">Aucune parcelle dessinable : ' + totalRefs
+        + " référence(s) au relevé, aucune géométrie trouvée.</span>");
+      return;
+    }
+
+    chargerGeoJSON({type:"FeatureCollection", features});
+    dessiner.cadre = false;
+    etat.ignores = new Set();
+    regrouperAutomatiquement();
+    etat.ouvert = null;                 // vue d'ensemble d'abord : les groupes repliés
+    etat.sansGeometrie = sansGeometrie;
+    etat.dossier = {siren, denomination: (d1.societe && d1.societe.denomination) || libelle || null, millesime: d1.millesime || null};
+    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false; etat.numerotationDate = null;
+    etat.groupes.forEach(g => { g.drive = {}; });
+    rendre();
+    fermer();
+    sauverInitial().then(listerDossiers);
+
+    const s = d1.societe || {};
+    let texte = "<b>" + (s.denomination || brut) + "</b>" + (s.siren ? " — SIREN " + s.siren : "")
+      + (d1.millesime ? " — matrice " + d1.millesime : "")
+      + "<br>" + features.length + " parcelle" + (features.length > 1 ? "s" : "") + " dessinée" + (features.length > 1 ? "s" : "")
+      + " sur " + communes.length + " commune" + (communes.length > 1 ? "s" : "")
+      + ', <span id="groupes-vivant">' + etat.groupes.length + " groupes</span>";
+    if(sansGeometrie.length){
+      texte += ', <span class="alerte">' + sansGeometrie.length + " sans géométrie</span>"
+        + " (au relevé mais absente" + (sansGeometrie.length > 1 ? "s" : "") + " du plan)";
+    }
+    if(indisponible.size){
+      texte += '<br><span class="alerte">Plan indisponible pour ' + indisponible.size + " commune"
+        + (indisponible.size > 1 ? "s" : "") + " : " + [...indisponible.keys()].join(", ") + "</span>";
+    }
+    if(d1.tronque) texte += '<br><span class="alerte">Résultat tronqué par REDPAR.</span>';
+    afficherEtatSociete(texte);
+    signaler(etat.parcelles.length + " parcelles chargées, " + etat.groupes.length + " unités foncières détectées.");
+  }catch(e){
+    if(attenteOuverte && window.ATTENTE) window.ATTENTE.echec(e.message || "recherche impossible");
+    setTimeout(fermer, 2500);
+    afficherEtatSociete('<span class="alerte">' + (e.message || "Recherche impossible") + "</span>");
+  }finally{
+    bouton.disabled = false;
+  }
+}
+
+function brancher(){
+  document.getElementById("btn-societe").addEventListener("click", () =>
+    chercherSociete(document.getElementById("societe-saisie").value));
+  document.getElementById("societe-saisie").addEventListener("keydown", e => {
+    if(e.key === "Enter") chercherSociete(e.target.value);
+  });
+
+  const depose = document.getElementById("depose");
+  const champ = document.getElementById("fichier");
+  const zone = document.getElementById("zone-coller");
+
+  document.getElementById("btn-fichier").addEventListener("click", () => champ.click());
+  champ.addEventListener("change", () => {
+    const f = champ.files[0];
+    if(!f) return;
+    f.text().then(traiterTexte);
+  });
+
+  document.getElementById("btn-coller").addEventListener("click", () => {
+    zone.classList.toggle("visible");
+    if(zone.classList.contains("visible")) zone.focus();
+  });
+  zone.addEventListener("keydown", e => {
+    if(e.key === "Enter" && (e.ctrlKey || e.metaKey)) traiterTexte(zone.value);
+  });
+
+  document.getElementById("btn-essai").addEventListener("click", () => traiterTexte(JSON.stringify(jeuEssai())));
+
+  ["dragenter","dragover"].forEach(ev => depose.addEventListener(ev, e => {
+    e.preventDefault(); depose.classList.add("actif");
+  }));
+  ["dragleave","drop"].forEach(ev => depose.addEventListener(ev, e => {
+    e.preventDefault(); depose.classList.remove("actif");
+  }));
+  depose.addEventListener("drop", e => {
+    const f = e.dataTransfer.files[0];
+    if(f) f.text().then(traiterTexte);
+  });
+
+  const rayon = document.getElementById("rayon");
+  rayon.addEventListener("input", () => {
+    document.getElementById("rayon-val").textContent = rayon.value + " m";
+    dessiner();
+  });
+
+  const rapproch = document.getElementById("rapproch");
+  rapproch.addEventListener("input", () => { document.getElementById("rapproch-val").textContent = rapproch.value + " m"; });
+  rapproch.addEventListener("change", () => { if(etat.parcelles.length){ proposerRapprochements(); rendre(); marquerModifie("seuil-rapprochement", {m: rapproch.value}); } });
+
+  document.getElementById("tolerance").addEventListener("change", () => {
+    if(!etat.parcelles.length) return;
+    if(etat.numerotationFaite){ signaler("Découpage gelé par la numérotation définitive.", true); rendre(); return; }
+    if(etat.groupes.some(g => g.manuel) && !confirm("Changer la tolérance recalcule le découpage et efface les retouches manuelles. Continuer ?")) return;
+    etat.ignores = new Set(); regrouperAutomatiquement(); etat.ouvert = null; rendre();
+    marquerModifie("recalcul", {groupes: etat.groupes.length, tolerance_m: document.getElementById("tolerance").value});
+  });
+
+  document.getElementById("mini").addEventListener("change", () => {
+    if(etat.numerotationFaite){ signaler("Découpage gelé par la numérotation définitive.", true); rendre(); return; }
+    if(etat.parcelles.length){ regrouperAutomatiquement(); rendre(); }
+  });
+
+  document.getElementById("btn-recalculer").addEventListener("click", () => {
+    if(etat.numerotationFaite){ signaler("Découpage gelé par la numérotation définitive — pour repartir, Réinitialiser depuis REDPAR.", true); return; }
+    if(etat.groupes.some(g => g.manuel) && !confirm("Recalculer efface les retouches manuelles du découpage. Continuer ?")) return;
+    etat.ignores = new Set();
+    regrouperAutomatiquement(); etat.ouvert = null; rendre();
+    marquerModifie("recalcul", {groupes: etat.groupes.length});
+    signaler("Regroupement automatique rétabli : " + etat.groupes.length + " unités foncières.");
+  });
+
+  document.getElementById("btn-fusionner").addEventListener("click", () => {
+    fusionnerCoches(); rendre();
+  });
+
+  document.getElementById("btn-export").addEventListener("click", exporter);
+  document.getElementById("btn-arbo").addEventListener("click", creerArborescenceDrive);
+  document.getElementById("btn-drive").addEventListener("click", () => {
+    if(!etat.drive.client){ signaler("Le client Google n'est pas encore chargé, réessayez dans une seconde.", true); return; }
+    etat.drive.client.requestAccessToken();
+  });
+  preparerOAuth();
+}
+
+function exporter(){
+  const sortie = {
+    genere: new Date().toISOString(),
+    parametres: {
+      limiteCommuneMinimale_m: parseFloat(document.getElementById("mini").value),
+      voisinageAffiche_m: parseFloat(document.getElementById("rayon").value)
+    },
+    sansGeometrie: etat.sansGeometrie || [],
+    groupes: etat.groupes.map(g => ({
+      numero: g.num,
+      parcelles: [...g.membres].map(i => ({
+        reference: etat.parcelles[i].ref,
+        surface_m2: Math.round(etat.parcelles[i].surface)
+      })),
+      surface_m2: Math.round([...g.membres].reduce((s,i) => s + etat.parcelles[i].surface, 0))
+    }))
+  };
+  const blob = new Blob([JSON.stringify(sortie, null, 2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "fusion-groupes.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* ---------- jeu d'essai ---------- */
+function jeuEssai(){
+  // Trois situations de contrôle :
+  //  A. quatre parcelles jointives -> une seule unité foncière
+  //  B. une parcelle qui ne touche A que par un coin -> unité distincte
+  //  C. deux parcelles jointives séparées de A par une voie -> unité distincte
+  //  Attendu : 3 groupes ; rapprochements proposés A+B (coin, 0 m) et A+C (voie)
+  const lon0 = 2.3400, lat0 = 48.8600;
+  const m = 1/111320, mx = m/Math.cos(lat0*Math.PI/180);
+  const rect = (x, y, l, h, ref) => ({
+    type:"Feature",
+    properties:{section:"AB", numero:ref, commune:"75108"},
+    geometry:{type:"Polygon",coordinates:[[
+      [lon0+x*mx, lat0+y*m],
+      [lon0+(x+l)*mx, lat0+y*m],
+      [lon0+(x+l)*mx, lat0+(y+h)*m],
+      [lon0+x*mx, lat0+(y+h)*m],
+      [lon0+x*mx, lat0+y*m]
+    ]]}
+  });
+  return {type:"FeatureCollection", features:[
+    rect(0,   0,  40, 30, "0012"),
+    rect(40,  0,  35, 30, "0013"),
+    rect(0,  30,  40, 25, "0014"),
+    rect(40, 30,  35, 25, "0015"),
+    rect(75, 55,  30, 25, "0021"),          // ne touche 0015 que par le coin (75,55)
+    rect(110, 0,  30, 30, "0031"),          // au-delà d'une voie de 35 m
+    rect(110,30,  30, 25, "0032")
+  ]};
+}
+
+initCarte();
+brancher();
+rendre();
+listerDossiers();
+</script>
+</body>
+</html>
