@@ -101,6 +101,10 @@
   .reglages .reglage{padding:0 14px}
   .reglages .reglage:last-child{padding-bottom:10px}
   .dossiers summary{padding:6px 0}
+  .concordance{margin:0;border-top:1px solid var(--trait);background:#FAFBFC}
+  .concordance summary{padding:9px 14px}
+  .concordance .origines{margin:0 14px 6px;width:calc(100% - 28px)}
+  .concordance .fil-note{margin:0 14px 10px}
   .dossiers summary .n{font-family:inherit;font-size:12px;color:var(--gris);font-weight:normal}
   .reglage{display:flex;align-items:center;gap:10px;margin-bottom:8px}
   .reglage:last-child{margin-bottom:0}
@@ -436,6 +440,8 @@
         <button class="btn plein" id="btn-arbo" disabled title="Pose la numérotation définitive (SPF, commune, section) puis crée le dossier Drive de la société, un dossier par groupe et ses six sous-dossiers (cinq de data room, plus les notes de travail internes)">Numéroter et créer le Drive</button>
       </div>
 
+      <details class="dossiers concordance" id="concordance" hidden></details>
+
       <details class="reglages" id="reglages">
         <summary>Options</summary>
         <div class="reglage">
@@ -569,6 +575,7 @@ const etat = {
   sansGeometrie: [],     // références au relevé mais absentes du plan (REDPAR)
   zoomSur: null,         // groupe sur lequel caler la carte au prochain rendu
   trancherOuvert: false, // onglet « Points à trancher » : replié par défaut, l'état survit au re-rendu
+  concordance: [],       // mouvements de périmètre après numérotation (fusion, détachement) — table de concordance persistée avec le dossier
   filiation: {maillons: []}, // filiation cadastrale du DOSSIER EN COURS : maillons ancien → nouveau, proposés / validés / refusés / saisis à la main
   suggestions: [],       // rapprochements proposés {a, b, distance, motifs}
   suggActive: null,      // clé du rapprochement épinglé (cliqué) : ses deux groupes restent allumés et la carte se cale dessus
@@ -1011,10 +1018,13 @@ function fusionnerNums(nums){
   etat.groupes = etat.groupes.filter(g => !nums.includes(g.num));
   const conserve = cibles.find(g => g.num === num);
   const nouveau = {num, membres, coche:false, manuel:true, drive: (conserve && conserve.drive) || {}};
+  const drivesAbsorbes = {}; cibles.forEach(g => { if(g.num !== num) drivesAbsorbes[g.num] = g.drive || {}; });
   etat.groupes.splice(Math.min(position, etat.groupes.length), 0, nouveau);
   etat.ouvert = num;
   etat.zoomSur = num;
   marquerModifie("fusion", {groupes: nums.slice().sort((a,b)=>a-b), resultat: num});
+  // après numérotation, la fusion est un MOUVEMENT : pièces renommées, table de concordance, dépôt de la table au Drive
+  if(etat.numerotationFaite) mouvementFusion(nums, num, drivesAbsorbes);
 }
 
 /* ---------- affinage ---------- */
@@ -1037,6 +1047,7 @@ function retirerDuGroupe(numGroupe, indexParcelles){
   etat.groupes.splice(position + 1, 0, ...nouveaux);
   etat.ouvert = g.num;                  // on reste sur le groupe qu'on est en train d'affiner
   marquerModifie("detachement", {groupe: g.num, parcelles: retirees.map(i => etat.parcelles[i].props.idu || etat.parcelles[i].ref)});
+  if(etat.numerotationFaite) mouvementDetachement(g, nouveaux, retirees);
 }
 
 function fusionnerCoches(){
@@ -2573,6 +2584,138 @@ async function ouvrirFiliation(g){
   if(filAnciennes(g).size && !(etat.filiation.maillons || []).some(x => x.groupe === g.num)) fond.querySelector('[data-act="rechercher"]').click();
 }
 
+/* ---------- changement de périmètre APRÈS la numérotation définitive ----------
+   Règle (mémoire, plan de nommage) : même règle que MARTEAU — on RENOMME les
+   pièces, on tient une TABLE DE CONCORDANCE et une TABLE JOURNALIÈRE des
+   mouvements. La table journalière est DÉPOSÉE DANS LE DRIVE (consultable sans
+   ouvrir l'outil), HISTORISÉE, et INTERNE (exclue de la data room, comme les
+   notes de travail). Les numéros de groupe sont des étiquettes stables : un
+   groupe absorbé libère son numéro, un groupe détaché prend le numéro suivant,
+   on ne renumérote jamais les autres — c'est ce qui rend la concordance lisible. */
+
+const DOSSIER_MOUVEMENTS = "_Mouvements (interne)";
+
+async function driveChercherFichier(nom, parent){
+  const q = "name = '" + nom.replace(/'/g, "\\'") + "' and '" + parent + "' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false";
+  const u = "https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(q) + "&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true&pageSize=5";
+  const j = await (await driveFetch(u)).json();
+  return (j.files && j.files[0]) ? j.files[0].id : null;
+}
+async function driveRemplacerContenu(id, texte, type){
+  const r = await driveFetch("https://www.googleapis.com/upload/drive/v3/files/" + id + "?uploadType=media&supportsAllDrives=true&fields=id", {method: "PATCH", headers: {"Content-Type": type || "text/plain"}, body: texte});
+  return r.json();
+}
+// Ajoute des lignes CSV à un fichier du Drive (créé avec son en-tête s'il n'existe pas).
+async function driveAjouterCsv(nom, parent, entete, lignes){
+  const csvLigne = (l) => l.map(c => '"' + String(c == null ? "" : c).replace(/"/g, '""') + '"').join(";");
+  const ajout = lignes.map(csvLigne).join("\r\n") + "\r\n";
+  const existant = await driveChercherFichier(nom, parent);
+  if(existant){
+    const texte = await (await driveTelecharger(existant)).text();
+    await driveRemplacerContenu(existant, texte + (texte.endsWith("\n") || !texte ? "" : "\r\n") + ajout, "text/csv");
+    return existant;
+  }
+  const contenu = "\ufeff" + csvLigne(entete) + "\r\n" + ajout;   // BOM : Excel ouvre le fichier avec les accents corrects
+  const r = await driveEnvoyerFichier(new Blob([contenu], {type: "text/csv"}), nom, parent);
+  return r.id;
+}
+
+const CONCORDANCE_ENTETE = ["date", "heure", "type de mouvement", "ancien groupe", "nouveau groupe", "parcelles", "pièces renommées", "opérateur", "détail"];
+function concordanceLigne(m){
+  const d = new Date(m.date);
+  return [d.toLocaleDateString("fr-FR"), d.toLocaleTimeString("fr-FR", {hour: "2-digit", minute: "2-digit"}), m.type,
+          (m.anciens || [m.ancien]).map(numeroGroupe4).join(" + "), (m.nouveaux || [m.nouveau]).map(numeroGroupe4).join(" + "),
+          (m.parcelles || []).join(", "), (m.pieces || []).map(p => p.avant + " → " + p.apres).join(" | "), m.operateur || "", m.detail || ""];
+}
+// Dépôt au Drive : la table du jour, plus la table de concordance cumulative — toutes deux dans « _Mouvements (interne) ».
+async function deposerMouvementDrive(m){
+  if(!driveConnecte()) return false;
+  const societe = await assurerDriveSociete(); if(!societe) return false;
+  const dossier = await driveAssurerDossier(DOSSIER_MOUVEMENTS, societe);
+  const d = new Date(m.date);
+  const jour = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  await driveAjouterCsv("mouvements_" + jour + ".csv", dossier, CONCORDANCE_ENTETE, [concordanceLigne(m)]);
+  await driveAjouterCsv("table_de_concordance.csv", dossier, CONCORDANCE_ENTETE, [concordanceLigne(m)]);
+  return true;
+}
+async function enregistrerMouvement(m){
+  m.date = m.date || new Date().toISOString();
+  m.operateur = (etat.drive && etat.drive.courriel) || null;
+  etat.concordance.push(m);
+  try{ m.drive = await deposerMouvementDrive(m); }catch(e){ m.drive = false; signaler("Table des mouvements non déposée au Drive — " + e.message, true); }
+  marquerModifie("mouvement-" + m.type, m);
+}
+
+// Fusion de groupes après numérotation : les pièces des groupes absorbés prennent le numéro conservé
+// et rejoignent les sous-dossiers Drive du groupe conservé ; le dossier Drive absorbé est renommé (jamais supprimé).
+async function mouvementFusion(nums, conserve, drivesAbsorbes){
+  const absorbes = nums.filter(n => n !== conserve);
+  const g = etat.groupes.find(x => x.num === conserve); if(!g) return;
+  const pieces = [];
+  afficherPersist("Mouvement de fusion…");
+  try{
+    if(driveConnecte()){
+      await assurerDriveGroupe(g);
+      for(const doc of (etat.documents || []).filter(d => absorbes.includes(d.groupe))){
+        const t = TYPES_PIECE[doc.type] || TYPES_PIECE.AQ;
+        const nom = composerNomPiece(conserve, doc.type, dateDepuisISO(doc.date_doc), extensionDe(doc.nom));
+        const parent = g.drive[t.cle];
+        await driveRenommerDeplacer(doc.drive_id, nom, doc.drive_parent, parent);
+        pieces.push({avant: doc.nom, apres: nom});
+        Object.assign(doc, {nom, groupe: conserve, drive_parent: parent});
+        await appelDossier({action: "document", siren: etat.dossier.siren, document: doc});
+      }
+      for(const n of absorbes){
+        const ancien = (drivesAbsorbes || {})[n];
+        if(ancien && ancien.dossier) await driveRenommer(ancien.dossier, numeroGroupe4(n) + "_fusionne_dans_" + numeroGroupe4(conserve));
+      }
+    }else{
+      (etat.documents || []).filter(d => absorbes.includes(d.groupe)).forEach(doc => { pieces.push({avant: doc.nom, apres: "(à renommer au prochain Drive connecté)"}); doc.groupe = conserve; });
+    }
+    (etat.filiation.maillons || []).forEach(x => { if(absorbes.includes(x.groupe)) x.groupe = conserve; });
+    await enregistrerMouvement({type: "fusion", anciens: nums.slice().sort((a, b) => a - b), nouveau: conserve, pieces,
+      parcelles: [...g.membres].map(i => etat.parcelles[i] && etat.parcelles[i].ref).filter(Boolean),
+      detail: absorbes.map(numeroGroupe4).join(", ") + " absorbé" + (absorbes.length > 1 ? "s" : "") + " dans " + numeroGroupe4(conserve) + (driveConnecte() ? "" : " — Drive non connecté : pièces à renommer")});
+    afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR", {hour: "2-digit", minute: "2-digit"}), "ok");
+    signaler("Fusion après numérotation : " + pieces.length + " pièce" + (pieces.length > 1 ? "s renommées" : " renommée") + ", mouvement inscrit à la table de concordance.");
+  }catch(e){ afficherPersist("Mouvement non abouti — " + e.message, "alerte"); }
+  rendre();
+}
+
+// Détachement après numérotation : les nouveaux groupes reçoivent leur dossier Drive ; les pièces restent au groupe d'origine,
+// celles qui ne citent plus que des parcelles détachées sont signalées (copie à décider par l'opérateur, pas automatique).
+async function mouvementDetachement(g, nouveaux, retirees){
+  afficherPersist("Mouvement de détachement…");
+  const refs = retirees.map(i => etat.parcelles[i] && etat.parcelles[i].ref).filter(Boolean);
+  // références citées = identifiants de parcelle (idu) relevés au dépôt
+  const detachees = new Set(retirees.map(i => etat.parcelles[i] && etat.parcelles[i].props.idu).filter(Boolean));
+  const restantes = new Set([...g.membres].map(i => etat.parcelles[i] && etat.parcelles[i].props.idu).filter(Boolean));
+  const orphelines = (etat.documents || []).filter(d => d.groupe === g.num && d.lecture && Array.isArray(d.lecture.references) && d.lecture.references.length
+    && d.lecture.references.some(r => detachees.has(r)) && !d.lecture.references.some(r => restantes.has(r)));
+  try{
+    if(driveConnecte()) for(const n of nouveaux) await assurerDriveGroupe(n);
+    await enregistrerMouvement({type: "detachement", ancien: g.num, nouveaux: nouveaux.map(n => n.num), parcelles: refs, pieces: [],
+      detail: (driveConnecte() ? "dossiers Drive créés pour " + nouveaux.map(n => numeroGroupe4(n.num)).join(", ") : "Drive non connecté : dossiers à créer via « Créer / compléter le Drive »")
+        + (orphelines.length ? " — " + orphelines.length + " pièce" + (orphelines.length > 1 ? "s" : "") + " du groupe " + numeroGroupe4(g.num) + " ne cite" + (orphelines.length > 1 ? "nt" : "") + " que des parcelles détachées : " + orphelines.map(d => d.nom).join(", ") + " (copie à décider)" : "")});
+    afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR", {hour: "2-digit", minute: "2-digit"}), "ok");
+    signaler("Détachement après numérotation : nouveau" + (nouveaux.length > 1 ? "x groupes " : " groupe ") + nouveaux.map(n => numeroGroupe4(n.num)).join(", ") + ", mouvement inscrit à la table de concordance." + (orphelines.length ? " " + orphelines.length + " pièce" + (orphelines.length > 1 ? "s" : "") + " à réaffecter, voir la table." : ""));
+  }catch(e){ afficherPersist("Mouvement non abouti — " + e.message, "alerte"); }
+  rendre();
+}
+
+// Affichage de la table de concordance dans le panneau.
+function rendreConcordance(){
+  const zone = document.getElementById("concordance"); if(!zone) return;
+  const liste = etat.concordance || [];
+  if(!liste.length || !etat.numerotationFaite){ zone.hidden = true; zone.innerHTML = ""; return; }
+  zone.hidden = false;
+  zone.innerHTML = '<summary>Mouvements après numérotation <span class="n">(' + liste.length + ')</span></summary>'
+    + '<table class="origines conc"><thead><tr><th>Date</th><th>Mouvement</th><th>Ancien</th><th>Nouveau</th><th>Parcelles</th><th>Pièces</th></tr></thead><tbody>'
+    + liste.slice().reverse().map(m => '<tr><td>' + new Date(m.date).toLocaleDateString("fr-FR") + '</td><td>' + echap(m.type) + (m.drive === false ? ' <span title="Table non déposée au Drive">⚠</span>' : '') + '</td><td>' + (m.anciens || [m.ancien]).map(numeroGroupe4).join(" + ") + '</td><td>' + (m.nouveaux || [m.nouveau]).map(numeroGroupe4).join(" + ") + '</td><td>' + echap((m.parcelles || []).slice(0, 6).join(", ") + ((m.parcelles || []).length > 6 ? " …" : "")) + '</td><td>' + echap((m.pieces || []).length ? (m.pieces || []).length + " renommée" + ((m.pieces || []).length > 1 ? "s" : "") : (m.detail && /à réaffecter|copie à décider/.test(m.detail) ? "à réaffecter" : "—")) + '</td></tr>').join("")
+    + '</tbody></table>'
+    + '<p class="fil-note">Table déposée au Drive dans « ' + echap(DOSSIER_MOUVEMENTS) + ' » (table du jour et table cumulative), hors data room.</p>';
+}
+
 /* ---------- onglet des points à trancher ----------
    Trois catégories (15/09/2026) : les rapprochements proposés, les documents à
    qualifier (avec la photographie des douze premières lignes, pour qualifier à
@@ -3268,6 +3411,7 @@ function rendre(){
     formatSurface(etat.parcelles.reduce((s,p) => s + p.surface, 0));
 
   majBoutons();
+  rendreConcordance();
   dessiner();
 }
 
@@ -3315,7 +3459,7 @@ function traiterTexte(texte){
   try{
     chargerGeoJSON(objet);
     dessiner.cadre = false;
-    etat.dossier = null; etat.persist.actif = false; etat.ignores = new Set(); etat.filiation = {maillons: []};
+    etat.dossier = null; etat.persist.actif = false; etat.ignores = new Set(); etat.filiation = {maillons: []}; etat.concordance = [];
     etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false;
     afficherPersist("Jeu local — non enregistré");
     regrouperAutomatiquement();
@@ -3346,6 +3490,7 @@ function etatPersistable(){
     },
     sansGeometrie: (etat.sansGeometrie || []).map(x => x.idu).filter(Boolean),
     filiation: {maillons: (etat.filiation && etat.filiation.maillons) || []},
+    concordance: etat.concordance || [],
     numerotation_definitive: etat.numerotationFaite ? (etat.numerotationDate || new Date().toISOString()) : null
   };
 }
@@ -3439,6 +3584,7 @@ function ouvrirDepuisBase(d){
   const e = d.dossier.etat || {};
   etat.ignores = new Set(e.ignores || []);
   etat.filiation = {maillons: (e.filiation && Array.isArray(e.filiation.maillons)) ? e.filiation.maillons : []};
+  etat.concordance = Array.isArray(e.concordance) ? e.concordance : [];
   if(e.seuils){
     if(e.seuils.rapprochement_m != null){ document.getElementById("rapproch").value = e.seuils.rapprochement_m; document.getElementById("rapproch-val").textContent = e.seuils.rapprochement_m + " m"; }
     if(e.seuils.voisinage_m != null){ document.getElementById("rayon").value = e.seuils.voisinage_m; document.getElementById("rayon-val").textContent = e.seuils.voisinage_m + " m"; }
@@ -3661,7 +3807,7 @@ async function chercherParcelles(siren, libelle, forcer){
 
     chargerGeoJSON({type:"FeatureCollection", features});
     dessiner.cadre = false;
-    etat.ignores = new Set(); etat.filiation = {maillons: []};
+    etat.ignores = new Set(); etat.filiation = {maillons: []}; etat.concordance = [];
     regrouperAutomatiquement();
     etat.ouvert = null;                 // vue d'ensemble d'abord : les groupes repliés
     etat.sansGeometrie = sansGeometrie;
@@ -3770,6 +3916,7 @@ function brancher(){
   });
 
   document.getElementById("btn-fusionner").addEventListener("click", () => {
+    if(etat.numerotationFaite && !confirm("La numérotation définitive est posée : cette fusion renomme les pièces des groupes absorbés, déplace leurs fichiers Drive et s'inscrit à la table de concordance. Continuer ?")) return;
     fusionnerCoches(); rendre();
   });
 
