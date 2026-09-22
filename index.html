@@ -93,6 +93,13 @@
   .btn[disabled]:hover{background:#fff;color:var(--canard)}
 
   /* ---- réglages ---- */
+  .reprise{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;padding:8px 10px;border:1px dashed var(--trait);border-radius:6px;font-size:12.5px;color:var(--nuit);background:#FFFDF8}
+  .reprise.actif{border-color:var(--orange);background:#FFF5E9}
+  .reprise .lib{flex:1}
+  .reprise small{display:block;color:var(--gris);font-size:11px}
+  .reprise .btn{padding:3px 10px;font-size:12px}
+  .reprise-etat{flex-basis:100%;font-size:11.5px;color:var(--gris);min-height:0}
+  .reprise-etat:empty{display:none}
   .reglages{border-top:1px solid var(--trait);background:#FAFBFC}
   .reglages summary,.dossiers summary{cursor:pointer;padding:9px 14px;font-family:Georgia,serif;font-size:13.5px;color:var(--nuit);list-style:none;display:flex;align-items:center;gap:8px;user-select:none}
   .reglages summary::-webkit-details-marker,.dossiers summary::-webkit-details-marker{display:none}
@@ -207,6 +214,7 @@
   .diverg .motif a{color:var(--carmin)}
   .diverg .btn{padding:2px 8px;font-size:12px}
   .diverg .acts{display:flex;gap:6px}
+  .diverg .verbatim p{margin:2px 0;padding-left:8px;border-left:3px solid #E6D28A;font-style:italic}
   /* ---- filiation cadastrale ---- */
   .lect.fil .lect-gauche{width:58%}
   .fil-chaine{border:1px solid var(--trait);border-radius:8px;margin:0 0 12px;background:#fff}
@@ -424,6 +432,12 @@
           <textarea class="coller" id="zone-coller" placeholder="Collez ici le contenu GeoJSON, puis Ctrl+Entrée"></textarea>
         </div>
         <input type="file" id="fichier" accept=".geojson,.json,application/geo+json,application/json" hidden>
+        <div class="reprise" id="reprise" hidden tabindex="0" title="Document déjà rédigé sur la société (désignation, origine, note) couvrant plusieurs groupes : FUSION le découpe par numéro de groupe, sinon par parcelles citées, et range chaque section en note de travail du groupe concerné">
+          <span class="lib">Reprendre un document déjà rédigé <small>Word ou PDF, plusieurs groupes — glisser ici ou</small></span>
+          <button class="btn" id="btn-reprise" type="button">Choisir</button>
+          <input type="file" id="fichier-reprise" accept=".docx,.pdf,.txt" multiple hidden>
+          <div class="reprise-etat" id="reprise-etat"></div>
+        </div>
       </div>
 
       <div class="liste" id="liste">
@@ -437,6 +451,7 @@
         <button class="btn" id="btn-compil-docx" disabled title="Compilation de toutes les fiches de groupe, sommaire cliquable en tête — Word, à coller dans l'acte">Compiler (Word)</button>
         <button class="btn" id="btn-compil-pdf" disabled title="Même compilation en PDF, mentions colorées conservées — trace datée du dossier">Compiler (PDF)</button>
         <button class="btn" id="btn-annexe" disabled title="Recueil unique des servitudes et charges de tous les groupes, texte intégral en annexe">Annexe servitudes</button>
+        <button class="btn" id="btn-tableau-reprises" disabled title="Word paysage, un seul tableau triable : une ligne par groupe ayant reçu de la matière reprise">Tableau des reprises</button>
         <button class="btn plein" id="btn-arbo" disabled title="Pose la numérotation définitive (SPF, commune, section) puis crée le dossier Drive de la société, un dossier par groupe et ses six sous-dossiers (cinq de data room, plus les notes de travail internes)">Numéroter et créer le Drive</button>
       </div>
 
@@ -2048,6 +2063,18 @@ async function deposerFichiers(g, fichiers){
         couche_texte: a.couche_texte, statut: a.type === "AQ" ? "a_qualifier" : (a.couche_texte === false ? "scan" : "depose"),
         lecture: {references: a.citees.references, groupes: a.citees.groupes}
       };
+      if(a.type === "NDT"){
+        // document déjà rédigé déposé dans le groupe : le texte est conservé tel quel, avec ses signalements isolés
+        try{
+          const paras = await texteDocumentRedige(f);
+          if(paras.length){
+            const {corps, questions} = isolerSignalements(paras);
+            const citeesTexte = referencesCitees(paras.join("\n"));
+            doc.lecture = {references: citeesTexte.references, groupes: citeesTexte.groupes,
+              reprise: {source: f.name, date: doc.date_doc, mode: "groupe", texte: corps.join("\n").slice(0, REPRISE_TEXTE_MAX), questions: questions.slice(0, 60), traite: false}};
+          }
+        }catch(e){ /* texte non lisible : la pièce reste une note de travail sans texte */ }
+      }
       const r = await appelDossier({action:"document", siren: etat.dossier.siren, document: doc});
       doc.id = r.id; doc.depose_le = new Date().toISOString();
       etat.documents = (etat.documents || []).filter(x => x.drive_id !== doc.drive_id).concat([doc]);
@@ -2776,6 +2803,16 @@ function divergencesParcelles(){
         motif: communeInconnue ? "commune absente du relevé REDPAR de la société" : "référence absente du cadastre actuel (parcelle disparue, divisée ou renumérotée ?)"});
     }));
   });
+  // même contrôle sur les documents repris : références « section XX numéro NN » absentes du cadastre actuel
+  (etat.documents || []).forEach(d => {
+    const rp = d.lecture && d.lecture.reprise; if(!rp || !rp.texte) return;
+    const vues = new Set(d.lecture.divergences_vues || []);
+    referencesAbsentesDansTexte(rp.texte).forEach(r => {
+      const ref = r.section + " " + r.numero, id = nz(ref);
+      if(vues.has(id) || out.some(x => x.doc === d && x.id === id)) return;
+      out.push({doc: d, groupe: d.groupe, ref, id, page: null, nature: "document repris", motif: "référence citée par un document repris, absente du cadastre actuel"});
+    });
+  });
   divergencesParcelles.cache = out;
   return out;
 }
@@ -2784,12 +2821,13 @@ function rendreTrancher(liste, rendreSuggestions){
   const aq = (etat.documents || []).filter(d => d.type === "AQ").sort((a,b) => a.groupe - b.groupe || a.nom.localeCompare(b.nom));
   const div = divergencesParcelles();
   const nSugg = etat.suggestions.length;
-  const total = nSugg + aq.length + div.length;
+  const notes = (etat.documents || []).filter(d => d.lecture && d.lecture.reprise && d.lecture.reprise.questions && d.lecture.reprise.questions.length && !d.lecture.reprise.traite).sort((a, b) => a.groupe - b.groupe);
+  const total = nSugg + aq.length + div.length + notes.length;
 
   const det = document.createElement("details");
   det.className = "trancher"; det.open = Boolean(etat.trancherOuvert);
   det.innerHTML = '<summary><span class="n' + (total ? "" : " zero") + '">' + total + '</span>Points à trancher'
-    + '<span class="detail">' + nSugg + ' rapprochement' + (nSugg > 1 ? 's' : '') + ' · ' + aq.length + ' à qualifier · ' + div.length + ' divergence' + (div.length > 1 ? 's' : '') + '</span></summary>';
+    + '<span class="detail">' + nSugg + ' rapprochement' + (nSugg > 1 ? 's' : '') + ' · ' + aq.length + ' à qualifier · ' + div.length + ' divergence' + (div.length > 1 ? 's' : '') + (notes.length ? ' · ' + notes.length + ' point' + (notes.length > 1 ? 's' : '') + ' repris' : '') + '</span></summary>';
   det.addEventListener("toggle", () => { etat.trancherOuvert = det.open; if(det.open) det.querySelectorAll(".aqual .photo").forEach(ph => { const d = (etat.documents || []).find(x => x.drive_id === ph.dataset.id); if(d) vignetteDocument(d, ph); }); });
 
   // 1 — rapprochements proposés
@@ -2860,6 +2898,31 @@ function rendreTrancher(liste, rendreSuggestions){
     det.appendChild(ul);
   }
 
+  // 4 — points notés dans les documents repris
+  const c4 = document.createElement("div"); c4.className = "cat-tete"; c4.innerHTML = '<b>' + notes.length + '</b> point' + (notes.length > 1 ? 's' : '') + ' noté' + (notes.length > 1 ? 's' : '') + ' dans les documents repris';
+  det.appendChild(c4);
+  if(!notes.length) det.insertAdjacentHTML("beforeend", '<p class="rien">Aucun signalement en attente dans les documents repris.</p>');
+  else{
+    const ul = document.createElement("ul"); ul.className = "diverg notes";
+    notes.forEach((d, k) => {
+      const li = document.createElement("li"); li.dataset.k = k;
+      li.innerHTML = '<span class="ref">groupe ' + numeroGroupe4(d.groupe) + '<span class="groupe">' + echap(d.lecture.reprise.source || d.nom_origine || d.nom) + (d.lecture.reprise.date ? ' — ' + echap(d.lecture.reprise.date) : '') + '</span></span>'
+        + '<span class="acts"><button class="btn" type="button" data-act="voir-groupe">Voir le groupe</button><button class="btn plein" type="button" data-act="traite">Traité</button></span>'
+        + '<div class="motif verbatim">' + d.lecture.reprise.questions.map(q => '<p>' + echap(q) + '</p>').join("") + '</div>';
+      ul.appendChild(li);
+    });
+    ul.addEventListener("click", async e => {
+      const btn = e.target.closest("button[data-act]"); if(!btn) return;
+      const d = notes[Number(btn.closest("li").dataset.k)]; if(!d) return;
+      if(btn.dataset.act === "voir-groupe"){ etat.ouvert = d.groupe; etat.zoomSur = d.groupe; rendre(); return; }
+      d.lecture = Object.assign({}, d.lecture, {reprise: Object.assign({}, d.lecture.reprise, {traite: true, traite_le: new Date().toISOString()})});
+      try{ await appelDossier({action: "document", siren: etat.dossier.siren, document: d}); }catch(err){ signaler(err.message, true); }
+      try{ await appelDossier({action: "journal", siren: etat.dossier.siren, quoi: "point-repris-traite", detail: {document: d.drive_id, groupe: d.groupe, source: d.lecture.reprise.source, points: d.lecture.reprise.questions.length}}); }catch(err){}
+      rendre();
+    });
+    det.appendChild(ul);
+  }
+
   liste.appendChild(det);
   if(det.open) det.querySelectorAll(".aqual .photo").forEach(ph => { const d = (etat.documents || []).find(x => x.drive_id === ph.dataset.id); if(d) vignetteDocument(d, ph); });
 }
@@ -2876,6 +2939,192 @@ function rendreOrigines(g){
       + lignes.map(l => '<tr' + (l.manuel ? ' class="manuel"' : '') + '><td>' + echap(l.actuelle) + '</td><td>' + echap(l.ancienne) + '</td><td>' + echap(l.acte) + '</td><td>' + echap(l.date) + '</td></tr>').join("") + '</tbody></table>' : '');
   zone.querySelector('[data-act="filiation"]').addEventListener("click", () => ouvrirFiliation(g));
   return zone;
+}
+
+/* ---------- reprise des documents déjà rédigés (validé point par point le 22/09/2026) ----------
+   Fonction générique : tout document rédigé avant le passage de FUSION sur une société
+   (désignation, origine, note de synthèse, en Word ou en PDF), quel qu'en soit l'auteur.
+   1. ENTRÉE — dans un groupe (zone existante : la pièce devient une note de travail, son
+      texte est conservé) ou au niveau de la société (zone distincte) : FUSION découpe en
+      sections par numéros de groupe, sinon par parcelles citées ; une section visant
+      plusieurs groupes est dupliquée dans chacun ; le reste va au bac à qualifier. Rien
+      n'est réécrit : texte tel quel, nom du document d'origine, date.
+   2. RENDU — sixième section « MATIÈRE REPRISE » sous les cinq blocs, verbatim, jaune
+      « documentation reprise, à recontrôler contre les pièces lues » ; les blocs ne
+      changent pas ; les références citées absentes du cadastre remontent en divergences.
+   3. SIGNALEMENTS — une rubrique « points à trancher / à vérifier / questions / attention »
+      est isolée : quatrième catégorie de l'onglet des points à trancher, une ligne par
+      groupe, verbatim, bouton « Traité » (journal) ; visible aussi dans la section reprise. */
+
+const REPRISE_TEXTE_MAX = 40000;
+const REPRISE_RUBRIQUE = /^(?:\W*)(POINTS?\s+(?:A|À)\s+TRANCHER|POINTS?\s+D.ATTENTION|(?:A|À)\s+V(?:E|É)RIFIER|(?:A|À)\s+TRANCHER|QUESTIONS?(?:\s+OUVERTES?|\s+EN\s+SUSPENS)?|ATTENTION|VIGILANCE|(?:A|À)\s+VOIR|RESERVES?|RÉSERVES?|OBSERVATIONS?)\b\s*[:\-–—.]?\s*(.*)$/i;
+const DOSSIER_REPRIS = "_Documents repris (interne)";
+
+let mammothPromesse = null;
+function chargerMammoth(){
+  if(window.mammoth) return Promise.resolve(window.mammoth);
+  if(!mammothPromesse) mammothPromesse = new Promise((ok, ko) => { const s = document.createElement("script"); s.src = "https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"; s.onload = () => ok(window.mammoth); s.onerror = () => ko(new Error("lecteur Word indisponible")); document.head.appendChild(s); });
+  return mammothPromesse;
+}
+// Texte intégral d'un fichier rédigé, en paragraphes. Word via mammoth, PDF via le lecteur en place, texte brut tel quel.
+async function texteDocumentRedige(fichier){
+  const ext = extensionDe(fichier.name);
+  if(ext === "docx"){
+    const m = await chargerMammoth();
+    const r = await m.extractRawText({arrayBuffer: await fichier.arrayBuffer()});
+    return r.value.split(/\n+/).map(t => t.trim()).filter(Boolean);
+  }
+  if(ext === "pdf"){
+    const r = await textePdfPages(fichier, 400);
+    return r.pages.map(p => p.texte.replace(/\s+/g, " ").trim()).filter(Boolean);
+  }
+  if(/^(txt|md|rtf|odt|doc)$/.test(ext)) return (await fichier.text()).split(/\n+/).map(t => t.trim()).filter(Boolean);
+  return [];
+}
+
+// Sépare les paragraphes d'une section entre le corps et une rubrique de signalements.
+function isolerSignalements(paragraphes){
+  const corps = [], questions = [];
+  let dansRubrique = false;
+  paragraphes.forEach(p => {
+    const m = REPRISE_RUBRIQUE.exec(sansAccent(p));
+    if(m){ dansRubrique = true; const reste = p.slice(p.length - (m[2] || "").length).trim(); if(reste) questions.push(reste); return; }
+    if(dansRubrique){
+      // fin de rubrique : un nouveau titre en capitales, court
+      if(/^[A-ZÀ-Ü0-9\s'’\-–—:]{4,60}$/.test(p) && p === p.toUpperCase() && !/[.!?]$/.test(p)){ dansRubrique = false; corps.push(p); return; }
+      questions.push(p); return;
+    }
+    corps.push(p);
+  });
+  return {corps, questions};
+}
+
+// Découpage d'un document société en sections : d'abord par numéros de groupe portés, sinon par parcelles citées.
+function decouperParGroupes(paragraphes){
+  const numeros = new Set(etat.groupes.map(g => g.num));
+  // « groupe 42 », « G0042 », « groupes 12 et 13 », ou un numéro sur quatre chiffres commençant par 0
+  const numsDans = (p) => {
+    const t = sansAccent(p).toUpperCase(); const s = new Set(); let m;
+    const re1 = /\bG(?:ROUPE)?S?\s*[:.\-]?\s*0*(\d{1,4})\b((?:\s*(?:,|ET|&|-|–|\/)\s*0*\d{1,4}\b)*)/g;
+    while((m = re1.exec(t))){ if(numeros.has(+m[1])) s.add(+m[1]); (m[2].match(/\d{1,4}/g) || []).forEach(n => { if(numeros.has(+n)) s.add(+n); }); }
+    const re2 = /\b0(\d{3})\b/g;
+    while((m = re2.exec(t))) if(numeros.has(+m[1])) s.add(+m[1]);
+    return [...s];
+  };
+  const sections = []; let courante = null;
+  paragraphes.forEach(p => {
+    const nums = numsDans(p);
+    const estTitre = nums.length && p.trim().length < 120;   // un numéro de groupe dans une ligne courte : une nouvelle section commence
+    if(estTitre){ courante = {groupes: nums, paragraphes: [p], mode: "numero"}; sections.push(courante); return; }
+    if(!courante){ courante = {groupes: [], paragraphes: [], mode: "parcelles"}; sections.push(courante); }
+    courante.paragraphes.push(p);
+  });
+  // sections sans numéro : rattachement par les parcelles citées
+  sections.forEach(s => {
+    if(s.groupes.length) return;
+    const c = referencesCitees(s.paragraphes.join("\n"));
+    s.groupes = [...new Set(c.groupes || [])];
+    s.mode = s.groupes.length ? "parcelles" : "aucun";
+  });
+  return sections.filter(s => s.paragraphes.join("").trim().length);
+}
+
+// Enregistrement d'une section (ou d'un document entier) comme note de travail reprise d'un groupe.
+async function deposerSectionReprise(g, texteParagraphes, source, dateSource, fichierOriginal){
+  await assurerDriveGroupe(g);
+  const {corps, questions} = isolerSignalements(texteParagraphes);
+  const nom = composerNomPiece(g.num, "NDT", dateSource, "docx");
+  const D = await chargerDocx();
+  const doc = new D.Document({creator: "FUSION — reprise", sections: [{children: [
+    new D.Paragraph({children: [new D.TextRun({text: "Repris de : " + source.nom + (dateSource ? " — " + dateSource.toLocaleDateString("fr-FR") : ""), italics: true, color: "666666", size: 20})]}),
+    ...texteParagraphes.map(t => new D.Paragraph({children: [new D.TextRun({text: t, size: 22})], spacing: {after: 120}}))
+  ]}]});
+  const blob = await D.Packer.toBlob(doc);
+  const parent = g.drive.ndt;
+  const envoye = await driveEnvoyerFichier(blob, nom, parent);
+  const texte = texteParagraphes.join("\n");
+  const citees = referencesCitees(texte);
+  const piece = {
+    drive_id: envoye.id, drive_parent: parent, groupe: g.num, nom, nom_origine: source.nom, type: "NDT", code: TYPES_PIECE.NDT.code, piece: "NDT",
+    date_doc: dateISOlocale(dateSource), date_sure: Boolean(dateSource), taille: blob.size, mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    couche_texte: true, statut: "depose",
+    lecture: {references: citees.references, groupes: citees.groupes,
+      reprise: {source: source.nom, source_drive_id: source.drive_id || null, date: dateISOlocale(dateSource), mode: source.mode || "groupe",
+        texte: corps.join("\n").slice(0, REPRISE_TEXTE_MAX), questions: questions.slice(0, 60), traite: false}}
+  };
+  const r = await appelDossier({action: "document", siren: etat.dossier.siren, document: piece});
+  piece.id = r.id; piece.depose_le = new Date().toISOString();
+  etat.documents = (etat.documents || []).filter(x => x.drive_id !== piece.drive_id).concat([piece]);
+  return piece;
+}
+
+// Dépôt au niveau de la société : découpage et ventilation.
+async function deposerDocumentSociete(fichiers){
+  if(!etat.dossier || !etat.persist.actif){ signaler("Le dossier doit être enregistré pour reprendre un document.", true); return; }
+  if(!exigerDrive()) return;
+  if(!etat.numerotationFaite){ signaler("Posez d'abord la numérotation définitive : le découpage s'appuie sur les numéros de groupe.", true); return; }
+  const zone = document.getElementById("reprise-etat");
+  const dire = t => { if(zone) zone.textContent = t; afficherPersist(t); };
+  try{
+    const societe = await assurerDriveSociete();
+    const dossierRepris = await driveAssurerDossier(DOSSIER_REPRIS, societe);
+    for(const f of fichiers){
+      dire("Lecture de " + f.name + "…");
+      const paragraphes = await texteDocumentRedige(f);
+      if(!paragraphes.length){ signaler("Aucun texte lisible dans " + f.name + " (scan ou format non pris en charge).", true); continue; }
+      const dateSource = new Date(f.lastModified || Date.now());
+      dire("Archivage de l'original…");
+      const original = await driveEnvoyerFichier(f, f.name, dossierRepris);
+      const source = {nom: f.name, drive_id: original.id, mode: "societe"};
+      const sections = decouperParGroupes(paragraphes);
+      let k = 0, rattachees = 0, dupliquees = 0, orphelines = [];
+      for(const s of sections){
+        k++;
+        dire("Section " + k + " / " + sections.length + (s.groupes.length ? " → groupe" + (s.groupes.length > 1 ? "s " : " ") + s.groupes.map(numeroGroupe4).join(", ") : " → à qualifier"));
+        if(!s.groupes.length){ orphelines.push(s); continue; }
+        for(const n of s.groupes){
+          const g = etat.groupes.find(x => x.num === n); if(!g) continue;
+          await deposerSectionReprise(g, s.paragraphes, Object.assign({}, source, {mode: s.mode}), dateSource, f);
+          rattachees++;
+        }
+        if(s.groupes.length > 1) dupliquees += s.groupes.length - 1;
+      }
+      if(orphelines.length){
+        // ce qui ne se rattache à rien : une pièce à qualifier dans le premier groupe, avec le texte, pour ne rien perdre
+        const g0 = etat.groupes.slice().sort((a, b) => a.num - b.num)[0];
+        if(g0){
+          await assurerDriveGroupe(g0);
+          const texte = orphelines.map(s => s.paragraphes.join("\n")).join("\n\n— — —\n\n");
+          const nom = composerNomPiece(g0.num, "AQ", dateSource, "txt");
+          const envoye = await driveEnvoyerFichier(new Blob([texte], {type: "text/plain"}), nom, g0.drive.ndt);
+          const piece = {drive_id: envoye.id, drive_parent: g0.drive.ndt, groupe: g0.num, nom, nom_origine: f.name + " (sections non rattachées)", type: "AQ", code: TYPES_PIECE.AQ.code, piece: "AQ",
+            date_doc: dateISOlocale(dateSource), date_sure: false, taille: texte.length, mime: "text/plain", couche_texte: true, statut: "a_qualifier",
+            lecture: {references: [], groupes: [], reprise: {source: f.name, source_drive_id: original.id, date: dateISOlocale(dateSource), mode: "aucun", texte: texte.slice(0, REPRISE_TEXTE_MAX), questions: [], traite: false}}};
+          const r = await appelDossier({action: "document", siren: etat.dossier.siren, document: piece});
+          piece.id = r.id; etat.documents = (etat.documents || []).concat([piece]);
+        }
+      }
+      marquerModifie("reprise-document", {source: f.name, original: original.id, sections: sections.length, rattachees, dupliquees, non_rattachees: orphelines.length});
+      signaler(f.name + " : " + sections.length + " section" + (sections.length > 1 ? "s" : "") + ", " + rattachees + " note" + (rattachees > 1 ? "s" : "") + " de travail rangée" + (rattachees > 1 ? "s" : "") + (dupliquees ? " (dont " + dupliquees + " dupliquée" + (dupliquees > 1 ? "s" : "") + ")" : "") + (orphelines.length ? ", " + orphelines.length + " section" + (orphelines.length > 1 ? "s" : "") + " à qualifier" : "") + ".");
+    }
+    dire("");
+    rendre();
+    afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR", {hour: "2-digit", minute: "2-digit"}), "ok");
+  }catch(e){ dire(""); afficherPersist("Reprise interrompue — " + e.message, "alerte"); signaler(e.message, true); }
+}
+
+// Matière reprise d'un groupe : les notes de travail portant un texte repris, la plus récente d'abord.
+function matiereReprise(g){
+  return (etat.documents || []).filter(d => d.groupe === g.num && d.lecture && d.lecture.reprise && d.lecture.reprise.texte && d.type !== "AQ")
+    .sort((a, b) => String(b.date_doc || "").localeCompare(String(a.date_doc || "")));
+}
+// Références cadastrales citées dans un texte repris et absentes du cadastre actuel (alimentation des divergences).
+function referencesAbsentesDansTexte(texte){
+  const cles = new Set(etat.parcelles.map(p => FIL_NZ(p.props.section).replace(/[^A-Z0-9]/g, "") + " " + String(+p.props.numero)));
+  const t = filNormaliser(texte || ""); const out = new Map(); let m;
+  const reSection = /SECTION\s+([A-Z]{1,2})\s*(?:(?:NUMEROS?|N[°O]?|NOS?)\s*\.?\s*)?(\d{1,4})\b/g;
+  while((m = reSection.exec(t))){ const r = {section: m[1], numero: String(+m[2])}; const cle = filCleCourte(r); if(!cles.has(cle)) out.set(cle, r); }
+  return [...out.values()];
 }
 
 /* ---------- les cinq blocs de sortie (tranchés le 14/09/2026) ----------
@@ -2977,10 +3226,15 @@ function matiereGroupe(g){
   if(aQualifier.length) anomalies.push({couleur: "jaune", texte: aQualifier.length + " pièce" + (aQualifier.length > 1 ? "s" : "") + " à qualifier dans le bac du groupe."});
   if(aRelier) anomalies.push({couleur: "jaune", texte: aRelier + " référence" + (aRelier > 1 ? "s anciennes" : " ancienne") + " sans filiation établie jusqu'au cadastre actuel."});
   if(manuels) anomalies.push({couleur: "jaune", texte: manuels + " maillon" + (manuels > 1 ? "s" : "") + " de filiation saisi" + (manuels > 1 ? "s" : "") + " à la main (valeur probante moindre)."});
+  const reprises = matiereReprise(g);
+  if(reprises.length){
+    const nq = reprises.reduce((s, d) => s + ((d.lecture.reprise.questions || []).length && !d.lecture.reprise.traite ? d.lecture.reprise.questions.length : 0), 0);
+    anomalies.push({couleur: "jaune", texte: "Documentation reprise (" + reprises.map(d => d.lecture.reprise.source).filter((v, i, a) => a.indexOf(v) === i).join(", ") + "), à recontrôler contre les pièces lues" + (nq ? " — " + nq + " point" + (nq > 1 ? "s" : "") + " noté" + (nq > 1 ? "s" : "") + " par le rédacteur en attente" : "") + "."});
+  }
   anomalies.sort((a, b) => GRAVITE[b.couleur] - GRAVITE[a.couleur]);
   const couleur = anomalies.length ? anomalies[0].couleur : "vert";
 
-  return {g, membres, communes, parcelles, docs, ehfs, dernierEhf, mentions, mutations, inscriptions, servitudes, parParcelle, parActe, sansTitre, mainlevees, anomalies, couleur};
+  return {g, membres, communes, parcelles, docs, ehfs, dernierEhf, mentions, mutations, inscriptions, servitudes, parParcelle, parActe, sansTitre, mainlevees, reprises, anomalies, couleur};
 }
 
 // Couleur de la ligne : seulement après le premier passage de lecture sur le dossier.
@@ -3094,8 +3348,81 @@ function redigerGroupe(g, options){
       P.push({style: "p", t: "Aux termes d'un acte" + (blocV(s.natures) ? " contenant " + blocV(s.natures) : "") + (blocV(s.redacteur) ? " reçu par " + blocV(s.redacteur).replace(/^NOT\s+/i, "Maître ") + (blocV(s.commune) ? ", notaire à " + blocV(s.commune) : "") : "") + (blocV(s.dateActe) ? ", le " + blocV(s.dateActe) : "") + (blocV(s.volume) ? ", publié volume " + blocV(s.volume) + (blocV(s.numero) ? " numéro " + blocV(s.numero) : "") : "") + ". Le descriptif de cette servitude est repris dans un document demeuré annexé au présent."});
     });
   }
+  // 6 — matière reprise : verbatim des documents rédigés antérieurement, à côté des blocs, jamais fondue dedans
+  if(M.reprises.length){
+    P.push({style: "sous", t: "MATIÈRE REPRISE"});
+    P.push({style: "alerte", couleur: "jaune", t: "Documentation reprise, à recontrôler contre les pièces lues. Texte reproduit tel qu'il a été déposé ; les cinq blocs ci-dessus n'en tiennent pas compte."});
+    M.reprises.forEach(d => {
+      const rp = d.lecture.reprise;
+      P.push({style: "note", t: "Repris de « " + (rp.source || d.nom_origine || d.nom) + " »" + (rp.date ? ", document du " + (blocDateFr(dateDepuisISO(rp.date)) || rp.date) : "") + " — " + d.nom});
+      String(rp.texte || "").split(/\n+/).map(t => t.trim()).filter(Boolean).forEach(t => P.push({style: "p", t}));
+      if((rp.questions || []).length){
+        P.push({style: "sous2", t: "POINTS NOTÉS DANS LE DOCUMENT" + (rp.traite ? " (traités)" : "")});
+        rp.questions.forEach(q => P.push({style: "puce", t: q}));
+      }
+    });
+  }
   if(o.retour) P.push({style: "lien", t: "Retour au sommaire", ancre: "sommaire"});
   return {paragraphes: P, matiere: M};
+}
+
+/* ---------- point 4 : tableau des reprises (Word paysage, un seul vrai tableau triable) ----------
+   Une ligne par groupe ayant reçu de la matière reprise ; texte ventilé quand le document porte
+   des titres reconnaissables, sinon en colonne « texte » ; verbatim, cellule vide quand l'information
+   manque ; les lignes d'un tableau cadastral se rendent par taquets, jamais en tableau imbriqué.  */
+const REPRISE_COLONNES = [
+  ["groupe", "Groupe", 700], ["commune", "Commune", 1300], ["adresse", "Adresse", 1500],
+  ["designation", "Désignation", 2600], ["effet", "Effet relatif", 2000], ["origine", "Origine", 2000],
+  ["servitudes", "Servitudes et inscriptions", 1700], ["texte", "Texte non ventilé", 1500], ["points", "Points notés", 1300], ["source", "Document d'origine", 1000]
+];
+function ventilerTexteRepris(texte){
+  const col = {designation: [], effet: [], origine: [], servitudes: [], texte: []};
+  let courante = "texte";
+  String(texte || "").split(/\n+/).map(t => t.trim()).filter(Boolean).forEach(t => {
+    const n = sansAccent(t).toUpperCase().replace(/[^A-Z ]/g, " ").replace(/\s+/g, " ").trim();
+    const titre = n.length < 60 && t === t.toUpperCase();
+    if(titre && /^DESIGNATION/.test(n)){ courante = "designation"; return; }
+    if(titre && /^EFFET RELATIF/.test(n)){ courante = "effet"; return; }
+    if(titre && /^ORIGINE/.test(n)){ courante = "origine"; return; }
+    if(titre && /^(SERVITUDE|INSCRIPTION|CHARGE|HYPOTH)/.test(n)){ courante = "servitudes"; return; }
+    col[courante].push(t);
+  });
+  return col;
+}
+async function sortirTableauReprises(){
+  const D = await chargerDocx();
+  const groupes = [...etat.groupes].sort((a, b) => a.num - b.num).filter(g => matiereReprise(g).length);
+  if(!groupes.length){ signaler("Aucun document repris sur ce dossier : pas de tableau à produire."); return; }
+  const tab = (t) => String(t).replace(/ {2,}/g, "\t");
+  const para = (lignes, opts) => lignes.length ? lignes.map(l => new D.Paragraph({tabStops: [{type: D.TabStopType.LEFT, position: 900}, {type: D.TabStopType.LEFT, position: 1800}, {type: D.TabStopType.LEFT, position: 2700}], spacing: {after: 40}, children: [new D.TextRun(Object.assign({text: tab(l), font: "Segoe UI", size: 16}, opts || {}))]})) : [new D.Paragraph({children: [new D.TextRun({text: "", size: 16})]})];
+  const cellule = (lignes, largeur, opts) => new D.TableCell({width: {size: largeur, type: D.WidthType.DXA}, children: para(lignes, opts)});
+  const lignes = [new D.TableRow({tableHeader: true, children: REPRISE_COLONNES.map(([, lib, l]) => new D.TableCell({width: {size: l, type: D.WidthType.DXA}, shading: {fill: "0B3B4A", type: D.ShadingType.CLEAR, color: "auto"}, children: [new D.Paragraph({children: [new D.TextRun({text: lib, bold: true, color: "FFFFFF", font: "Segoe UI", size: 16})]})]}))})];
+  groupes.forEach(g => {
+    const membres = [...g.membres].map(i => etat.parcelles[i]).filter(Boolean);
+    const communes = [...new Set(membres.map(p => p.props.nom_commune).filter(Boolean))];
+    const adresses = [...new Set(membres.map(p => p.props.adresse).filter(Boolean))];
+    const v = {designation: [], effet: [], origine: [], servitudes: [], texte: [], points: [], source: []};
+    matiereReprise(g).forEach(d => {
+      const rp = d.lecture.reprise; const pref = matiereReprise(g).length > 1 ? "[" + (rp.source || d.nom_origine || d.nom) + "] " : "";
+      const c = ventilerTexteRepris(rp.texte);
+      Object.keys(c).forEach(k => c[k].forEach((t, i) => v[k].push((i === 0 ? pref : "") + t)));
+      (rp.questions || []).forEach((q, i) => v.points.push((i === 0 ? pref : "") + q + (rp.traite ? " (traité)" : "")));
+      v.source.push((rp.source || d.nom_origine || d.nom) + (rp.date ? " — " + rp.date : ""));
+    });
+    lignes.push(new D.TableRow({cantSplit: false, children: REPRISE_COLONNES.map(([cle, , l]) =>
+      cle === "groupe" ? cellule([numeroGroupe4(g.num)], l, {bold: true}) : cle === "commune" ? cellule(communes, l) : cle === "adresse" ? cellule(adresses.slice(0, 6), l) : cellule(v[cle], l))}));
+  });
+  const titre = "FUSION — Tableau des documents repris — " + (etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "");
+  const doc = new D.Document({creator: "FUSION — FIDAL Notaires", title: titre, sections: [{
+    properties: {page: {size: {orientation: D.PageOrientation.LANDSCAPE, width: 16838, height: 11906}, margin: {top: 720, bottom: 720, left: 720, right: 720}}},
+    children: [
+      new D.Paragraph({children: [new D.TextRun({text: titre, bold: true, font: "Georgia", size: 26})], spacing: {after: 80}}),
+      new D.Paragraph({children: [new D.TextRun({text: "Produit le " + blocDateFr(new Date()) + " — texte reproduit tel qu'il a été déposé, cellule vide quand l'information manque. Un seul tableau, sans cellule fusionnée : le tri Word par commune ou par groupe fonctionne.", italics: true, color: "666666", font: "Segoe UI", size: 16})], spacing: {after: 160}}),
+      new D.Table({width: {size: REPRISE_COLONNES.reduce((s, c) => s + c[2], 0), type: D.WidthType.DXA}, columnWidths: REPRISE_COLONNES.map(c => c[2]), rows: lignes})
+    ]}]});
+  telechargerBlob(await D.Packer.toBlob(doc), nomSortie("tableau_reprises", "docx"));
+  marquerModifie("sortie-tableau-reprises", {groupes: groupes.length});
+  signaler("Tableau des reprises produit : " + groupes.length + " groupe" + (groupes.length > 1 ? "s" : "") + ".");
 }
 
 /* ---------- rendu HTML (aperçu et PDF par impression) ---------- */
@@ -3426,6 +3753,8 @@ function majBoutons(){
   document.getElementById("btn-recalculer").disabled = !charge;
   document.getElementById("btn-export").disabled = !charge;
   const lu = charge && (etat.documents || []).some(d => d.lecture && d.lecture.ehf);
+  const repris = charge && (etat.documents || []).some(d => d.lecture && d.lecture.reprise && d.lecture.reprise.texte);
+  document.getElementById("btn-tableau-reprises").disabled = !repris;
   ["btn-compil-docx", "btn-compil-pdf", "btn-annexe"].forEach(id => { const el = document.getElementById(id); el.disabled = !lu; if(!lu && charge) el.title = "Lisez d'abord au moins un état hypothécaire : les blocs 2 à 5 s'établissent à partir des mentions lues."; });
   document.getElementById("btn-fusionner").disabled =
     etat.groupes.filter(g => g.coche).length < 2;
@@ -3437,6 +3766,7 @@ function majBoutons(){
   ["btn-recalculer", "tolerance", "mini"].forEach(id => { const el = document.getElementById(id); el.disabled = gele || (id === "btn-recalculer" ? !charge : false); el.title = motif; });
   const arbo = document.getElementById("btn-arbo");
   arbo.textContent = gele ? "Créer / compléter le Drive" : "Numéroter et créer le Drive";
+  const zr = document.getElementById("reprise"); if(zr) zr.hidden = !(gele && etat.dossier && etat.persist.actif);
 }
 
 let minuteurMessage;
@@ -3921,10 +4251,18 @@ function brancher(){
   });
 
   document.getElementById("btn-export").addEventListener("click", exporter);
+  // reprise d'un document rédigé au niveau de la société
+  const zoneReprise = document.getElementById("reprise"), entreeReprise = document.getElementById("fichier-reprise");
+  document.getElementById("btn-reprise").addEventListener("click", () => entreeReprise.click());
+  entreeReprise.addEventListener("change", async () => { const fs = [...entreeReprise.files]; entreeReprise.value = ""; if(fs.length) await deposerDocumentSociete(fs); });
+  ["dragenter", "dragover"].forEach(ev => zoneReprise.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zoneReprise.classList.add("actif"); }));
+  ["dragleave", "drop"].forEach(ev => zoneReprise.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zoneReprise.classList.remove("actif"); }));
+  zoneReprise.addEventListener("drop", async e => { const fs = [...(e.dataTransfer.files || [])]; if(fs.length) await deposerDocumentSociete(fs); });
   const brancherSortie = (id, fn) => document.getElementById(id).addEventListener("click", async (e) => { e.target.disabled = true; try{ await fn(); }catch(err){ signaler(err.message || String(err), true); } finally{ e.target.disabled = false; } });
   brancherSortie("btn-compil-docx", () => sortirCompilation("docx"));
   brancherSortie("btn-compil-pdf", () => sortirCompilation("pdf"));
   brancherSortie("btn-annexe", () => sortirAnnexeServitudes("docx"));
+  brancherSortie("btn-tableau-reprises", () => sortirTableauReprises());
   document.getElementById("btn-arbo").addEventListener("click", creerArborescenceDrive);
   document.getElementById("btn-drive").addEventListener("click", () => {
     if(!etat.drive.client){ signaler("Le client Google n'est pas encore chargé, réessayez dans une seconde.", true); return; }
