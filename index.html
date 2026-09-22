@@ -118,6 +118,14 @@
     border:0;border-left:4px solid transparent;text-align:left
   }
   .groupe-tete:hover{background:#F4F8F9}
+  .groupe-tete.c-vert{border-left-color:#1F7A4D;background:#F3FAF5}
+  .groupe-tete.c-jaune{border-left-color:#D4A800;background:#FFFBEA}
+  .groupe-tete.c-orange{border-left-color:#FF982D;background:#FFF5E9}
+  .groupe-tete.c-rouge{border-left-color:#B3261E;background:#FCEFED}
+  .groupe.ouvert>.groupe-tete.c-vert,.groupe.ouvert>.groupe-tete.c-jaune,.groupe.ouvert>.groupe-tete.c-orange,.groupe.ouvert>.groupe-tete.c-rouge{background:#EDF4F5}
+  .sorties{display:flex;align-items:center;gap:6px;margin:4px 14px 8px;font-size:12px;color:var(--gris)}
+  .sorties .lib{flex:1}
+  .sorties .btn{padding:2px 9px;font-size:12px}
   .groupe.ouvert>.groupe-tete{background:#EDF4F5;border-left-color:var(--carmin)}
   .groupe-tete .num{
     font-family:Georgia,serif;font-size:15px;color:var(--nuit);min-width:34px
@@ -422,6 +430,9 @@
         <button class="btn plein" id="btn-fusionner" disabled>Fusionner les groupes cochés</button>
         <button class="btn" id="btn-recalculer" disabled>Recalculer</button>
         <button class="btn" id="btn-export" disabled>Exporter les groupes</button>
+        <button class="btn" id="btn-compil-docx" disabled title="Compilation de toutes les fiches de groupe, sommaire cliquable en tête — Word, à coller dans l'acte">Compiler (Word)</button>
+        <button class="btn" id="btn-compil-pdf" disabled title="Même compilation en PDF, mentions colorées conservées — trace datée du dossier">Compiler (PDF)</button>
+        <button class="btn" id="btn-annexe" disabled title="Recueil unique des servitudes et charges de tous les groupes, texte intégral en annexe">Annexe servitudes</button>
         <button class="btn plein" id="btn-arbo" disabled title="Pose la numérotation définitive (SPF, commune, section) puis crée le dossier Drive de la société, un dossier par groupe et ses six sous-dossiers (cinq de data room, plus les notes de travail internes)">Numéroter et créer le Drive</button>
       </div>
 
@@ -2596,6 +2607,7 @@ async function vignetteDocument(doc, cadre){
 
 function divergencesParcelles(){
   // Références citées par un état hypothécaire LU (passe 1 ou 2), absentes du cadastre actuel remonté par REDPAR.
+  if(divergencesParcelles.cache) return divergencesParcelles.cache;
   const cles = new Set(), communes = new Set();
   const nz = (t) => sansAccent(String(t || "")).toUpperCase().replace(/[^A-Z0-9]/g, "");
   etat.parcelles.forEach(p => {
@@ -2621,6 +2633,7 @@ function divergencesParcelles(){
         motif: communeInconnue ? "commune absente du relevé REDPAR de la société" : "référence absente du cadastre actuel (parcelle disparue, divisée ou renumérotée ?)"});
     }));
   });
+  divergencesParcelles.cache = out;
   return out;
 }
 
@@ -2722,6 +2735,371 @@ function rendreOrigines(g){
   return zone;
 }
 
+/* ---------- les cinq blocs de sortie (tranchés le 14/09/2026) ----------
+   1 désignation · 2 effet relatif · 3 origine de propriété (dernière mutation
+   développée, puis ORIGINE DE PROPRIÉTÉ ANTÉRIEURE sur trente ans) · 4 inscriptions
+   hypothécaires · 5 servitudes et autres inscriptions. Matière : les mentions
+   d'état hypothécaire lues et retenues pour le groupe (passe 1 ou 2), le tableau
+   des origines cadastrales, les pièces déposées. Chaque groupe porte une couleur
+   (la plus grave de ses anomalies) ; la mention d'alerte en tête de bloc liste
+   TOUTES les anomalies, chacune avec sa couleur, par gravité décroissante, et
+   figure pour tous les groupes, vert compris. Sortie Word (à coller dans l'acte)
+   et PDF (trace datée, couleurs conservées), fiche par groupe ou compilation
+   générale avec sommaire cliquable ; annexe unique des servitudes.              */
+
+const COULEURS = {
+  vert:   {hex: "#1F7A4D", fond: "#E4F3EA", nom: "vert",   sens: "documentation complète"},
+  jaune:  {hex: "#D4A800", fond: "#FFF3BF", nom: "jaune",  sens: "documentation incomplète"},
+  orange: {hex: "#FF982D", fond: "#FFE6C7", nom: "orange", sens: "recherche nécessaire"},
+  rouge:  {hex: "#B3261E", fond: "#F8D7D3", nom: "rouge",  sens: "documentation lacunaire"}
+};
+const GRAVITE = {vert: 0, jaune: 1, orange: 2, rouge: 3};
+
+const blocV = (c) => (c && c.valeur != null) ? String(c.valeur).trim() : "";
+function blocDate(t){ const m = /(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})/.exec(t || ""); return m ? new Date(+m[3], +m[2] - 1, +m[1]) : null; }
+function blocDateFr(d){ return d ? d.toLocaleDateString("fr-FR", {day: "numeric", month: "long", year: "numeric"}) : ""; }
+function blocMontant(t){ const n = parseFloat(String(t || "").replace(/\s/g, "").replace(",", ".")); return isNaN(n) ? (t || "") : n.toLocaleString("fr-FR", {style: "currency", currency: "EUR"}); }
+function blocContenance(m2){
+  const n = Math.round(m2 || 0); const ha = Math.floor(n / 10000), a = Math.floor((n % 10000) / 100), ca = n % 100;
+  return String(ha).padStart(2, "0") + " ha " + String(a).padStart(2, "0") + " a " + String(ca).padStart(2, "0") + " ca";
+}
+function blocNumeros(refs){
+  // « section AB numéros 12 et 45 » — factorisation par section
+  const parSection = new Map();
+  refs.forEach(r => { const s = String(r.section || "").toUpperCase(); if(!parSection.has(s)) parSection.set(s, []); parSection.get(s).push(String(+r.numero)); });
+  return [...parSection.entries()].map(([s, nums]) => { nums = [...new Set(nums)].sort((a, b) => a - b); return "section " + s + (nums.length > 1 ? " numéros " + nums.slice(0, -1).join(", ") + " et " + nums[nums.length - 1] : " numéro " + nums[0]); }).join(", ");
+}
+function blocNoms(liste){ return (liste || []).map(x => x.nom).filter(Boolean).join(", "); }
+
+const BLOC_RE = {
+  mutation: /VENTE|APPORT|ECHANGE|DONATION|PARTAGE|ADJUDICATION|ATTESTATION|CESSION|ACQUISITION|LICITATION|FUSION|SCISSION|TRANSFERT|BAIL\s+EMPHYT|BAIL\s+A\s+CONSTRUCTION|BAIL\s+A\s+REHABILITATION|EXPROPRIATION|DATION|VEFA|DEPOT DE PIECES/i,
+  inscription: /HYPOTH|PRIVIL|PPD|NANTISSEMENT|GAGE|SAISIE|COMMANDEMENT|INSCRIPTION/i,
+  servitude: /SERVITUDE|PREFERENCE|PRIORITE|CAHIER\s+DES\s+CHARGES|CLAUSE|INTERDICTION|PACTE|USUFRUIT|USAGE|HABITATION|DROIT\s+DE|RESTRICTION|OBLIGATION|CONVENTION/i,
+  exclure: /MAINLEVEE|RADIATION|PERIME|PERIMEE|ANNULATION/i
+};
+
+// Toute la matière d'un groupe, prête à rédiger.
+function matiereGroupe(g){
+  const membres = [...g.membres].map(i => etat.parcelles[i]).filter(Boolean).sort((a, b) => a.ref.localeCompare(b.ref, "fr", {numeric: true}));
+  const communes = [...new Set(membres.map(p => p.props.nom_commune).filter(Boolean))];
+  const parcelles = membres.map(p => ({section: p.props.section, numero: p.props.numero, commune: p.props.nom_commune || null, lieudit: p.props.adresse || "", surface: p.surface, droit: p.props.droit || null}));
+  const docs = (etat.documents || []).filter(d => d.groupe === g.num);
+  const ehfs = docs.filter(d => d.type === "EHF" && d.lecture && d.lecture.ehf && Array.isArray(d.lecture.ehf.mentions)).sort((a, b) => String(b.date_doc || "").localeCompare(String(a.date_doc || "")));
+  const dernierEhf = ehfs[0] || null;
+  const mentions = [];
+  ehfs.forEach(d => ehfMentionsDuGroupe(d.lecture.ehf, parcelles).forEach(m => mentions.push(Object.assign({}, m, {doc: d, dateA: blocDate(blocV(m.dateActe)) || blocDate(blocV(m.dateDepot))}))));
+  const nat = (m) => (blocV(m.natures) + " " + blocV(m.complement)).toUpperCase();
+  const mutations = mentions.filter(m => (m.rubrique === "publication" || BLOC_RE.mutation.test(blocV(m.natures))) && !BLOC_RE.inscription.test(blocV(m.natures)) && !BLOC_RE.servitude.test(blocV(m.natures)) && !BLOC_RE.exclure.test(blocV(m.natures)));
+  const inscriptions = mentions.filter(m => (m.rubrique === "inscription" || BLOC_RE.inscription.test(blocV(m.natures))) && !BLOC_RE.exclure.test(blocV(m.natures)))
+    .map(m => { const eff = /EFFET\s+(?:JUSQU.?\s*AU|AU)\s+(\d{1,2}[\/.-]\d{1,2}[\/.-]\d{4})/i.exec(blocV(m.complement)); return Object.assign(m, {effet: eff ? blocDate(eff[1]) : null}); })
+    .filter(m => !(m.effet && m.effet < new Date()) && !/PERIM|RADI/i.test(blocV(m.complement)))
+    .sort((a, b) => (a.dateA || 0) - (b.dateA || 0));
+  const servitudes = mentions.filter(m => !mutations.includes(m) && !inscriptions.includes(m) && (m.rubrique === "autre" || BLOC_RE.servitude.test(nat(m))) && !BLOC_RE.exclure.test(blocV(m.natures)))
+    .map(m => { const c = nat(m); return Object.assign(m, {fonds: /FONDS\s+DOMINANT|AU\s+PROFIT\s+DE\s+LA\s+PARCELLE|BENEFICI/.test(c) && !/FONDS\s+SERVANT/.test(c) ? "dominant" : /FONDS\s+SERVANT|GREVANT|A\s+LA\s+CHARGE/.test(c) ? "servant" : null}); });
+
+  // effet relatif : dernière mutation par parcelle (le bail emphytéotique prime pour une parcelle détenue en emphytéose)
+  const parParcelle = new Map();
+  parcelles.forEach(p => {
+    const cle = filCleCourte(p);
+    const citant = mutations.filter(m => (m.immeubles || []).some(i => filCleCourte(i) === cle));
+    const emph = /EMPHYT|^E$/i.test(p.droit || "") ? citant.filter(m => /EMPHYT/i.test(blocV(m.natures))) : [];
+    const cand = (emph.length ? emph : citant).sort((a, b) => (b.dateA || 0) - (a.dateA || 0));
+    parParcelle.set(cle, {parcelle: p, derniere: cand[0] || null, toutes: citant.sort((a, b) => (b.dateA || 0) - (a.dateA || 0))});
+  });
+  // regroupement par acte : même volume+numéro, sinon même date+nature+rédacteur
+  const cleActe = (m) => m ? (blocV(m.volume) && blocV(m.numero) ? blocV(m.volume) + "/" + blocV(m.numero) : blocV(m.dateActe) + "|" + blocV(m.natures) + "|" + blocV(m.redacteur)) : "";
+  const parActe = new Map();
+  parParcelle.forEach(x => { if(!x.derniere) return; const k = cleActe(x.derniere); if(!parActe.has(k)) parActe.set(k, {mention: x.derniere, parcelles: []}); parActe.get(k).parcelles.push(x.parcelle); });
+  const sansTitre = [...parParcelle.values()].filter(x => !x.derniere).map(x => x.parcelle);
+
+  // pièces
+  const mainlevees = docs.filter(d => /MAINLEV|ACCORD/i.test((d.nom_origine || "") + " " + (d.nom || "")));
+  const aQualifier = docs.filter(d => d.type === "AQ");
+  const chaines = filChaines(g), aRelier = chaines.filter(c => !c.resolue).length, manuels = (etat.filiation.maillons || []).filter(x => x.groupe === g.num && x.statut === "manuel").length;
+  const divergences = divergencesParcelles().filter(x => x.groupe === g.num).length;
+  const nonValidees = mentions.filter(m => !m.valide).length;
+
+  // anomalies, par gravité décroissante
+  const anomalies = [];
+  if(!dernierEhf) anomalies.push({couleur: "rouge", texte: "Aucun état hypothécaire lu pour ce groupe : les blocs 2 à 5 ne peuvent pas être établis."});
+  if(dernierEhf && ehfPerime(dernierEhf.date_doc)) anomalies.push({couleur: "orange", texte: "État hypothécaire datant de plus de deux mois (" + (dernierEhf.date_doc || "") + ") : à actualiser avant de rendre le document."});
+  if(divergences) anomalies.push({couleur: "orange", texte: divergences + " divergence" + (divergences > 1 ? "s" : "") + " de parcelles entre REDPAR et les états hypothécaires lus (voir les points à trancher)."});
+  inscriptions.length && (() => {
+    const benef = new Map(); inscriptions.forEach(m => { const b = blocNoms(m.beneficiaires) || "bénéficiaire non lu"; if(!benef.has(b)) benef.set(b, []); benef.get(b).push(m); });
+    benef.forEach((liste, b) => { if(!mainlevees.length) anomalies.push({couleur: "orange", texte: "Accord de mainlevée de " + b + " non déposé au Drive (" + liste.length + " inscription" + (liste.length > 1 ? "s" : "") + ")."}); });
+  })();
+  servitudes.filter(s => !s.fonds).forEach(s => anomalies.push({couleur: "orange", texte: "Qualification fonds dominant / fonds servant à confirmer pour : " + (blocV(s.natures) || "mention non qualifiée") + (blocV(s.dateActe) ? " du " + blocV(s.dateActe) : "") + "."}));
+  if(sansTitre.length && dernierEhf) anomalies.push({couleur: "jaune", texte: "Aucune mutation lue pour " + blocNumeros(sansTitre) + " : effet relatif et origine incomplets."});
+  if(nonValidees) anomalies.push({couleur: "jaune", texte: nonValidees + " mention" + (nonValidees > 1 ? "s" : "") + " d'état hypothécaire non encore validée" + (nonValidees > 1 ? "s" : "") + " à l'écran de contrôle."});
+  if(aQualifier.length) anomalies.push({couleur: "jaune", texte: aQualifier.length + " pièce" + (aQualifier.length > 1 ? "s" : "") + " à qualifier dans le bac du groupe."});
+  if(aRelier) anomalies.push({couleur: "jaune", texte: aRelier + " référence" + (aRelier > 1 ? "s anciennes" : " ancienne") + " sans filiation établie jusqu'au cadastre actuel."});
+  if(manuels) anomalies.push({couleur: "jaune", texte: manuels + " maillon" + (manuels > 1 ? "s" : "") + " de filiation saisi" + (manuels > 1 ? "s" : "") + " à la main (valeur probante moindre)."});
+  anomalies.sort((a, b) => GRAVITE[b.couleur] - GRAVITE[a.couleur]);
+  const couleur = anomalies.length ? anomalies[0].couleur : "vert";
+
+  return {g, membres, communes, parcelles, docs, ehfs, dernierEhf, mentions, mutations, inscriptions, servitudes, parParcelle, parActe, sansTitre, mainlevees, anomalies, couleur};
+}
+
+// Couleur de la ligne : seulement après le premier passage de lecture sur le dossier.
+function couleurGroupe(g){
+  if(!(etat.documents || []).some(d => d.lecture && d.lecture.ehf)) return null;
+  return matiereGroupe(g).couleur;
+}
+
+/* ---------- rédaction : un modèle neutre, rendu ensuite en HTML ou en Word ----------
+   Un paragraphe : {t: texte, style: "p"|"puce"|"titre"|"sous"|"alerte"|"note", gras, souligne, couleur, ancre}
+   Un tableau   : {tableau: {entete:[...], lignes:[[...]]}}                                        */
+function redigerGroupe(g, options){
+  const M = matiereGroupe(g); const o = options || {}; const P = [];
+  const dateEhf = M.dernierEhf ? (blocDateFr(dateDepuisISO(M.dernierEhf.date_doc)) || M.dernierEhf.date_doc) : null;
+  const num = numeroGroupe4(g.num);
+  P.push({style: "titre", t: "Groupe " + num + (M.communes.length ? " — " + M.communes.join(" / ") : ""), ancre: "g" + num, couleur: M.couleur});
+  // mention d'alerte en tête : toutes les anomalies, chacune avec sa couleur, la ligne du groupe retenant la plus grave
+  P.push({style: "alerte", couleur: M.couleur, t: "Indication FUSION — groupe " + COULEURS[M.couleur].nom + " (" + COULEURS[M.couleur].sens + "). Ne pas reporter dans l'acte."});
+  M.anomalies.forEach(a => P.push({style: "alerte", couleur: a.couleur, t: a.texte}));
+  if(!M.anomalies.length) P.push({style: "alerte", couleur: "vert", t: "Aucune anomalie relevée à la date de production."});
+
+  // 1 — désignation (format TRENTE)
+  P.push({style: "sous", t: "DÉSIGNATION"});
+  const total = M.parcelles.reduce((s, p) => s + (p.surface || 0), 0);
+  P.push({style: "p", t: (M.communes.length === 1 ? "À " + M.communes[0] + " (" + (departementDe(M.membres[0].props.commune) || "") + ")" : "Sur les communes de " + M.communes.join(" et ")) + ", " + (M.parcelles.length > 1 ? "un ensemble immobilier" : "un bien immobilier") + (M.parcelles[0] && M.parcelles[0].lieudit ? " sis " + M.parcelles[0].lieudit : "") + ", figurant ainsi au cadastre :"});
+  P.push({tableau: {entete: ["Section", "Numéro", "Lieudit", "Surface"], lignes: M.parcelles.map(p => [p.section, String(+p.numero), p.lieudit || "", blocContenance(p.surface)])}});
+  P.push({style: "p", t: "Total surface : " + blocContenance(total) + "."});
+  const indiv = M.parcelles.filter(p => /IND|QUOTE|\d+\s*\/\s*\d+/i.test(p.droit || ""));
+  if(indiv.length) P.push({style: "p", gras: true, souligne: true, t: "Parcelle" + (indiv.length > 1 ? "s" : "") + " détenue" + (indiv.length > 1 ? "s" : "") + " en indivision : " + blocNumeros(indiv) + " — les autres indivisaires devront intervenir à l'acte."});
+
+  // 2 — effet relatif
+  P.push({style: "sous", t: "EFFET RELATIF"});
+  if(!M.dernierEhf) P.push({style: "note", t: "Aucun état hypothécaire lu : effet relatif à établir."});
+  else if(!M.parActe.size) P.push({style: "note", t: "Aucune mutation citant les parcelles du groupe dans l'état hypothécaire lu."});
+  else M.parActe.forEach(x => {
+    if(M.parActe.size > 1 || M.sansTitre.length) P.push({style: "p", t: "En ce qui concerne les parcelles cadastrées " + blocNumeros(x.parcelles) + " :"});
+    P.push({style: "p", t: ehfPhraseEffetRelatif(x.mention)});
+  });
+  if(M.sansTitre.length && M.dernierEhf) P.push({style: "note", t: "Aucune mutation lue pour " + blocNumeros(M.sansTitre) + "."});
+
+  // 3 — origine de propriété
+  P.push({style: "sous", t: "ORIGINE DE PROPRIÉTÉ"});
+  const dateAudit = new Date(); const limite = new Date(dateAudit); limite.setFullYear(limite.getFullYear() - ANS_TRENTENAIRE);
+  if(M.parActe.size) M.parActe.forEach(x => {
+    const m = x.mention;
+    let t = (M.parActe.size > 1 ? "En ce qui concerne les parcelles cadastrées " + blocNumeros(x.parcelles) + ", le" : "Le") + " bien appartient à la Société pour l'avoir acquis";
+    if(blocNoms(m.disposants)) t += " de " + blocNoms(m.disposants);
+    if(blocV(m.natures)) t += " aux termes d'un acte contenant " + blocV(m.natures);
+    if(blocV(m.redacteur)) t += " reçu par " + blocV(m.redacteur).replace(/^NOT\s+/i, "Maître ") + (blocV(m.commune) ? ", notaire à " + blocV(m.commune) : "");
+    if(blocV(m.dateActe)) t += ", le " + blocV(m.dateActe);
+    if(blocV(m.montant)) t += ", moyennant le prix de " + blocMontant(blocV(m.montant));
+    if(blocV(m.service)) t += ". Cet acte a été publié au service de la publicité foncière de " + blocV(m.service) + (blocV(m.dateDepot) ? " le " + blocV(m.dateDepot) : "") + (blocV(m.volume) ? ", volume " + blocV(m.volume) : "") + (blocV(m.numero) ? " numéro " + blocV(m.numero) : "");
+    if(blocV(m.complement)) t += ". " + blocV(m.complement);
+    P.push({style: "p", t: t + "."});
+  });
+  else P.push({style: "note", t: "Dernière mutation non établie au vu des pièces lues."});
+  P.push({style: "sous2", t: "ORIGINE DE PROPRIÉTÉ ANTÉRIEURE"});
+  // remontée trentenaire, parcelle par parcelle, factorisée par origines communes
+  const chainesOrig = new Map();
+  M.parParcelle.forEach(x => {
+    const ant = x.toutes.filter(m => m !== x.derniere && m.dateA);
+    let retenues = [], atteinte = false;
+    for(const m of ant){ retenues.push(m); if(m.dateA <= limite){ atteinte = true; break; } }
+    const k = retenues.map(cleActeOrig).join(" ; ") + "|" + atteinte;
+    if(!chainesOrig.has(k)) chainesOrig.set(k, {mentions: retenues, atteinte, parcelles: []});
+    chainesOrig.get(k).parcelles.push(x.parcelle);
+  });
+  function cleActeOrig(m){ return blocV(m.volume) + "/" + blocV(m.numero) + "|" + blocV(m.dateActe); }
+  if(!M.dernierEhf) P.push({style: "note", t: "Remontée impossible sans état hypothécaire lu."});
+  else chainesOrig.forEach(c => {
+    const intro = chainesOrig.size > 1 ? "En ce qui concerne les parcelles cadastrées " + blocNumeros(c.parcelles) + " : " : "";
+    if(!c.mentions.length){ P.push({style: "p", t: intro + "Aucune mutation antérieure ne figure à l'état hypothécaire lu. L'origine de propriété trentenaire n'est pas atteinte au vu des pièces déposées ; la remontée devra être poursuivie sur les titres antérieurs."}); return; }
+    c.mentions.forEach((m, i) => P.push({style: "p", t: (i === 0 ? intro + "Antérieurement, " : "Antérieurement encore, ") + ehfPhraseEffetRelatif(m).replace(/^Acquisition aux termes/, "le bien appartenait à " + (blocNoms(m.beneficiaires) || "l'auteur du disposant") + " aux termes") + (blocNoms(m.disposants) ? " Le disposant était " + blocNoms(m.disposants) + "." : "")}));
+    const plusAncienne = c.mentions[c.mentions.length - 1];
+    if(c.atteinte) P.push({style: "p", t: "L'acte du " + blocV(plusAncienne.dateActe) + " remontant à plus de trente ans à la date du présent, l'origine de propriété trentenaire est établie."});
+    else P.push({style: "p", t: "La remontée des origines s'arrête à l'acte du " + (blocV(plusAncienne.dateActe) || blocV(plusAncienne.dateDepot)) + ", date la plus ancienne établie au vu des pièces déposées ; l'origine de propriété trentenaire n'est pas atteinte."});
+  });
+
+  // 4 — inscriptions hypothécaires
+  P.push({style: "sous", t: "INSCRIPTIONS HYPOTHÉCAIRES"});
+  if(!M.dernierEhf) P.push({style: "note", t: "Bloc à établir après lecture d'un état hypothécaire."});
+  else if(!M.inscriptions.length) P.push({style: "p", t: "Suivant état hypothécaire en date du " + dateEhf + ", il n'existe aucune inscription hypothécaire en cours de validité."});
+  else{
+    P.push({style: "p", t: "Il résulte du titre que le bien est grevé des inscriptions hypothécaires suivantes :"});
+    const toutes = new Set(M.parcelles.map(filCleCourte));
+    M.inscriptions.forEach(m => {
+      const citees = (m.immeubles || []).filter(i => toutes.has(filCleCourte(i)));
+      const surTout = citees.length >= toutes.size || !citees.length;
+      let t = (blocV(m.natures) || "inscription").toLowerCase().replace(/^./, c => c.toUpperCase());
+      if(blocV(m.rang)) t += " de " + blocV(m.rang).toLowerCase().replace(/^(\d+)(?:ER|EME|E)?$/i, (s, n) => n === "1" ? "premier" : n === "2" ? "deuxième" : n === "3" ? "troisième" : n + "e") + " rang";
+      t += " contre la Société, " + (surTout ? "sur le groupe" : "sur une partie du groupe constituée des parcelles cadastrées " + blocNumeros(citees));
+      if(blocNoms(m.beneficiaires)) t += ", au profit de " + blocNoms(m.beneficiaires);
+      if(blocV(m.montant)) t += ", pour sûreté de la somme en principal de " + blocMontant(blocV(m.montant));
+      const acc = /ACCESSOIRES?\s*(?:DE|:)?\s*([\d\s.,]+(?:€|EUROS?)?)/i.exec(blocV(m.complement)); if(acc) t += " et en accessoire de " + blocMontant(acc[1]);
+      if(m.effet) t += ", avec effet jusqu'au " + blocDateFr(m.effet);
+      P.push({style: "puce", t: t + "."});
+    });
+    P.push({style: "p", t: "Cette indication est confirmée à la vue d'un état hypothécaire en date du " + dateEhf + "."});
+    const benef = new Map(); M.inscriptions.forEach(m => { const b = blocNoms(m.beneficiaires) || "le bénéficiaire non identifié"; if(!benef.has(b)) benef.set(b, []); benef.get(b).push(m); });
+    benef.forEach((liste, b) => P.push({style: "p", couleur: M.mainlevees.length ? null : "orange", t: "Il est nécessaire d'obtenir l'accord de " + b + " pour opérer la mutation, et d'obtenir de lui une mainlevée, avec ou sans paiement, de " + (liste.length > 1 ? "ses " + liste.length + " inscriptions" : "son inscription") + (liste.some(m => blocV(m.dateActe)) ? " (" + liste.map(m => blocV(m.dateActe)).filter(Boolean).join(", ") + ")" : "") + "." + (M.mainlevees.length ? " Accord déposé au Drive : " + M.mainlevees.map(d => d.nom).join(", ") + "." : "")}));
+  }
+
+  // 5 — servitudes et autres inscriptions
+  P.push({style: "sous", t: "SERVITUDES ET AUTRES INSCRIPTIONS"});
+  if(!M.dernierEhf) P.push({style: "note", t: "Bloc à établir après lecture d'un état hypothécaire."});
+  else if(!M.servitudes.length) P.push({style: "p", t: "Il résulte du ou des titres visés au paragraphe EFFET RELATIF et des titres antérieurs qu'il n'existe aucune servitude ou charge en cours. Cette indication est confirmée par un état hypothécaire en date du " + dateEhf + "."});
+  else{
+    P.push({style: "p", t: "Il est actuellement relevé les servitudes et charges qui suivent :"});
+    M.servitudes.forEach(s => {
+      P.push({style: "p", gras: true, souligne: true, t: s.fonds === "dominant" ? "Fonds dominant" : s.fonds === "servant" ? "Fonds servant" : "Fonds dominant / fonds servant : qualification à confirmer"});
+      P.push({style: "p", t: "Aux termes d'un acte" + (blocV(s.natures) ? " contenant " + blocV(s.natures) : "") + (blocV(s.redacteur) ? " reçu par " + blocV(s.redacteur).replace(/^NOT\s+/i, "Maître ") + (blocV(s.commune) ? ", notaire à " + blocV(s.commune) : "") : "") + (blocV(s.dateActe) ? ", le " + blocV(s.dateActe) : "") + (blocV(s.volume) ? ", publié volume " + blocV(s.volume) + (blocV(s.numero) ? " numéro " + blocV(s.numero) : "") : "") + ". Le descriptif de cette servitude est repris dans un document demeuré annexé au présent."});
+    });
+  }
+  if(o.retour) P.push({style: "lien", t: "Retour au sommaire", ancre: "sommaire"});
+  return {paragraphes: P, matiere: M};
+}
+
+/* ---------- rendu HTML (aperçu et PDF par impression) ---------- */
+function blocsHtml(sections, titre, options){
+  const o = options || {};
+  const css = "body{font-family:Georgia,'Times New Roman',serif;font-size:11.5pt;line-height:1.45;color:#111;margin:22mm 18mm}h1{font-size:18pt;margin:0 0 6mm}h2{font-size:14pt;margin:9mm 0 3mm;padding:2px 8px;border-left:6px solid #888}h3{font-size:11pt;letter-spacing:.6px;text-transform:uppercase;margin:6mm 0 2mm;color:#0B3B4A}h4{font-size:10.5pt;letter-spacing:.4px;text-transform:uppercase;margin:4mm 0 2mm;color:#0B3B4A}p{margin:0 0 2.6mm;text-align:justify}li{margin:0 0 1.6mm}table{border-collapse:collapse;margin:2mm 0 3mm;font-size:10.5pt}td,th{border:1px solid #999;padding:2px 7px;text-align:left}th{background:#EEF1F4}.alerte{color:#fff;padding:3px 8px;margin:0 0 1.5mm;font-family:'Segoe UI',system-ui,sans-serif;font-size:10pt;text-align:left}.note{color:#666;font-style:italic}.lien{font-size:10pt;margin:3mm 0 8mm}.som li{margin:1mm 0}.som .puce{display:inline-block;width:11px;height:11px;border-radius:50%;vertical-align:-1px;margin-right:6px}.gs{text-decoration:underline;font-weight:bold}.pied{color:#666;font-size:9.5pt;margin-top:10mm}@media print{h2{break-before:page}h2:first-of-type{break-before:auto}.alerte{-webkit-print-color-adjust:exact;print-color-adjust:exact}}";
+  let h = "<!doctype html><html lang='fr'><head><meta charset='utf-8'><title>" + echap(titre) + "</title><style>" + css + "</style></head><body>";
+  h += "<h1>" + echap(titre) + "</h1><p class='note'>Document de travail FUSION — produit le " + blocDateFr(new Date()) + ". Les mentions colorées sont des indications internes, à ne pas reporter dans l'acte.</p>";
+  if(o.sommaire){
+    h += "<h3 id='sommaire'>Sommaire</h3><ul class='som'>";
+    sections.forEach(s => { const M = s.matiere; h += "<li><span class='puce' style='background:" + COULEURS[M.couleur].hex + "'></span><a href='#g" + numeroGroupe4(M.g.num) + "'>Groupe " + numeroGroupe4(M.g.num) + "</a> — " + echap(M.communes.join(" / ") || "commune non renseignée") + " (" + COULEURS[M.couleur].nom + ")</li>"; });
+    h += "</ul>";
+  }
+  sections.forEach(s => s.paragraphes.forEach(p => {
+    if(p.tableau){ h += "<table><thead><tr>" + p.tableau.entete.map(e => "<th>" + echap(e) + "</th>").join("") + "</tr></thead><tbody>" + p.tableau.lignes.map(l => "<tr>" + l.map(c => "<td>" + echap(c) + "</td>").join("") + "</tr>").join("") + "</tbody></table>"; return; }
+    const txt = echap(p.t);
+    if(p.style === "titre") h += "<h2 id='" + (p.ancre || "") + "' style='border-color:" + COULEURS[p.couleur || "vert"].hex + "'>" + txt + "</h2>";
+    else if(p.style === "sous") h += "<h3>" + txt + "</h3>";
+    else if(p.style === "sous2") h += "<h4>" + txt + "</h4>";
+    else if(p.style === "alerte") h += "<p class='alerte' style='background:" + COULEURS[p.couleur || "vert"].hex + "'>" + txt + "</p>";
+    else if(p.style === "note") h += "<p class='note'>" + txt + "</p>";
+    else if(p.style === "puce") h += "<ul><li>" + txt + "</li></ul>";
+    else if(p.style === "lien") h += "<p class='lien'><a href='#" + p.ancre + "'>↑ " + txt + "</a></p>";
+    else h += "<p" + (p.couleur ? " style='color:" + COULEURS[p.couleur].hex + ";font-weight:600'" : "") + ">" + (p.gras || p.souligne ? "<span class='gs'>" + txt + "</span>" : txt) + "</p>";
+  }));
+  h += "<p class='pied'>FIDAL Notaires — FUSION — " + echap(etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "") + "</p></body></html>";
+  return h.replace(/<ul><li>([^]*?)<\/li><\/ul><ul><li>/g, "<ul><li>$1</li><li>");
+}
+
+/* ---------- rendu Word (bibliothèque docx, la même que PLUME) ---------- */
+let docxPromesse = null;
+function chargerDocx(){
+  if(window.docx) return Promise.resolve(window.docx);
+  if(!docxPromesse) docxPromesse = new Promise((ok, ko) => { const s = document.createElement("script"); s.src = "https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js"; s.onload = () => ok(window.docx); s.onerror = () => ko(new Error("bibliothèque Word indisponible")); document.head.appendChild(s); });
+  return docxPromesse;
+}
+async function blocsDocx(sections, titre, options){
+  const D = await chargerDocx(); const o = options || {};
+  const hexSans = (c) => COULEURS[c].hex.replace("#", "");
+  const enfants = [];
+  const texte = (t, opts) => new D.TextRun(Object.assign({text: t, font: "Georgia", size: 23}, opts || {}));
+  enfants.push(new D.Paragraph({children: [texte(titre, {bold: true, size: 36})], spacing: {after: 200}}));
+  enfants.push(new D.Paragraph({children: [texte("Document de travail FUSION — produit le " + blocDateFr(new Date()) + ". Les mentions colorées sont des indications internes, à retirer avant de coller dans l'acte.", {italics: true, color: "666666", size: 20})], spacing: {after: 300}}));
+  if(o.sommaire){
+    enfants.push(new D.Paragraph({children: [new D.Bookmark({id: "sommaire", children: [texte("SOMMAIRE", {bold: true, size: 24})]})], spacing: {after: 120}}));
+    sections.forEach(s => { const M = s.matiere, n = numeroGroupe4(M.g.num);
+      enfants.push(new D.Paragraph({children: [texte("■ ", {color: hexSans(M.couleur), size: 26}), new D.InternalHyperlink({anchor: "g" + n, children: [texte("Groupe " + n, {style: "Hyperlink"})]}), texte(" — " + (M.communes.join(" / ") || "commune non renseignée") + " (" + COULEURS[M.couleur].nom + ")")], spacing: {after: 40}}));
+    });
+  }
+  sections.forEach((s, si) => s.paragraphes.forEach(p => {
+    if(p.tableau){
+      const ligne = (cells, tete) => new D.TableRow({tableHeader: tete, children: cells.map(c => new D.TableCell({children: [new D.Paragraph({children: [texte(String(c), tete ? {bold: true, size: 20} : {size: 20})]})], shading: tete ? {fill: "EEF1F4", type: D.ShadingType.CLEAR, color: "auto"} : undefined}))});
+      enfants.push(new D.Table({width: {size: 100, type: D.WidthType.PERCENTAGE}, rows: [ligne(p.tableau.entete, true), ...p.tableau.lignes.map(l => ligne(l, false))]}));
+      enfants.push(new D.Paragraph({children: [texte("")], spacing: {after: 60}})); return;
+    }
+    if(p.style === "titre") enfants.push(new D.Paragraph({heading: D.HeadingLevel.HEADING_1, pageBreakBefore: si > 0, children: [new D.Bookmark({id: p.ancre, children: [texte(p.t, {bold: true, size: 30, color: hexSans(p.couleur || "vert")})]})], spacing: {before: 240, after: 160}}));
+    else if(p.style === "sous") enfants.push(new D.Paragraph({heading: D.HeadingLevel.HEADING_2, children: [texte(p.t, {bold: true, size: 24, color: "0B3B4A"})], spacing: {before: 260, after: 100}}));
+    else if(p.style === "sous2") enfants.push(new D.Paragraph({heading: D.HeadingLevel.HEADING_3, children: [texte(p.t, {bold: true, size: 22, color: "0B3B4A"})], spacing: {before: 180, after: 80}}));
+    else if(p.style === "alerte") enfants.push(new D.Paragraph({children: [texte(p.t, {color: "FFFFFF", font: "Segoe UI", size: 20})], shading: {fill: hexSans(p.couleur || "vert"), type: D.ShadingType.CLEAR, color: "auto"}, spacing: {after: 40}}));
+    else if(p.style === "note") enfants.push(new D.Paragraph({children: [texte(p.t, {italics: true, color: "666666"})], spacing: {after: 120}}));
+    else if(p.style === "puce") enfants.push(new D.Paragraph({bullet: {level: 0}, children: [texte(p.t)], spacing: {after: 80}}));
+    else if(p.style === "lien") enfants.push(new D.Paragraph({children: [new D.InternalHyperlink({anchor: p.ancre, children: [texte("↑ " + p.t, {style: "Hyperlink", size: 20})]})], spacing: {before: 160, after: 400}}));
+    else enfants.push(new D.Paragraph({alignment: D.AlignmentType.JUSTIFIED, children: [texte(p.t, {bold: Boolean(p.gras) || Boolean(p.couleur), underline: p.souligne ? {} : undefined, color: p.couleur ? hexSans(p.couleur) : undefined})], spacing: {after: 120}}));
+  }));
+  const doc = new D.Document({creator: "FUSION — FIDAL Notaires", title: titre, sections: [{properties: {page: {margin: {top: 1250, bottom: 1250, left: 1100, right: 1100}}}, children: enfants}]});
+  return D.Packer.toBlob(doc);
+}
+
+function telechargerBlob(blob, nom){
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = nom; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+}
+function nomSortie(suffixe, extension){
+  return nomDossierSociete(etat.dossier ? etat.dossier.denomination : "societe", new Date()) + (suffixe ? "_" + suffixe : "") + "." + extension;
+}
+function ouvrirImpression(html, nom){
+  // PDF : la fenêtre d'aperçu s'ouvre prête à « Enregistrer au format PDF », couleurs conservées
+  const f = window.open("", "_blank"); if(!f){ signaler("Autorisez l'ouverture de fenêtres pour produire le PDF.", true); return; }
+  f.document.open(); f.document.write(html.replace("</title>", "</title>")); f.document.close(); f.document.title = nom;
+  f.addEventListener("load", () => setTimeout(() => f.print(), 300));
+  setTimeout(() => { try{ f.print(); }catch(e){} }, 900);
+}
+
+// Sorties : fiche d'un groupe, compilation de tous les groupes, annexe des servitudes.
+async function sortirGroupe(g, format){
+  const s = redigerGroupe(g, {}); const n = numeroGroupe4(g.num), titre = "FUSION — Fiche du groupe " + n;
+  if(format === "pdf") ouvrirImpression(blocsHtml([s], titre, {}), nomSortie(n, "pdf"));
+  else telechargerBlob(await blocsDocx([s], titre, {}), nomSortie(n, "docx"));
+  marquerModifie("sortie-fiche", {groupe: g.num, format, couleur: s.matiere.couleur});
+}
+async function sortirCompilation(format){
+  const ordonnes = [...etat.groupes].sort((a, b) => a.num - b.num);
+  signaler("Rédaction de " + ordonnes.length + " groupes…");
+  const sections = ordonnes.map(g => redigerGroupe(g, {retour: true}));
+  const titre = "FUSION — Compilation des fiches de groupe — " + (etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "");
+  if(format === "pdf") ouvrirImpression(blocsHtml(sections, titre, {sommaire: true}), nomSortie("", "pdf"));
+  else telechargerBlob(await blocsDocx(sections, titre, {sommaire: true}), nomSortie("", "docx"));
+  const parCouleur = {}; sections.forEach(s => { parCouleur[s.matiere.couleur] = (parCouleur[s.matiere.couleur] || 0) + 1; });
+  marquerModifie("sortie-compilation", {groupes: sections.length, format, couleurs: parCouleur});
+  signaler("Compilation produite : " + sections.length + " groupes (" + Object.entries(parCouleur).map(([c, n]) => n + " " + c).join(", ") + ").");
+}
+async function sortirAnnexeServitudes(format){
+  // un seul recueil pour toute la société, classé par groupe, chaque servitude reproduite dans chaque groupe concerné ;
+  // texte intégral tiré de la pièce SER du groupe quand elle est déposée et lisible, sinon la mention lue avec renvoi à l'acte
+  const ordonnes = [...etat.groupes].sort((a, b) => a.num - b.num);
+  const sections = [];
+  for(const g of ordonnes){
+    const M = matiereGroupe(g); if(!M.servitudes.length) continue;
+    const n = numeroGroupe4(g.num); const P = [];
+    P.push({style: "titre", t: "Groupe " + n + (M.communes.length ? " — " + M.communes.join(" / ") : ""), ancre: "g" + n, couleur: M.couleur});
+    const sers = M.docs.filter(d => d.type === "SER" && extensionDe(d.nom) === "pdf" && d.couche_texte !== false);
+    let textesSer = null;
+    if(sers.length && driveConnecte()){
+      textesSer = [];
+      for(const d of sers){ try{ const r = await textePdfPages(await driveTelecharger(d.drive_id), 200); textesSer.push({doc: d, texte: r.pages.map(p => p.texte).join("\n")}); }catch(e){} }
+    }
+    M.servitudes.forEach((s, i) => {
+      P.push({style: "sous", t: "Servitude ou charge n° " + (i + 1) + (blocV(s.natures) ? " — " + blocV(s.natures) : "")});
+      P.push({style: "p", t: "Acte de référence : " + (blocV(s.natures) || "acte") + (blocV(s.redacteur) ? ", reçu par " + blocV(s.redacteur).replace(/^NOT\s+/i, "Maître ") + (blocV(s.commune) ? ", notaire à " + blocV(s.commune) : "") : "") + (blocV(s.dateActe) ? ", le " + blocV(s.dateActe) : "") + (blocV(s.volume) ? ", publié volume " + blocV(s.volume) + (blocV(s.numero) ? " numéro " + blocV(s.numero) : "") : "") + "."});
+      P.push({style: "p", gras: true, souligne: true, t: s.fonds === "dominant" ? "Fonds dominant" : s.fonds === "servant" ? "Fonds servant" : "Qualification fonds dominant / fonds servant à confirmer"});
+      const ser = textesSer && (textesSer.find(x => blocV(s.dateActe) && x.doc.date_doc && dateDepuisISO(x.doc.date_doc) && blocDate(blocV(s.dateActe)) && dateDepuisISO(x.doc.date_doc).getTime() === blocDate(blocV(s.dateActe)).getTime()) || (textesSer.length === 1 ? textesSer[0] : null));
+      if(ser){ P.push({style: "note", t: "Texte intégral reproduit de la pièce " + ser.doc.nom + " :"}); ser.texte.split(/\n{2,}|(?<=\.)\s{2,}/).map(t => t.trim()).filter(Boolean).forEach(t => P.push({style: "p", t})); }
+      else{
+        if(blocV(s.complement)) P.push({style: "p", t: "Mention portée à l'état hypothécaire : " + blocV(s.complement)});
+        P.push({style: "alerte", couleur: "jaune", t: "Texte intégral de la servitude à reprendre de l'acte : aucune pièce SER lisible n'est déposée pour ce groupe."});
+      }
+    });
+    P.push({style: "lien", t: "Retour au sommaire", ancre: "sommaire"});
+    sections.push({paragraphes: P, matiere: M});
+  }
+  if(!sections.length){ signaler("Aucune servitude ou charge relevée sur les groupes lus : pas d'annexe à produire."); return; }
+  const titre = "FUSION — Annexe des servitudes et charges — " + (etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "");
+  if(format === "pdf") ouvrirImpression(blocsHtml(sections, titre, {sommaire: true}), nomSortie("annexe_servitudes", "pdf"));
+  else telechargerBlob(await blocsDocx(sections, titre, {sommaire: true}), nomSortie("annexe_servitudes", "docx"));
+  marquerModifie("sortie-annexe-servitudes", {groupes: sections.length, format});
+}
+
+// Boutons de sortie de la fiche du groupe.
+function rendreSorties(g){
+  const z = document.createElement("div"); z.className = "sorties";
+  const c = couleurGroupe(g);
+  z.innerHTML = '<span class="lib">Fiche du groupe' + (c ? ' — <b style="color:' + COULEURS[c].hex + '">' + COULEURS[c].nom + '</b>' : '') + '</span>'
+    + '<button class="btn" type="button" data-f="docx">Word</button><button class="btn" type="button" data-f="pdf">PDF</button>';
+  z.querySelectorAll("button").forEach(b => b.addEventListener("click", async () => { b.disabled = true; try{ await sortirGroupe(g, b.dataset.f); }catch(e){ signaler(e.message, true); } finally{ b.disabled = false; } }));
+  return z;
+}
+
 /* ---------- rendu du panneau ---------- */
 function formatSurface(m2){
   if(m2 >= 10000) return (m2/10000).toLocaleString("fr-FR",{maximumFractionDigits:2}) + " ha";
@@ -2731,6 +3109,7 @@ function formatSurface(m2){
 function rendre(){
   const liste = document.getElementById("liste");
   liste.innerHTML = "";
+  divergencesParcelles.cache = null;
 
   if(!etat.parcelles.length){
     liste.innerHTML = '<p class="vide">Aucune parcelle chargée. Déposez un GeoJSON, ou ouvrez le jeu d\'essai pour voir le regroupement à l\'œuvre.</p>';
@@ -2827,7 +3206,9 @@ function rendre(){
                    (sections.length ? " · " + sections.slice(0,4).join(" ") + (sections.length > 4 ? " …" : "") : "");
 
       const tete = document.createElement("button");
-      tete.className = "groupe-tete";
+      const couleurLigne = couleurGroupe(g);
+      tete.className = "groupe-tete" + (couleurLigne ? " c-" + couleurLigne : "");
+      if(couleurLigne) tete.title = "Groupe " + COULEURS[couleurLigne].nom + " — " + COULEURS[couleurLigne].sens;
       tete.type = "button";
       tete.innerHTML =
         '<input type="checkbox" ' + (g.coche ? "checked" : "") + ' aria-label="Sélectionner le groupe ' + g.num + '">' +
@@ -2872,6 +3253,7 @@ function rendre(){
         });
         bloc.appendChild(ul);
         bloc.appendChild(rendreOrigines(g));
+        bloc.appendChild(rendreSorties(g));
         bloc.appendChild(rendreDepot(g));
       }
       liste.appendChild(bloc);
@@ -2899,6 +3281,8 @@ function majBoutons(){
   const charge = etat.parcelles.length > 0;
   document.getElementById("btn-recalculer").disabled = !charge;
   document.getElementById("btn-export").disabled = !charge;
+  const lu = charge && (etat.documents || []).some(d => d.lecture && d.lecture.ehf);
+  ["btn-compil-docx", "btn-compil-pdf", "btn-annexe"].forEach(id => { const el = document.getElementById(id); el.disabled = !lu; if(!lu && charge) el.title = "Lisez d'abord au moins un état hypothécaire : les blocs 2 à 5 s'établissent à partir des mentions lues."; });
   document.getElementById("btn-fusionner").disabled =
     etat.groupes.filter(g => g.coche).length < 2;
   document.getElementById("btn-arbo").disabled = !(charge && etat.dossier && etat.persist.actif);
@@ -3001,6 +3385,7 @@ async function sauverInitial(){
 
 // Après chaque geste sur le découpage : enregistrement différé de 800 ms (les gestes rapides se regroupent).
 function marquerModifie(quoi, detail){
+  divergencesParcelles.cache = null;
   if(!etat.dossier || !etat.persist.actif) return;
   etat.persist.quoi = quoi; etat.persist.detail = detail || {};
   afficherPersist("Modifié…");
@@ -3389,6 +3774,10 @@ function brancher(){
   });
 
   document.getElementById("btn-export").addEventListener("click", exporter);
+  const brancherSortie = (id, fn) => document.getElementById(id).addEventListener("click", async (e) => { e.target.disabled = true; try{ await fn(); }catch(err){ signaler(err.message || String(err), true); } finally{ e.target.disabled = false; } });
+  brancherSortie("btn-compil-docx", () => sortirCompilation("docx"));
+  brancherSortie("btn-compil-pdf", () => sortirCompilation("pdf"));
+  brancherSortie("btn-annexe", () => sortirAnnexeServitudes("docx"));
   document.getElementById("btn-arbo").addEventListener("click", creerArborescenceDrive);
   document.getElementById("btn-drive").addEventListener("click", () => {
     if(!etat.drive.client){ signaler("Le client Google n'est pas encore chargé, réessayez dans une seconde.", true); return; }
