@@ -194,6 +194,45 @@
   .diverg .motif{grid-column:1 / -1;color:#4A5561;font-size:12px}
   .diverg .motif a{color:var(--carmin)}
   .diverg .btn{padding:2px 8px;font-size:12px}
+  .diverg .acts{display:flex;gap:6px}
+  /* ---- filiation cadastrale ---- */
+  .lect.fil .lect-gauche{width:58%}
+  .fil-chaine{border:1px solid var(--trait);border-radius:8px;margin:0 0 12px;background:#fff}
+  .fil-chaine.resolue{border-color:#B7D9C4}
+  .fil-tete{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#F4F8F9;border-bottom:1px solid var(--trait);font-size:13px}
+  .fil-tete b{font-family:Georgia,serif;color:var(--nuit);font-size:15px}
+  .fil-tete .via{color:var(--gris);font-size:12px;flex:1}
+  .fil-tete .etat{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--orange)}
+  .fil-chaine.resolue .fil-tete .etat{color:#1F7A4D}
+  .fil-arbre,.fil-arbre ul{list-style:none;margin:0;padding:6px 0 6px 18px}
+  .fil-noeud{display:grid;grid-template-columns:auto 1fr auto;grid-template-areas:"fleche ref acts" "fleche via acts" "sub sub sub";column-gap:8px;padding:5px 10px;border-radius:6px;font-size:13px;cursor:pointer;margin:2px 0}
+  .fil-noeud:hover{background:#F6FAFB}
+  .fil-noeud.actif{background:#E6F3F4;box-shadow:inset 3px 0 0 var(--canard)}
+  .fil-noeud.ok>.ref{color:#1F7A4D}
+  .fil-noeud.manuel{background:#FFF7CC}
+  .fil-noeud.manuel>.ref::after{content:"saisi à la main";margin-left:8px;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:#8A6D00}
+  .fil-noeud>.fleche{grid-area:fleche;color:var(--gris)}
+  .fil-noeud>.ref{grid-area:ref;font-family:Georgia,serif;color:var(--nuit)}
+  .fil-noeud>.ref .act{font-family:"Segoe UI",system-ui,sans-serif;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:#1F7A4D;margin-left:6px}
+  .fil-noeud>.via{grid-area:via;font-size:11.5px;color:var(--gris)}
+  .fil-noeud>.acts{grid-area:acts;display:flex;gap:6px;align-items:center}
+  .fil-noeud>.acts .btn{padding:2px 8px;font-size:12px}
+  .fil-noeud>ul,.fil-noeud>.fil-suite{grid-area:sub}
+  .fil-suite{padding:6px 12px 10px}
+  .fil-note{font-size:12px;color:var(--gris);margin:4px 12px 6px}
+  .fil-sugg{font-size:12px;margin:4px 0 6px}
+  .fil-sugg .btn{padding:1px 7px;font-size:12px;margin:2px 2px 2px 0}
+  .fil-saisie{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .fil-saisie input{font:inherit;font-size:12.5px;padding:4px 7px;border:1px solid var(--trait);border-radius:4px}
+  .fil-saisie input[data-role="ref"]{width:170px}
+  .fil-saisie input[data-role="com"]{flex:1;min-width:160px}
+  .origines{margin:2px 14px 10px;font-size:12px;border-collapse:collapse;width:calc(100% - 28px)}
+  .origines th{text-align:left;font-weight:600;color:var(--canard);font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;padding:3px 6px;border-bottom:1px solid var(--trait)}
+  .origines td{padding:3px 6px;border-bottom:1px solid #EEF1F4;vertical-align:top}
+  .origines tr.manuel td{background:#FFF7CC}
+  .origines-tete{display:flex;align-items:center;gap:8px;margin:6px 14px 4px;font-size:12px;color:var(--gris)}
+  .origines-tete .btn{padding:2px 9px;font-size:12px;margin-left:auto}
+  .origines-tete b{color:var(--orange)}
   .tete-tri{
     padding:7px 14px 4px;font-size:11px;letter-spacing:.6px;text-transform:uppercase;
     color:var(--canard);background:#F4F8F9;border-bottom:1px solid var(--trait)
@@ -519,6 +558,7 @@ const etat = {
   sansGeometrie: [],     // références au relevé mais absentes du plan (REDPAR)
   zoomSur: null,         // groupe sur lequel caler la carte au prochain rendu
   trancherOuvert: false, // onglet « Points à trancher » : replié par défaut, l'état survit au re-rendu
+  filiation: {maillons: []}, // filiation cadastrale du DOSSIER EN COURS : maillons ancien → nouveau, proposés / validés / refusés / saisis à la main
   suggestions: [],       // rapprochements proposés {a, b, distance, motifs}
   suggActive: null,      // clé du rapprochement épinglé (cliqué) : ses deux groupes restent allumés et la carte se cale dessus
   suggExtras: new Set(), // groupes ajoutés au rapprochement épinglé par clic sur la carte
@@ -2217,6 +2257,311 @@ function rendreDepot(g){
   return bloc;
 }
 
+/* ---------- filiation cadastrale (tranché les 14, 15 et 17/09/2026) ----------
+   FUSION tente SYSTÉMATIQUEMENT de retrouver la référence actuelle d'une parcelle
+   ancienne citée par un titre ou un état hypothécaire : la recherche de la
+   mention de division porte sur TOUTES les pièces lues du dossier (pas seulement
+   les documents d'arpentage). Sortie : une arborescence pré-rédigée, maillon par
+   maillon, avec pour chaque maillon l'IMAGE du passage qui l'établit, validée par
+   l'humain. Refus d'un maillon → suggestions ; aucune piste → saisie manuelle,
+   marquée « saisi à la main » (jaune). Les maillons sont conservés DANS LE SEUL
+   DOSSIER EN COURS (persistés avec l'état du dossier), jamais d'un dossier à
+   l'autre. Pas d'appel automatique à MATRICE.                                   */
+
+const FIL_NZ = (t) => sansAccent(String(t || "")).toUpperCase();
+function filCle(r){ return (r.commune ? FIL_NZ(r.commune).replace(/[^A-Z0-9]/g, "") + "/" : "") + FIL_NZ(r.section).replace(/[^A-Z0-9]/g, "") + " " + String(+r.numero); }
+function filCleCourte(r){ return FIL_NZ(r.section).replace(/[^A-Z0-9]/g, "") + " " + String(+r.numero); }
+function filLibelle(r){ return (r.commune ? r.commune + " " : "") + FIL_NZ(r.section) + " " + String(+r.numero); }
+
+// Références actuelles du groupe (REDPAR), indexées section+numéro.
+function filActuelles(g){
+  const m = new Map();
+  [...g.membres].map(i => etat.parcelles[i]).filter(Boolean).forEach(p => {
+    m.set(filCleCourte({section: p.props.section, numero: p.props.numero}), {section: p.props.section, numero: p.props.numero, commune: p.props.nom_commune || null, idu: p.props.idu});
+  });
+  return m;
+}
+
+// Références anciennes à résoudre pour un groupe : citées par un état hypothécaire lu et absentes du cadastre actuel du DOSSIER.
+function filAnciennes(g){
+  const toutes = new Set(etat.parcelles.map(p => filCleCourte({section: p.props.section, numero: p.props.numero})));
+  const out = new Map();
+  (etat.documents || []).filter(d => d.groupe === g.num && d.lecture && d.lecture.ehf && d.lecture.ehf.mentions).forEach(d => {
+    d.lecture.ehf.mentions.forEach(m => (m.immeubles || []).forEach(im => {
+      if(!im.section || !im.numero) return;
+      const cle = filCleCourte(im); if(toutes.has(cle) || out.has(cle)) return;
+      out.set(cle, {section: FIL_NZ(im.section), numero: String(+im.numero), commune: im.commune || null, source: {drive_id: d.drive_id, nom: d.nom, page: m.pages ? m.pages.debut : null}, nature: m.natures ? m.natures.valeur : null, date: m.dateActe ? m.dateActe.valeur : null});
+    }));
+  });
+  // les saisies manuelles ou maillons déjà connus ajoutent leurs points de départ
+  (etat.filiation.maillons || []).filter(x => x.groupe === g.num && x.statut !== "refuse").forEach(x => {
+    const cle = filCleCourte(x.ancien); if(!toutes.has(cle) && !out.has(cle)) out.set(cle, Object.assign({}, x.ancien, {source: x.source || null}));
+  });
+  return out;
+}
+
+// Texte d'une page AVEC la position verticale de chaque morceau, pour retrouver l'image du passage.
+async function textePdfPositions(blob, maxPages){
+  const pdfjs = await chargerPdfjs();
+  const doc = await pdfjs.getDocument({data: await blob.arrayBuffer()}).promise;
+  const n = Math.min(doc.numPages, maxPages || 400), pages = [];
+  for(let i = 1; i <= n; i++){
+    const page = await doc.getPage(i);
+    const vue = page.getViewport({scale: 1});
+    const c = await page.getTextContent();
+    let texte = ""; const marques = [];
+    c.items.forEach(it => {
+      const y = it.transform ? 1 - (it.transform[5] / vue.height) : 0;
+      marques.push({debut: texte.length, y});
+      texte += it.str + " ";
+    });
+    pages.push({page: i, texte, marques});
+  }
+  return {pages, total: doc.numPages};
+}
+function filYDe(page, index){
+  let y = 0.5;
+  for(const m of page.marques){ if(m.debut <= index) y = m.y; else break; }
+  return Math.max(0, Math.min(1, y));
+}
+
+// Motifs de division. On travaille sur un texte normalisé (sans accents, majuscules, espaces réduits) en gardant les longueurs
+// stables pour retrouver l'index d'origine : les remplacements sont caractère pour caractère.
+const FIL_REF = "(?:SECTION\\s+)?\\b([A-Z]{1,2})\\s*(?:(?:NUMEROS?|N[°O]?|NOS?)\\s*\\.?\\s*)?(\\d{1,4})\\b";
+const FIL_REF_SUITE = new RegExp("^(?:\\s*(?:,|ET|&|PUIS)\\s*" + FIL_REF + ")");
+const FIL_MOTIFS = [
+  // nouveau … issu de / provenant de la division de … ancien
+  {sens: "nouveau-ancien", re: new RegExp(FIL_REF + "[^.;]{0,80}?(?:ISSUE?S?\\s+DE\\s+(?:LA\\s+DIVISION\\s+DE\\s+)?|PROVENANT\\s+DE\\s+(?:LA\\s+DIVISION\\s+DE\\s+)?|PROVENANT\\s+DE\\s+|ANCIENNEMENT\\s+(?:CADASTREE?S?\\s+)?|PRECEDEMMENT\\s+(?:CADASTREE?S?\\s+)?|EX[\\s-]+)(?:LA\\s+PARCELLE\\s+|LES\\s+PARCELLES\\s+|L[' ]ANCIENNE\\s+PARCELLE\\s+)?" + FIL_REF, "g")},
+  // ancien … divisée en / devenue / a donné … nouveau
+  {sens: "ancien-nouveau", re: new RegExp(FIL_REF + "[^.;]{0,60}?(?:A\\s+ETE\\s+DIVISEE?\\s+EN|DIVISEE?\\s+EN|EST\\s+DEVENUE?|DEVENUE?S?|A\\s+DONNE|DONNANT|SUBDIVISEE?\\s+EN)\\s+(?:LES\\s+PARCELLES\\s+|LA\\s+PARCELLE\\s+)?" + FIL_REF, "g")}
+];
+const FIL_REF_SEULE = new RegExp(FIL_REF, "g");
+
+function filNormaliser(texte){
+  // même longueur que l'entrée : accents retirés lettre à lettre, tout en majuscules
+  return sansAccent(texte).toUpperCase();
+}
+
+// Cherche dans une pièce (texte positionné) tous les couples ancien → nouveau.
+function filChercherDansTexte(pages, doc){
+  const trouves = [];
+  pages.forEach(p => {
+    const t = filNormaliser(p.texte);
+    if(t.length !== p.texte.length) return;   // sécurité : on renonce si la normalisation a changé les longueurs
+    FIL_MOTIFS.forEach(({sens, re}) => {
+      re.lastIndex = 0; let m;
+      while((m = re.exec(t))){
+        const a = {section: m[1], numero: String(+m[2])}, b = {section: m[3], numero: String(+m[4])};
+        const ancien = sens === "ancien-nouveau" ? a : b, nouveau = sens === "ancien-nouveau" ? b : a;
+        if(filCleCourte(ancien) === filCleCourte(nouveau)) continue;
+        const debut = Math.max(0, m.index - 140), fin = Math.min(p.texte.length, m.index + m[0].length + 140);
+        const source = {drive_id: doc.drive_id, nom: doc.nom, page: p.page, y: filYDe(p, m.index), extrait: p.texte.slice(debut, fin).replace(/\s+/g, " ").trim()};
+        const voisines = filRefsAutour(t, m.index, 400);
+        trouves.push({ancien, nouveau, source, voisines});
+        // « divisée en CD 101 et CD 102 » : les références qui suivent immédiatement sont autant de nouvelles parcelles
+        if(sens === "ancien-nouveau"){
+          let reste = t.slice(m.index + m[0].length), ms;
+          while((ms = FIL_REF_SUITE.exec(reste))){
+            const autre = {section: ms[1], numero: String(+ms[2])};
+            if(filCleCourte(autre) !== filCleCourte(ancien)) trouves.push({ancien, nouveau: autre, source, voisines});
+            reste = reste.slice(ms[0].length);
+          }
+        }
+      }
+    });
+  });
+  return trouves;
+}
+function filRefsAutour(t, index, rayon){
+  const debut = Math.max(0, index - rayon), zone = t.slice(debut, index + rayon);
+  const refs = new Map(); let m; FIL_REF_SEULE.lastIndex = 0;
+  while((m = FIL_REF_SEULE.exec(zone))){ const r = {section: m[1], numero: String(+m[2])}; refs.set(filCleCourte(r), r); }
+  return [...refs.values()];
+}
+
+// Recherche sur toutes les pièces lisibles du dossier ; renvoie les maillons proposés pour le groupe.
+async function filRechercher(g, progres){
+  const anciennes = filAnciennes(g);
+  if(!anciennes.size) return {anciennes, nouveaux: 0, piecesLues: 0};
+  const pieces = (etat.documents || []).filter(d => extensionDe(d.nom) === "pdf" && d.couche_texte !== false && d.type !== "AQ")
+    .sort((a, b) => (a.groupe === g.num ? 0 : 1) - (b.groupe === g.num ? 0 : 1));   // les pièces du groupe d'abord
+  const connus = new Set((etat.filiation.maillons || []).map(x => x.groupe + "|" + filCleCourte(x.ancien) + "|" + filCleCourte(x.nouveau) + "|" + (x.source ? x.source.drive_id : "")));
+  let nouveaux = 0, lues = 0;
+  for(const d of pieces){
+    if(progres) progres("Lecture de " + d.nom + " (" + (lues + 1) + " / " + pieces.length + ")…");
+    let pages;
+    try{
+      if(!filRechercher.cache) filRechercher.cache = new Map();
+      if(!filRechercher.cache.has(d.drive_id)) filRechercher.cache.set(d.drive_id, (await textePdfPositions(await driveTelecharger(d.drive_id), 400)).pages);
+      pages = filRechercher.cache.get(d.drive_id);
+    }catch(e){ continue; }
+    lues++;
+    filChercherDansTexte(pages, d).forEach(tr => {
+      const id = g.num + "|" + filCleCourte(tr.ancien) + "|" + filCleCourte(tr.nouveau) + "|" + tr.source.drive_id;
+      if(connus.has(id)) return;
+      // on ne retient que ce qui touche au groupe : ancienne référence en attente, ou référence actuelle du groupe, ou maillon déjà connu
+      const actuelles = filActuelles(g);
+      const touche = anciennes.has(filCleCourte(tr.ancien)) || actuelles.has(filCleCourte(tr.nouveau))
+        || (etat.filiation.maillons || []).some(x => x.groupe === g.num && (filCleCourte(x.nouveau) === filCleCourte(tr.ancien) || filCleCourte(x.ancien) === filCleCourte(tr.nouveau)));
+      if(!touche) return;
+      connus.add(id); nouveaux++;
+      etat.filiation.maillons.push({id: "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), groupe: g.num, ancien: tr.ancien, nouveau: tr.nouveau,
+        source: tr.source, voisines: tr.voisines, statut: "propose", moteur: "code", date: d.date_doc || null, nature: TYPES_PIECE[d.type] ? TYPES_PIECE[d.type].libelle : d.type});
+    });
+  }
+  if(nouveaux) marquerModifie("filiation-recherche", {groupe: g.num, maillons: nouveaux, pieces: lues});
+  return {anciennes, nouveaux, piecesLues: lues};
+}
+
+// Chaînes : depuis chaque ancienne référence, on suit les maillons non refusés jusqu'à une référence actuelle du groupe.
+function filChaines(g){
+  const anciennes = filAnciennes(g), actuelles = filActuelles(g);
+  const maillons = (etat.filiation.maillons || []).filter(x => x.groupe === g.num);
+  const chaines = [];
+  anciennes.forEach((anc, cle) => {
+    const suite = (depuis, vus, profondeur) => {
+      if(profondeur > 6) return [];
+      const sortants = maillons.filter(x => filCleCourte(x.ancien) === depuis && x.statut !== "refuse" && !vus.has(filCleCourte(x.nouveau)));
+      return sortants.map(x => ({maillon: x, actuelle: actuelles.has(filCleCourte(x.nouveau)), enfants: actuelles.has(filCleCourte(x.nouveau)) ? [] : suite(filCleCourte(x.nouveau), new Set([...vus, filCleCourte(x.nouveau)]), profondeur + 1)}));
+    };
+    const arbre = suite(cle, new Set([cle]), 0);
+    const refuses = maillons.filter(x => filCleCourte(x.ancien) === cle && x.statut === "refuse");
+    chaines.push({ancienne: anc, cle, arbre, refuses, resolue: filResolue(arbre)});
+  });
+  return chaines;
+}
+function filResolue(arbre){ return arbre.some(n => (n.actuelle && n.maillon.statut !== "propose") || filResolue(n.enfants)); }
+
+// Tableau des origines cadastrales : une ligne par maillon validé ou saisi, colonnes référence actuelle, ancienne, acte, date.
+function filTableauOrigines(g){
+  const lignes = [];
+  const marcher = (noeuds, chemin) => noeuds.forEach(n => {
+    const x = n.maillon; if(x.statut === "propose") return;
+    lignes.push({actuelle: n.actuelle ? filLibelle(x.nouveau) : filLibelle(x.nouveau) + " (intermédiaire)", ancienne: filLibelle(x.ancien),
+      acte: x.statut === "manuel" ? "saisie manuelle" + (x.commentaire ? " — " + x.commentaire : "") : ((x.nature ? x.nature + " — " : "") + (x.source ? x.source.nom + (x.source.page ? ", p. " + x.source.page : "") : "")),
+      date: x.date || "", manuel: x.statut === "manuel"});
+    marcher(n.enfants, chemin.concat(filCleCourte(x.nouveau)));
+  });
+  filChaines(g).forEach(c => marcher(c.arbre, [c.cle]));
+  return lignes;
+}
+
+/* ---------- écran de filiation ---------- */
+async function ouvrirFiliation(g){
+  if(!driveConnecte()){ exigerDrive(); return; }
+  const fond = document.createElement("div");
+  fond.className = "lect-fond";
+  fond.innerHTML = '<div class="lect fil"><div class="lect-tete"><b>Filiation cadastrale</b>'
+    + '<span class="lect-sous">groupe ' + numeroGroupe4(g.num) + ' — ' + [...filActuelles(g).values()].map(filLibelle).join(", ") + '</span>'
+    + '<button class="btn" data-act="rechercher" type="button">Rechercher dans les pièces</button>'
+    + '<button class="btn" data-act="fermer" type="button">Fermer</button></div>'
+    + '<div class="lect-corps"><div class="lect-gauche"></div>'
+    + '<div class="lect-droite"><p class="lect-aide">Cliquez un maillon pour voir le passage qui l\'établit.</p><canvas></canvas></div></div></div>';
+  document.body.appendChild(fond);
+  const gauche = fond.querySelector(".lect-gauche"), toile = fond.querySelector(".lect-droite canvas"), aide = fond.querySelector(".lect-aide");
+  fond.querySelector('[data-act="fermer"]').addEventListener("click", () => { fond.remove(); rendre(); });
+  fond.addEventListener("click", e => { if(e.target === fond){ fond.remove(); rendre(); } });
+
+  const montrerPassage = async (x) => {
+    if(!x.source || !x.source.drive_id){ aide.textContent = "Maillon saisi à la main : aucun passage à afficher."; toile.width = 0; return; }
+    aide.textContent = x.source.nom + " — page " + (x.source.page || 1) + (x.source.extrait ? " · « " + x.source.extrait.slice(0, 160) + (x.source.extrait.length > 160 ? "…" : "") + " »" : "");
+    try{
+      const blob = await driveTelecharger(x.source.drive_id);
+      await dessinerPagePdf(blob, x.source.page || 1, toile);
+      if(typeof x.source.y === "number"){
+        // bande de repérage autour du passage : on découpe le tiers de page centré sur la ligne
+        const ctx = toile.getContext("2d"); const h = toile.height; const y0 = Math.max(0, x.source.y * h - h * 0.10), y1 = Math.min(h, x.source.y * h + h * 0.14);
+        ctx.fillStyle = "rgba(255,152,45,.22)"; ctx.fillRect(0, y0, toile.width, y1 - y0);
+        ctx.strokeStyle = "#FF982D"; ctx.lineWidth = 3; ctx.strokeRect(1.5, y0, toile.width - 3, y1 - y0);
+        toile.scrollIntoView({block: "nearest"}); fond.querySelector(".lect-droite").scrollTop = Math.max(0, y0 - 60);
+      }
+    }catch(e){ aide.textContent = "Passage indisponible — " + e.message; }
+  };
+
+  const changer = async (x, statut, detail) => {
+    x.statut = statut; if(detail) Object.assign(x, detail);
+    marquerModifie("filiation-maillon", {groupe: g.num, ancien: filLibelle(x.ancien), nouveau: filLibelle(x.nouveau), statut, moteur: x.moteur, source: x.source ? x.source.drive_id : null});
+    rendreFil();
+  };
+  const ajouterManuel = (ancien, nouveauTexte, commentaire) => {
+    const m = /^\s*([A-Za-z]{1,2})\s*(?:n[°o]?\s*)?(\d{1,4})\s*$/.exec(nouveauTexte || "");
+    if(!m){ signaler("Référence attendue sous la forme « AB 123 ».", true); return; }
+    etat.filiation.maillons.push({id: "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), groupe: g.num, ancien: {section: ancien.section, numero: ancien.numero, commune: ancien.commune || null},
+      nouveau: {section: m[1].toUpperCase(), numero: String(+m[2])}, source: null, statut: "manuel", moteur: "manuel", date: null, nature: null, commentaire: commentaire || null});
+    marquerModifie("filiation-maillon", {groupe: g.num, ancien: filLibelle(ancien), nouveau: m[1].toUpperCase() + " " + (+m[2]), statut: "manuel", moteur: "manuel"});
+    rendreFil();
+  };
+
+  const noeudHtml = (n) => {
+    const x = n.maillon;
+    const cls = x.statut === "valide" ? "ok" : x.statut === "manuel" ? "manuel" : "propose";
+    return '<li class="fil-noeud ' + cls + '" data-id="' + x.id + '">'
+      + '<span class="fleche">→</span><span class="ref">' + echap(filLibelle(x.nouveau)) + (n.actuelle ? ' <span class="act">actuelle</span>' : '') + '</span>'
+      + '<span class="via">' + (x.statut === "manuel" ? 'saisi à la main' + (x.commentaire ? ' — ' + echap(x.commentaire) : '') : echap((x.nature ? x.nature + ' · ' : '') + (x.source ? x.source.nom + (x.source.page ? ', p. ' + x.source.page : '') : '')) + (x.date ? ' · ' + echap(x.date) : '')) + '</span>'
+      + '<span class="acts">'
+      + (x.statut === "propose" ? '<button class="btn plein" data-act="valider" type="button">Valider</button><button class="btn" data-act="refuser" type="button">Refuser</button>' : '')
+      + (x.statut !== "propose" ? '<button class="btn" data-act="annuler" type="button" title="Remettre en proposition">Annuler</button>' : '')
+      + '</span>'
+      + (n.enfants.length ? '<ul>' + n.enfants.map(noeudHtml).join("") + '</ul>' : (!n.actuelle && x.statut !== "refuse" ? '<div class="fil-suite" data-cle="' + echap(filCleCourte(x.nouveau)) + '">' + saisieHtml(x.nouveau, "La chaîne s\'arrête ici : aucune mention ne relie encore cette référence au cadastre actuel.") + '</div>' : ''))
+      + '</li>';
+  };
+  const saisieHtml = (ancien, texte, suggestions) => '<p class="fil-note">' + echap(texte) + '</p>'
+    + (suggestions && suggestions.length ? '<p class="fil-sugg">Autres pistes relevées dans le même passage : ' + suggestions.map(r => '<button class="btn" type="button" data-act="suggerer" data-ref="' + echap(filLibelle(r)) + '">' + echap(filLibelle(r)) + '</button>').join(" ") + '</p>' : '')
+    + '<div class="fil-saisie" data-ancien="' + echap(JSON.stringify(ancien)) + '"><input type="text" placeholder="Référence actuelle, ex. AB 123" data-role="ref"><input type="text" placeholder="Acte ou motif (facultatif)" data-role="com"><button class="btn" type="button" data-act="manuel">Saisir à la main</button></div>';
+
+  const rendreFil = () => {
+    const chaines = filChaines(g);
+    if(!chaines.length){
+      gauche.innerHTML = '<p class="lect-vide">Aucune référence ancienne à résoudre pour ce groupe : toutes les parcelles citées par les états hypothécaires lus figurent au cadastre actuel. Lisez d\'abord un état hypothécaire du groupe si ce n\'est pas fait.</p>';
+      return;
+    }
+    let h = '<p class="lect-note">' + chaines.length + ' référence' + (chaines.length > 1 ? 's anciennes' : ' ancienne') + ' à relier au cadastre actuel — ' + chaines.filter(c => c.resolue).length + ' résolue' + (chaines.filter(c => c.resolue).length > 1 ? 's' : '') + '. Chaque maillon s\'apprécie sur l\'image du passage, à droite. Un maillon saisi à la main apparaît en jaune.</p>';
+    chaines.forEach(c => {
+      h += '<div class="fil-chaine' + (c.resolue ? ' resolue' : '') + '"><div class="fil-tete"><b>' + echap(filLibelle(c.ancienne)) + '</b>'
+        + (c.ancienne.source ? '<span class="via">citée par ' + echap(c.ancienne.source.nom) + (c.ancienne.source.page ? ', p. ' + c.ancienne.source.page : '') + (c.ancienne.nature ? ' (' + echap(c.ancienne.nature) + ')' : '') + '</span>' : '')
+        + '<span class="etat">' + (c.resolue ? 'résolue' : 'à relier') + '</span></div>';
+      if(c.arbre.length) h += '<ul class="fil-arbre">' + c.arbre.map(noeudHtml).join("") + '</ul>';
+      else{
+        const sugg = []; c.refuses.forEach(x => (x.voisines || []).forEach(r => { if(filCleCourte(r) !== filCleCourte(x.nouveau) && filCleCourte(r) !== c.cle && !sugg.some(s => filCleCourte(s) === filCleCourte(r))) sugg.push(r); }));
+        h += '<div class="fil-suite" data-cle="' + echap(c.cle) + '">' + saisieHtml(c.ancienne, c.refuses.length ? 'Piste refusée' + (c.refuses.length > 1 ? 's' : '') + ' : ' + c.refuses.map(x => filLibelle(x.nouveau)).join(", ") + '. Choisissez une autre piste ou saisissez le maillon.' : 'Aucune mention de division retrouvée dans les pièces lues. Lancez la recherche, ou saisissez le maillon à la main.', sugg) + '</div>';
+      }
+      if(c.refuses.length && c.arbre.length) h += '<p class="fil-note">Refusé' + (c.refuses.length > 1 ? 's' : '') + ' : ' + c.refuses.map(x => echap(filLibelle(x.nouveau))).join(", ") + '</p>';
+      h += '</div>';
+    });
+    gauche.innerHTML = h;
+  };
+
+  gauche.addEventListener("click", async e => {
+    const btn = e.target.closest("button[data-act]");
+    const li = e.target.closest("li.fil-noeud");
+    if(!btn){ if(li){ const x = etat.filiation.maillons.find(m => m.id === li.dataset.id); if(x){ gauche.querySelectorAll("li.fil-noeud").forEach(n => n.classList.toggle("actif", n === li)); montrerPassage(x); } } return; }
+    if(btn.dataset.act === "manuel"){
+      const z = btn.closest(".fil-saisie"); ajouterManuel(JSON.parse(z.dataset.ancien), z.querySelector('[data-role="ref"]').value, z.querySelector('[data-role="com"]').value); return;
+    }
+    if(btn.dataset.act === "suggerer"){
+      const z = btn.closest(".fil-suite").querySelector(".fil-saisie"); z.querySelector('[data-role="ref"]').value = btn.dataset.ref.split(" ").slice(-2).join(" "); z.querySelector('[data-role="com"]').value = "piste relevée dans le même passage"; z.querySelector('[data-role="ref"]').focus(); return;
+    }
+    if(!li) return;
+    const x = etat.filiation.maillons.find(m => m.id === li.dataset.id); if(!x) return;
+    if(btn.dataset.act === "valider") changer(x, "valide");
+    else if(btn.dataset.act === "refuser") changer(x, "refuse");
+    else if(btn.dataset.act === "annuler"){ if(x.moteur === "manuel"){ etat.filiation.maillons = etat.filiation.maillons.filter(m => m.id !== x.id); marquerModifie("filiation-maillon", {groupe: g.num, ancien: filLibelle(x.ancien), nouveau: filLibelle(x.nouveau), statut: "supprime", moteur: "manuel"}); rendreFil(); } else changer(x, "propose"); }
+  });
+  fond.querySelector('[data-act="rechercher"]').addEventListener("click", async (e) => {
+    e.target.disabled = true; const ancien = e.target.textContent;
+    try{
+      const r = await filRechercher(g, t => { e.target.textContent = t.length > 60 ? t.slice(0, 57) + "…" : t; });
+      signaler(r.piecesLues + " pièce" + (r.piecesLues > 1 ? "s lues" : " lue") + ", " + r.nouveaux + " maillon" + (r.nouveaux > 1 ? "s" : "") + " proposé" + (r.nouveaux > 1 ? "s" : "") + ".");
+      rendreFil();
+    }catch(err){ signaler(err.message, true); }
+    finally{ e.target.textContent = ancien; e.target.disabled = false; }
+  });
+
+  rendreFil();
+  // première ouverture : si rien n'a encore été cherché pour ce groupe, on lance la recherche tout de suite (« FUSION tente systématiquement »)
+  if(filAnciennes(g).size && !(etat.filiation.maillons || []).some(x => x.groupe === g.num)) fond.querySelector('[data-act="rechercher"]').click();
+}
+
 /* ---------- onglet des points à trancher ----------
    Trois catégories (15/09/2026) : les rapprochements proposés, les documents à
    qualifier (avec la photographie des douze premières lignes, pour qualifier à
@@ -2343,13 +2688,14 @@ function rendreTrancher(liste, rendreSuggestions){
     div.forEach((x, k) => {
       const li = document.createElement("li"); li.dataset.k = k;
       li.innerHTML = '<span class="ref">' + echap(x.ref) + '<span class="groupe">groupe ' + numeroGroupe4(x.groupe) + '</span></span>'
-        + '<button class="btn" type="button" data-act="vu" title="Ne plus signaler cette référence pour cette pièce">Vu, ne plus signaler</button>'
+        + '<span class="acts"><button class="btn plein" type="button" data-act="filiation">Filiation</button><button class="btn" type="button" data-act="vu" title="Ne plus signaler cette référence pour cette pièce">Vu, ne plus signaler</button></span>'
         + '<span class="motif">' + echap(x.motif) + ' — citée ' + (x.nature ? 'dans une formalité « ' + echap(x.nature) + ' » ' : '') + 'de <a href="https://drive.google.com/file/d/' + x.doc.drive_id + '/view" target="_blank" rel="noopener">' + echap(x.doc.nom) + '</a>' + (x.page ? ', page ' + x.page : '') + '. À vérifier : filiation cadastrale ou saisie manuelle du lien.</span>';
       ul.appendChild(li);
     });
     ul.addEventListener("click", async e => {
-      const btn = e.target.closest('button[data-act="vu"]'); if(!btn) return;
+      const btn = e.target.closest('button[data-act]'); if(!btn) return;
       const x = div[Number(btn.closest("li").dataset.k)]; if(!x) return;
+      if(btn.dataset.act === "filiation"){ const g = etat.groupes.find(gr => gr.num === x.groupe); if(g) ouvrirFiliation(g); return; }
       x.doc.lecture = Object.assign({}, x.doc.lecture, {divergences_vues: [...(x.doc.lecture.divergences_vues || []), x.id]});
       try{ await appelDossier({action:"document", siren: etat.dossier.siren, document: x.doc}); }catch(err){ signaler(err.message, true); }
       try{ await appelDossier({action:"journal", siren: etat.dossier.siren, quoi:"divergence-vue", detail:{document: x.doc.drive_id, groupe: x.groupe, reference: x.ref}}); }catch(err){ /* journal non bloquant */ }
@@ -2360,6 +2706,20 @@ function rendreTrancher(liste, rendreSuggestions){
 
   liste.appendChild(det);
   if(det.open) det.querySelectorAll(".aqual .photo").forEach(ph => { const d = (etat.documents || []).find(x => x.drive_id === ph.dataset.id); if(d) vignetteDocument(d, ph); });
+}
+
+// Tableau des origines cadastrales de la fiche du groupe (colonnes : référence actuelle, ancienne, acte faisant le lien, date).
+function rendreOrigines(g){
+  const zone = document.createElement("div"); zone.className = "origines-zone";
+  const anciennes = filAnciennes(g), lignes = filTableauOrigines(g), chaines = filChaines(g);
+  const aRelier = chaines.filter(c => !c.resolue).length;
+  if(!anciennes.size && !lignes.length) return zone;
+  zone.innerHTML = '<div class="origines-tete">Origines cadastrales' + (aRelier ? ' — <b>' + aRelier + '</b> référence' + (aRelier > 1 ? 's anciennes' : ' ancienne') + ' à relier' : ' — filiation établie')
+    + '<button class="btn" type="button" data-act="filiation">Filiation cadastrale</button></div>'
+    + (lignes.length ? '<table class="origines"><thead><tr><th>Référence actuelle</th><th>Référence ancienne</th><th>Acte ou document faisant le lien</th><th>Date</th></tr></thead><tbody>'
+      + lignes.map(l => '<tr' + (l.manuel ? ' class="manuel"' : '') + '><td>' + echap(l.actuelle) + '</td><td>' + echap(l.ancienne) + '</td><td>' + echap(l.acte) + '</td><td>' + echap(l.date) + '</td></tr>').join("") + '</tbody></table>' : '');
+  zone.querySelector('[data-act="filiation"]').addEventListener("click", () => ouvrirFiliation(g));
+  return zone;
 }
 
 /* ---------- rendu du panneau ---------- */
@@ -2511,6 +2871,7 @@ function rendre(){
           ul.appendChild(li);
         });
         bloc.appendChild(ul);
+        bloc.appendChild(rendreOrigines(g));
         bloc.appendChild(rendreDepot(g));
       }
       liste.appendChild(bloc);
@@ -2570,7 +2931,7 @@ function traiterTexte(texte){
   try{
     chargerGeoJSON(objet);
     dessiner.cadre = false;
-    etat.dossier = null; etat.persist.actif = false; etat.ignores = new Set();
+    etat.dossier = null; etat.persist.actif = false; etat.ignores = new Set(); etat.filiation = {maillons: []};
     etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false;
     afficherPersist("Jeu local — non enregistré");
     regrouperAutomatiquement();
@@ -2600,6 +2961,7 @@ function etatPersistable(){
       toleranceContact_m: parseFloat(document.getElementById("tolerance").value) || 0
     },
     sansGeometrie: (etat.sansGeometrie || []).map(x => x.idu).filter(Boolean),
+    filiation: {maillons: (etat.filiation && etat.filiation.maillons) || []},
     numerotation_definitive: etat.numerotationFaite ? (etat.numerotationDate || new Date().toISOString()) : null
   };
 }
@@ -2691,6 +3053,7 @@ function ouvrirDepuisBase(d){
 
   const e = d.dossier.etat || {};
   etat.ignores = new Set(e.ignores || []);
+  etat.filiation = {maillons: (e.filiation && Array.isArray(e.filiation.maillons)) ? e.filiation.maillons : []};
   if(e.seuils){
     if(e.seuils.rapprochement_m != null){ document.getElementById("rapproch").value = e.seuils.rapprochement_m; document.getElementById("rapproch-val").textContent = e.seuils.rapprochement_m + " m"; }
     if(e.seuils.voisinage_m != null){ document.getElementById("rayon").value = e.seuils.voisinage_m; document.getElementById("rayon-val").textContent = e.seuils.voisinage_m + " m"; }
@@ -2913,7 +3276,7 @@ async function chercherParcelles(siren, libelle, forcer){
 
     chargerGeoJSON({type:"FeatureCollection", features});
     dessiner.cadre = false;
-    etat.ignores = new Set();
+    etat.ignores = new Set(); etat.filiation = {maillons: []};
     regrouperAutomatiquement();
     etat.ouvert = null;                 // vue d'ensemble d'abord : les groupes repliés
     etat.sansGeometrie = sansGeometrie;
