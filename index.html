@@ -50,7 +50,7 @@
   .persist.alerte{color:var(--orange)}
   .persist:empty{display:none}
   .dossiers{margin-top:10px}
-  .dossiers h3{font-family:Georgia,serif;font-size:13.5px;margin:0 0 5px;color:var(--nuit)}
+  .dossiers h3{display:none}
   .dossiers ul{list-style:none;margin:0;padding:0}
   .dossiers li{margin-top:4px}
   .dossiers button{
@@ -93,7 +93,15 @@
   .btn[disabled]:hover{background:#fff;color:var(--canard)}
 
   /* ---- réglages ---- */
-  .reglages{padding:10px 14px;border-bottom:1px solid var(--trait);background:#FAFBFC}
+  .reglages{border-top:1px solid var(--trait);background:#FAFBFC}
+  .reglages summary,.dossiers summary{cursor:pointer;padding:9px 14px;font-family:Georgia,serif;font-size:13.5px;color:var(--nuit);list-style:none;display:flex;align-items:center;gap:8px;user-select:none}
+  .reglages summary::-webkit-details-marker,.dossiers summary::-webkit-details-marker{display:none}
+  .reglages summary::before,.dossiers summary::before{content:"▸";font-size:11px;color:var(--canard);transition:transform .15s}
+  .reglages[open] summary::before,.dossiers[open] summary::before{transform:rotate(90deg)}
+  .reglages .reglage{padding:0 14px}
+  .reglages .reglage:last-child{padding-bottom:10px}
+  .dossiers summary{padding:6px 0}
+  .dossiers summary .n{font-family:inherit;font-size:12px;color:var(--gris);font-weight:normal}
   .reglage{display:flex;align-items:center;gap:10px;margin-bottom:8px}
   .reglage:last-child{margin-bottom:0}
   .reglage label{flex:1;font-size:12.5px}
@@ -320,7 +328,7 @@
           </div>
           <div class="societe-etat" id="societe-etat"></div>
           <ul class="candidats" id="candidats"></ul>
-          <div class="dossiers" id="dossiers"></div>
+          <details class="dossiers" id="dossiers" hidden></details>
         </div>
         <div class="depose" id="depose">
           <p>ou déposez un GeoJSON de parcelles</p>
@@ -334,7 +342,19 @@
         <input type="file" id="fichier" accept=".geojson,.json,application/geo+json,application/json" hidden>
       </div>
 
-      <div class="reglages">
+      <div class="liste" id="liste">
+        <p class="vide">Aucune parcelle chargée. Déposez un GeoJSON, ou ouvrez le jeu d'essai pour voir le regroupement à l'œuvre.</p>
+      </div>
+
+      <div class="pied">
+        <button class="btn plein" id="btn-fusionner" disabled>Fusionner les groupes cochés</button>
+        <button class="btn" id="btn-recalculer" disabled>Recalculer</button>
+        <button class="btn" id="btn-export" disabled>Exporter les groupes</button>
+        <button class="btn plein" id="btn-arbo" disabled title="Pose la numérotation définitive (SPF, commune, section) puis crée le dossier Drive de la société, un dossier par groupe et ses six sous-dossiers (cinq de data room, plus les notes de travail internes)">Numéroter et créer le Drive</button>
+      </div>
+
+      <details class="reglages" id="reglages">
+        <summary>Options</summary>
         <div class="reglage">
           <label for="rayon">Voisinage affiché</label>
           <input type="range" id="rayon" min="0" max="500" step="10" value="100">
@@ -355,18 +375,7 @@
           <input type="number" id="tolerance" min="0" max="3" step="0.1" value="0.5">
           <span class="val">m</span>
         </div>
-      </div>
-
-      <div class="liste" id="liste">
-        <p class="vide">Aucune parcelle chargée. Déposez un GeoJSON, ou ouvrez le jeu d'essai pour voir le regroupement à l'œuvre.</p>
-      </div>
-
-      <div class="pied">
-        <button class="btn plein" id="btn-fusionner" disabled>Fusionner les groupes cochés</button>
-        <button class="btn" id="btn-recalculer" disabled>Recalculer</button>
-        <button class="btn" id="btn-export" disabled>Exporter les groupes</button>
-        <button class="btn plein" id="btn-arbo" disabled title="Pose la numérotation définitive (SPF, commune, section) puis crée le dossier Drive de la société, un dossier par groupe et ses six sous-dossiers (cinq de data room, plus les notes de travail internes)">Numéroter et créer le Drive</button>
-      </div>
+      </details>
 
     </section>
 
@@ -2536,8 +2545,9 @@ async function listerDossiers(){
     const r = await fetch("/api/dossier?liste=1", {headers:{Accept:"application/json"}});
     const d = await r.json();
     if(!r.ok) throw new Error(d.erreur || ("HTTP " + r.status));
-    if(!d.dossiers || !d.dossiers.length){ zone.innerHTML = ""; return; }
-    let html = "<h3>Dossiers enregistrés</h3><ul>";
+    if(!d.dossiers || !d.dossiers.length){ zone.innerHTML = ""; zone.hidden = true; return; }
+    zone.hidden = false;
+    let html = '<summary>Dossiers enregistrés <span class="n">(' + d.dossiers.length + ')</span></summary><ul>';
     d.dossiers.forEach(x => {
       const quand = x.modifie_le ? new Date(x.modifie_le).toLocaleDateString("fr-FR") : "";
       html += '<li><button type="button" data-siren="' + echap(x.siren) + '">'
@@ -2547,11 +2557,12 @@ async function listerDossiers(){
     });
     zone.innerHTML = html + "</ul>";
     zone.querySelectorAll("button[data-siren]").forEach(b => b.addEventListener("click", () => {
+      zone.open = false;
       document.getElementById("societe-saisie").value = b.querySelector(".d-nom").textContent;
       chercherParcelles(b.dataset.siren, b.querySelector(".d-nom").textContent, false);
     }));
   }catch(e){
-    zone.innerHTML = "";
+    zone.innerHTML = ""; zone.hidden = true;
     afficherPersist("Base indisponible — travail non enregistré", "alerte");
   }
 }
