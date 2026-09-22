@@ -190,6 +190,7 @@
   .pieces input.adate{border-color:var(--orange);background:#FFF8EE}
   .pieces .tag{grid-area:tag;font-size:11px;color:#7A5A00;justify-self:end}
   .pieces .tag.aq{color:var(--carmin)}
+  .pieces .tag.perime{color:#fff;background:var(--orange);border-radius:4px;padding:1px 6px;font-weight:600}
   .pieces li{grid-template-areas:"nom type date" "orig tag tag" "ratt ratt ratt" "acts acts acts"}
   .pieces .ratt{grid-area:ratt;font-size:11.5px}
   .pieces .ratt.ok{color:var(--vert)}
@@ -356,7 +357,7 @@
         <button class="btn plein" id="btn-fusionner" disabled>Fusionner les groupes cochés</button>
         <button class="btn" id="btn-recalculer" disabled>Recalculer</button>
         <button class="btn" id="btn-export" disabled>Exporter les groupes</button>
-        <button class="btn plein" id="btn-arbo" disabled title="Pose la numérotation définitive (SPF, commune, section) puis crée le dossier Drive de la société, un dossier par groupe et ses quatre sous-dossiers">Numéroter et créer le Drive</button>
+        <button class="btn plein" id="btn-arbo" disabled title="Pose la numérotation définitive (SPF, commune, section) puis crée le dossier Drive de la société, un dossier par groupe et ses six sous-dossiers (cinq de data room, plus les notes de travail internes)">Numéroter et créer le Drive</button>
       </div>
 
     </section>
@@ -1088,9 +1089,20 @@ const TYPES_PIECE = {
   EHF: {libelle:"État hypothécaire",              code:"051", piece:"EHF", dossier:"État hypothécaire",                cle:"ehf", data_room:true},
   OP:  {libelle:"Titre de propriété (immédiat)",  code:"021", piece:"OP",  dossier:"Origine de propriété",             cle:"op",  data_room:true},
   OPA: {libelle:"Titre antérieur (trentenaire)",  code:"022", piece:"OPA", dossier:"Origine de propriété antérieure",  cle:"opa", data_room:true},
+  HYP: {libelle:"Inscription hypothécaire (bloc 4)", code:null, piece:"HYP", dossier:"Inscriptions hypothécaires",      cle:"hyp", data_room:true},
+  SER: {libelle:"Servitude ou charge (bloc 5)",   code:null,  piece:"SER", dossier:"Servitudes et charges",             cle:"ser", data_room:true},
   NDT: {libelle:"Note de travail (déjà rédigé)",  code:"020", piece:"NDT", dossier:"Notes de travail",                 cle:"ndt", data_room:false},
   AQ:  {libelle:"À qualifier",                    code:"020", piece:"AQ",  dossier:"Notes de travail",                 cle:"ndt", data_room:false}
 };
+// Plan de nommage arrêté le 16/09/2026 : sept codes (EHF, OP, OPA, NDT, HYP, SER, AQ). Le code chiffré hérité de
+// MARTEAU n'entre plus dans le nom des fichiers (décision du 15/09/2026) : numéro de groupe + type + date.
+const MOIS_PEREMPTION_EHF = 2;   // au-delà, mention orange non bloquante « état hypothécaire datant de plus de deux mois »
+function ehfPerime(dateISO){
+  if(!dateISO) return false;
+  const d = dateDepuisISO(dateISO); if(!d || isNaN(d)) return false;
+  const limite = new Date(); limite.setMonth(limite.getMonth() - MOIS_PEREMPTION_EHF);
+  return d < limite;
+}
 const ANS_TRENTENAIRE = 30;
 
 /* ---------- connexion Google ---------- */
@@ -1577,7 +1589,7 @@ function dateAAAAMMJJ(d){
 }
 function composerNomPiece(groupe, type, date, extension){
   const t = TYPES_PIECE[type] || TYPES_PIECE.AQ;
-  return [numeroGroupe4(groupe), t.code, t.piece, dateAAAAMMJJ(date)].join("_") + (extension ? "." + extension.toLowerCase() : "");
+  return [numeroGroupe4(groupe), t.piece, dateAAAAMMJJ(date)].join("_") + (extension ? "." + extension.toLowerCase() : "");
 }
 function nomDossierSociete(denomination, date){
   const d = date instanceof Date ? date : new Date();
@@ -1685,7 +1697,7 @@ async function creerArborescenceDrive(){
     await Promise.all(Array.from({length: 4}, ouvrier));
     clearTimeout(relais); if(attenteOuverte && window.ATTENTE) window.ATTENTE.terminer();
     afficherPersist("Enregistré " + new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), "ok");
-    signaler("Arborescence Drive créée : " + total + " groupes, quatre sous-dossiers chacun.");
+    signaler("Arborescence Drive créée ou complétée : " + total + " groupes, six sous-dossiers chacun (cinq de data room, plus les notes de travail).");
     rendre();
   }catch(e){
     clearTimeout(relais); if(attenteOuverte && window.ATTENTE) window.ATTENTE.echec(e.message);
@@ -1734,7 +1746,7 @@ function detecterPiece(nomFichier, texte){
   const n = sansAccent(nomFichier).toLowerCase();
   const t = sansAccent(texte || "").toLowerCase();
   const ext = extensionDe(nomFichier);
-  const score = {EHF:0, OP:0, NDT:0};
+  const score = {EHF:0, OP:0, NDT:0, HYP:0, SER:0};
   // état hypothécaire
   if(/etat hypothecaire|releve des formalites|relevé des formalites|service de la publicite fonciere|publicite fonciere|formalites publiees|fichier immobilier|certificat de depot|copie de fiche|hypotheques|inscription/.test(t)) score.EHF += 3;
   if(/ehf|etat.?hyp|hypoth|spf|formalit/.test(n)) score.EHF += 2;
@@ -1742,6 +1754,12 @@ function detecterPiece(nomFichier, texte){
   if(/par.devant|maitre|notaire|a recu le present acte|acte authentique|vente|acquisition|apport|donation|adjudication|echange|licitation|attestation.*propriete|origine de propriete/.test(t)) score.OP += 2;
   if(/l'an .{1,30} le|comparu|ont comparu|soussigne/.test(t)) score.OP += 1;
   if(/titre|acte|vente|acqui|donation|apport|op\b|opa\b/.test(n)) score.OP += 1;
+  // pièce d'inscription hypothécaire (bloc 4) — bordereau, acte de prêt avec affectation hypothécaire
+  if(/bordereau d.inscription|inscription d.hypotheque|affectation hypothecaire|privilege de preteur de deniers|hypotheque conventionnelle|hypotheque legale/.test(t) && !/etat hypothecaire|releve des formalites/.test(t)) score.HYP += 3;
+  if(/bordereau|hyp\b|pret|prêt|inscription/.test(n)) score.HYP += 1;
+  // servitude ou charge (bloc 5)
+  if(/constitution de servitude|servitude de passage|fonds servant|fonds dominant|servitude conventionnelle|droit de preference|droit de priorite|cahier des charges/.test(t)) score.SER += 3;
+  if(/servitude|cahier|charge/.test(n)) score.SER += 1;
   // note de travail déjà rédigée
   if(/^(docx?|rtf|odt)$/.test(ext)) score.NDT += 3;
   if(/designation|origine de propriete|effet relatif/.test(t) && !/notaire|par devant/.test(t)) score.NDT += 2;
@@ -2003,6 +2021,7 @@ function rendreDepot(g){
         + (d.type === "EHF" ? '<button class="lire" type="button" data-act="lire" title="Lire l\u2019\u00e9tat hypoth\u00e9caire">' + (d.lecture && d.lecture.ehf ? "Relire" : "Lire") + '</button>' : "")
         + (d.lecture && d.lecture.ehf ? '<span class="tag">lu — ' + (d.lecture.ehf.mentions || []).filter(m => m.valide).length + '/' + (d.lecture.ehf.mentions || []).length + ' validées</span>' : "")
         + (d.statut === "scan" ? '<span class="tag">scan — passe API</span>' : "")
+        + (d.type === "EHF" && ehfPerime(d.date_doc) ? '<span class="tag perime" title="Alerte non bloquante : à actualiser avant de rendre le document">état hypothécaire datant de plus de deux mois</span>' : "")
         + (d.type === "AQ" ? '<span class="tag aq">à qualifier</span>' : "")
         + (d.statut === "copie" ? '<span class="tag">copie</span>' : "")
         + rattachementHtml(d, g)
