@@ -161,6 +161,39 @@
   .sugg button[data-act="ignorer"]{grid-area:ign}
   .sugg .btn{padding:2px 8px;font-size:12px}
   .sugg .plus{padding:4px 14px 8px;font-size:12px;color:var(--gris)}
+  /* ---- onglet des points à trancher (15/09/2026) : trois catégories, compteur sur l'onglet replié ---- */
+  .trancher{border-bottom:1px solid var(--trait);background:#FFFDF8}
+  .trancher>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:9px 14px;font-family:Georgia,serif;font-size:14px;color:var(--nuit);user-select:none}
+  .trancher>summary::-webkit-details-marker{display:none}
+  .trancher>summary::before{content:"▸";font-size:11px;color:var(--orange);transition:transform .15s}
+  .trancher[open]>summary::before{transform:rotate(90deg)}
+  .trancher>summary .n{display:inline-block;min-width:22px;text-align:center;padding:1px 7px;border-radius:11px;background:var(--orange);color:#fff;font-family:"Segoe UI",system-ui,sans-serif;font-size:12px;font-weight:600}
+  .trancher>summary .n.zero{background:#C9D1D9}
+  .trancher>summary .detail{margin-left:auto;font-family:"Segoe UI",system-ui,sans-serif;font-size:11.5px;color:var(--gris)}
+  .trancher .cat-tete{padding:7px 14px 3px;font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--canard);display:flex;gap:6px;align-items:center}
+  .trancher .cat-tete b{color:var(--orange)}
+  .trancher .sugg{border-bottom:0;background:transparent}
+  .trancher .sugg-tete{display:none}
+  .trancher .rien{padding:2px 14px 8px;font-size:12px;color:var(--gris);font-style:italic}
+  .aqual{list-style:none;margin:0;padding:0 0 6px}
+  .aqual li{display:grid;grid-template-columns:150px 1fr;gap:8px 12px;padding:8px 14px;border-top:1px solid #F1E9DC;font-size:12.5px;align-items:start}
+  .aqual .photo{width:150px;height:96px;border:1px solid var(--trait);border-radius:4px;background:#fff;overflow:hidden;position:relative;cursor:zoom-in}
+  .aqual .photo canvas{width:100%;display:block}
+  .aqual .photo.grand{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(900px,92vw);height:auto;max-height:88vh;overflow:auto;z-index:60;box-shadow:0 12px 40px rgba(0,0,0,.35);cursor:zoom-out}
+  .aqual .photo .ind{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--gris);text-align:center;padding:6px}
+  .aqual .nom{color:var(--nuit);word-break:break-all}
+  .aqual .nom a{color:inherit}
+  .aqual .groupe{font-family:Georgia,serif;color:var(--carmin);margin-left:6px}
+  .aqual .orig{display:block;color:var(--gris);font-size:11px;margin-top:2px}
+  .aqual .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;align-items:center}
+  .aqual select,.aqual input[type=date]{font:inherit;font-size:12px;padding:3px 5px;border:1px solid var(--trait);border-radius:4px}
+  .diverg{list-style:none;margin:0;padding:0 0 6px}
+  .diverg li{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:7px 14px;border-top:1px solid #F1E9DC;font-size:12.5px;align-items:center}
+  .diverg .ref{font-family:Georgia,serif;color:var(--nuit)}
+  .diverg .ref .groupe{color:var(--carmin);margin-left:6px}
+  .diverg .motif{grid-column:1 / -1;color:#4A5561;font-size:12px}
+  .diverg .motif a{color:var(--carmin)}
+  .diverg .btn{padding:2px 8px;font-size:12px}
   .tete-tri{
     padding:7px 14px 4px;font-size:11px;letter-spacing:.6px;text-transform:uppercase;
     color:var(--canard);background:#F4F8F9;border-bottom:1px solid var(--trait)
@@ -485,6 +518,7 @@ const etat = {
   lat0: 0,
   sansGeometrie: [],     // références au relevé mais absentes du plan (REDPAR)
   zoomSur: null,         // groupe sur lequel caler la carte au prochain rendu
+  trancherOuvert: false, // onglet « Points à trancher » : replié par défaut, l'état survit au re-rendu
   suggestions: [],       // rapprochements proposés {a, b, distance, motifs}
   suggActive: null,      // clé du rapprochement épinglé (cliqué) : ses deux groupes restent allumés et la carte se cale dessus
   suggExtras: new Set(), // groupes ajoutés au rapprochement épinglé par clic sur la carte
@@ -2183,6 +2217,151 @@ function rendreDepot(g){
   return bloc;
 }
 
+/* ---------- onglet des points à trancher ----------
+   Trois catégories (15/09/2026) : les rapprochements proposés, les documents à
+   qualifier (avec la photographie des douze premières lignes, pour qualifier à
+   l'œil sans ouvrir le PDF), et les divergences de parcelles entre REDPAR et
+   ce qu'un état hypothécaire lu cite. FUSION signale, l'humain tranche.      */
+const vignettes = new Map();   // drive_id → canvas déjà rendu (la session)
+async function vignetteDocument(doc, cadre){
+  if(vignettes.has(doc.drive_id)){ cadre.innerHTML = ""; cadre.appendChild(vignettes.get(doc.drive_id)); return; }
+  if(cadre.dataset.enCours) return; cadre.dataset.enCours = "1";
+  const ind = cadre.querySelector(".ind");
+  if(extensionDe(doc.nom) !== "pdf"){ if(ind) ind.textContent = "Aperçu réservé aux PDF"; return; }
+  if(!driveConnecte()){ if(ind) ind.textContent = "Connectez le Drive pour voir l\'aperçu"; return; }
+  try{
+    if(ind) ind.textContent = "Chargement…";
+    const blob = await driveTelecharger(doc.drive_id);
+    const pdfjs = await chargerPdfjs();
+    const pdf = await pdfjs.getDocument({data: await blob.arrayBuffer()}).promise;
+    const page = await pdf.getPage(1);
+    const base = page.getViewport({scale: 1});
+    const vue = page.getViewport({scale: 900 / base.width});
+    const entier = document.createElement("canvas"); entier.width = Math.round(vue.width); entier.height = Math.round(vue.height);
+    const ctx = entier.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, entier.width, entier.height);
+    await page.render({canvasContext: ctx, viewport: vue}).promise;
+    // Les douze premières lignes : le tiers haut de la page, là où figurent normalement le type et la date de l'acte.
+    const haut = Math.round(entier.height * 0.34);
+    const c = document.createElement("canvas"); c.width = entier.width; c.height = haut;
+    c.getContext("2d").drawImage(entier, 0, 0, entier.width, haut, 0, 0, entier.width, haut);
+    vignettes.set(doc.drive_id, c);
+    cadre.innerHTML = ""; cadre.appendChild(c);
+  }catch(e){ if(ind) ind.textContent = "Aperçu indisponible — " + (e.message || ""); }
+}
+
+function divergencesParcelles(){
+  // Références citées par un état hypothécaire LU (passe 1 ou 2), absentes du cadastre actuel remonté par REDPAR.
+  const cles = new Set(), communes = new Set();
+  const nz = (t) => sansAccent(String(t || "")).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  etat.parcelles.forEach(p => {
+    cles.add(nz(p.props.section) + "|" + String(+p.props.numero));
+    if(p.props.nom_commune) communes.add(nz(p.props.nom_commune));
+  });
+  const out = [];
+  (etat.documents || []).forEach(d => {
+    const ehf = d.lecture && d.lecture.ehf; if(!ehf || !ehf.mentions) return;
+    const vues = new Set((d.lecture.divergences_vues || []));
+    const deja = new Set();
+    ehf.mentions.forEach(m => (m.immeubles || []).forEach(im => {
+      if(!im.section || !im.numero) return;
+      const cle = nz(im.section) + "|" + String(+im.numero);
+      if(cles.has(cle)) return;
+      const ref = (im.commune ? im.commune + " " : "") + im.section + " " + im.numero;
+      const id = nz(ref);
+      if(deja.has(id) || vues.has(id)) return;
+      deja.add(id);
+      const communeInconnue = im.commune && communes.size && !communes.has(nz(im.commune));
+      out.push({doc: d, groupe: d.groupe, ref, id, page: m.pages ? m.pages.debut : null,
+        nature: m.natures ? m.natures.valeur : "",
+        motif: communeInconnue ? "commune absente du relevé REDPAR de la société" : "référence absente du cadastre actuel (parcelle disparue, divisée ou renumérotée ?)"});
+    }));
+  });
+  return out;
+}
+
+function rendreTrancher(liste, rendreSuggestions){
+  const aq = (etat.documents || []).filter(d => d.type === "AQ").sort((a,b) => a.groupe - b.groupe || a.nom.localeCompare(b.nom));
+  const div = divergencesParcelles();
+  const nSugg = etat.suggestions.length;
+  const total = nSugg + aq.length + div.length;
+
+  const det = document.createElement("details");
+  det.className = "trancher"; det.open = Boolean(etat.trancherOuvert);
+  det.innerHTML = '<summary><span class="n' + (total ? "" : " zero") + '">' + total + '</span>Points à trancher'
+    + '<span class="detail">' + nSugg + ' rapprochement' + (nSugg > 1 ? 's' : '') + ' · ' + aq.length + ' à qualifier · ' + div.length + ' divergence' + (div.length > 1 ? 's' : '') + '</span></summary>';
+  det.addEventListener("toggle", () => { etat.trancherOuvert = det.open; if(det.open) det.querySelectorAll(".aqual .photo").forEach(ph => { const d = (etat.documents || []).find(x => x.drive_id === ph.dataset.id); if(d) vignetteDocument(d, ph); }); });
+
+  // 1 — rapprochements proposés
+  const c1 = document.createElement("div"); c1.className = "cat-tete"; c1.innerHTML = '<b>' + nSugg + '</b> rapprochement' + (nSugg > 1 ? 's proposés' : ' proposé') + ' — à valider un par un';
+  det.appendChild(c1);
+  if(nSugg) det.appendChild(rendreSuggestions());
+  else det.insertAdjacentHTML("beforeend", '<p class="rien">Aucun rapprochement en attente.</p>');
+
+  // 2 — documents à qualifier
+  const c2 = document.createElement("div"); c2.className = "cat-tete"; c2.innerHTML = '<b>' + aq.length + '</b> document' + (aq.length > 1 ? 's' : '') + ' à qualifier — la date ou le type n\'a pas été lu ; le rattachement au groupe est acquis';
+  det.appendChild(c2);
+  if(!aq.length) det.insertAdjacentHTML("beforeend", '<p class="rien">Aucune pièce en attente de qualification.</p>');
+  else{
+    const ul = document.createElement("ul"); ul.className = "aqual";
+    aq.forEach(d => {
+      const li = document.createElement("li"); li.dataset.id = d.drive_id;
+      li.innerHTML = '<div class="photo" data-id="' + d.drive_id + '" title="Douze premières lignes — cliquer pour agrandir"><span class="ind">Aperçu</span></div>'
+        + '<div><span class="nom"><a href="https://drive.google.com/file/d/' + d.drive_id + '/view" target="_blank" rel="noopener">' + echap(d.nom) + '</a></span>'
+        + '<span class="groupe">groupe ' + numeroGroupe4(d.groupe) + '</span>'
+        + '<span class="orig">' + echap(d.nom_origine || "") + (d.couche_texte === false ? ' · scan sans couche de texte' : '') + '</span>'
+        + '<div class="acts"><select data-act="type"><option value="">Type de pièce…</option>' + Object.entries(TYPES_PIECE).filter(([k]) => k !== "AQ").map(([k,v]) => '<option value="' + k + '">' + echap(v.libelle) + '</option>').join("") + '</select>'
+        + '<input type="date" data-act="date" value="' + (d.date_doc || "") + '" title="Date de la pièce">'
+        + '<button class="btn plein" type="button" data-act="qualifier">Qualifier</button>'
+        + '<button class="btn" type="button" data-act="ouvrir-groupe">Voir le groupe</button></div></div>';
+      ul.appendChild(li);
+    });
+    ul.addEventListener("click", e => {
+      const li = e.target.closest("li"); if(!li) return;
+      const d = (etat.documents || []).find(x => x.drive_id === li.dataset.id); if(!d) return;
+      const photo = e.target.closest(".photo");
+      if(photo){ photo.classList.toggle("grand"); return; }
+      const btn = e.target.closest("button[data-act]"); if(!btn) return;
+      if(btn.dataset.act === "ouvrir-groupe"){ etat.ouvert = d.groupe; etat.zoomSur = d.groupe; rendre(); return; }
+      if(btn.dataset.act === "qualifier"){
+        const type = li.querySelector('[data-act="type"]').value;
+        const date = li.querySelector('[data-act="date"]').value;
+        if(!type){ signaler("Choisissez d\'abord le type de la pièce.", true); return; }
+        if(!date){ signaler("Renseignez la date de la pièce avant de qualifier.", true); return; }
+        btn.disabled = true;
+        requalifierDocument(d, type, date);
+      }
+    });
+    det.appendChild(ul);
+  }
+
+  // 3 — divergences de parcelles
+  const c3 = document.createElement("div"); c3.className = "cat-tete"; c3.innerHTML = '<b>' + div.length + '</b> divergence' + (div.length > 1 ? 's' : '') + ' de parcelles entre REDPAR et les états hypothécaires lus';
+  det.appendChild(c3);
+  if(!div.length) det.insertAdjacentHTML("beforeend", '<p class="rien">Aucune divergence relevée' + ((etat.documents || []).some(d => d.lecture && d.lecture.ehf) ? '.' : ' — aucun état hypothécaire lu pour l\'instant.') + '</p>');
+  else{
+    const ul = document.createElement("ul"); ul.className = "diverg";
+    div.forEach((x, k) => {
+      const li = document.createElement("li"); li.dataset.k = k;
+      li.innerHTML = '<span class="ref">' + echap(x.ref) + '<span class="groupe">groupe ' + numeroGroupe4(x.groupe) + '</span></span>'
+        + '<button class="btn" type="button" data-act="vu" title="Ne plus signaler cette référence pour cette pièce">Vu, ne plus signaler</button>'
+        + '<span class="motif">' + echap(x.motif) + ' — citée ' + (x.nature ? 'dans une formalité « ' + echap(x.nature) + ' » ' : '') + 'de <a href="https://drive.google.com/file/d/' + x.doc.drive_id + '/view" target="_blank" rel="noopener">' + echap(x.doc.nom) + '</a>' + (x.page ? ', page ' + x.page : '') + '. À vérifier : filiation cadastrale ou saisie manuelle du lien.</span>';
+      ul.appendChild(li);
+    });
+    ul.addEventListener("click", async e => {
+      const btn = e.target.closest('button[data-act="vu"]'); if(!btn) return;
+      const x = div[Number(btn.closest("li").dataset.k)]; if(!x) return;
+      x.doc.lecture = Object.assign({}, x.doc.lecture, {divergences_vues: [...(x.doc.lecture.divergences_vues || []), x.id]});
+      try{ await appelDossier({action:"document", siren: etat.dossier.siren, document: x.doc}); }catch(err){ signaler(err.message, true); }
+      try{ await appelDossier({action:"journal", siren: etat.dossier.siren, quoi:"divergence-vue", detail:{document: x.doc.drive_id, groupe: x.groupe, reference: x.ref}}); }catch(err){ /* journal non bloquant */ }
+      rendre();
+    });
+    det.appendChild(ul);
+  }
+
+  liste.appendChild(det);
+  if(det.open) det.querySelectorAll(".aqual .photo").forEach(ph => { const d = (etat.documents || []).find(x => x.drive_id === ph.dataset.id); if(d) vignetteDocument(d, ph); });
+}
+
 /* ---------- rendu du panneau ---------- */
 function formatSurface(m2){
   if(m2 >= 10000) return (m2/10000).toLocaleString("fr-FR",{maximumFractionDigits:2}) + " ha";
@@ -2196,8 +2375,8 @@ function rendre(){
   if(!etat.parcelles.length){
     liste.innerHTML = '<p class="vide">Aucune parcelle chargée. Déposez un GeoJSON, ou ouvrez le jeu d\'essai pour voir le regroupement à l\'œuvre.</p>';
   }else{
-    // ---- rapprochements proposés ----
-    if(etat.suggestions.length){
+    // ---- rapprochements proposés : rendus DANS l'onglet des points à trancher ----
+    const rendreSuggestions = () => {
       const bloc = document.createElement("div");
       bloc.className = "sugg";
       const MAX = 40;
@@ -2248,8 +2427,9 @@ function rendre(){
         const sg = etat.suggestions[Number(li.dataset.k)]; if(sg) surlignerGroupes([sg.a, sg.b]);
       });
       bloc.addEventListener("mouseleave", () => { if(!etat.suggActive) surlignerGroupes(null); });
-      liste.appendChild(bloc);
-    }
+      return bloc;
+    };
+    rendreTrancher(liste, rendreSuggestions);
 
     // ---- tri : SPF → commune → sections → numéro ----
     const cleTri = (g) => {
