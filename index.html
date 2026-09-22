@@ -281,6 +281,14 @@
   .lect-msg.ok{color:#15803d}
   .lect-msg.alerte{color:#b91c1c}
   .lect-vide{color:#6b7280;font-size:13px;padding:10px 0}
+  .lect-p2{border:1px solid var(--orange);background:#FFF8EE;border-radius:8px;padding:12px 14px;margin:8px 0}
+  .lect-p2 b.titre{display:block;margin-bottom:6px}
+  .lect-p2 .chiffres{display:flex;gap:18px;flex-wrap:wrap;margin:6px 0}
+  .lect-p2 .chiffres span{font-size:13px}
+  .lect-p2 .chiffres b{font-size:18px;display:block}
+  .lect-p2 .motif{color:#7A5A00;font-size:12px;margin:6px 0}
+  .lect-p2 .avance{font-size:12px;color:#444;margin-top:6px;min-height:1.2em}
+  .lect-p2 button.btn.plein:disabled{opacity:.45;cursor:not-allowed}
   .pieces li button.lire{border:1px solid var(--trait,#d1d5db);background:#fff;border-radius:6px;padding:2px 8px;font:inherit;font-size:12px;cursor:pointer}
   .pieces li button.lire:hover{background:#f3f4f6}
 </style>
@@ -1226,6 +1234,79 @@ async function dessinerPagePdf(source, numero, canvas){
   await page.render({canvasContext: canvas.getContext("2d"), viewport: vue}).promise;
 }
 
+// Image JPEG d'une page (passe 2) : largeur bornée pour tenir dans un lot envoyé au serveur.
+async function imagePagePdf(source, numero, largeurCible){
+  const pdfjs = await chargerPdfjs();
+  if(!imagePagePdf.cache || imagePagePdf.cache.source !== source){
+    const data = source instanceof Blob ? await source.arrayBuffer() : source;
+    imagePagePdf.cache = {source, doc: await pdfjs.getDocument({data}).promise};
+  }
+  const page = await imagePagePdf.cache.doc.getPage(numero);
+  const base = page.getViewport({scale: 1});
+  const vue = page.getViewport({scale: Math.min(2.5, (largeurCible || 1400) / base.width)});
+  const c = document.createElement("canvas"); c.width = Math.round(vue.width); c.height = Math.round(vue.height);
+  const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+  await page.render({canvasContext: ctx, viewport: vue}).promise;
+  return c.toDataURL("image/jpeg", 0.82).split(",")[1];
+}
+
+/* ---------- passe 2 : lecture d'image par Claude, sur le seul résidu ----------
+   Le code a lu et n'a rien pu pré-saisir → on affiche le nombre de pages et le
+   coût estimé ; RIEN ne part sans le clic d'un compte autorisé (vérifié côté
+   serveur dans api/lecture.js). Le rendu remplit le même contrat que la passe 1. */
+const PASSE2_PAGES_PAR_LOT = 4;
+async function appelLecture(corps){
+  const r = await fetch("/api/lecture", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(Object.assign({jeton: etat.drive.token}, corps))});
+  const j = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(j.erreur || ("HTTP " + r.status));
+  return j;
+}
+async function lecturePasse2(blob, totalPages, contexte, progres){
+  const lecture = {entete:{}, mentions:[], luLe: new Date().toISOString(), passe2:{pages: totalPages, lots:0, usage:{entree:0, sortie:0}, modele:null}};
+  const numeros = Array.from({length: totalPages}, (_, i) => i + 1);
+  for(let d = 0; d < numeros.length; d += PASSE2_PAGES_PAR_LOT){
+    const lot = numeros.slice(d, d + PASSE2_PAGES_PAR_LOT);
+    if(progres) progres("Préparation des pages " + lot[0] + " à " + lot[lot.length-1] + " sur " + totalPages + "…");
+    const pages = [];
+    for(const n of lot) pages.push({numero: n, image: await imagePagePdf(blob, n, 1400)});
+    if(progres) progres("Lecture d'image des pages " + lot[0] + " à " + lot[lot.length-1] + " sur " + totalPages + "…");
+    const r = await appelLecture({action:"lire", pages, contexte});
+    Object.keys(r.entete || {}).forEach(k => { if(!lecture.entete[k]) lecture.entete[k] = r.entete[k]; });
+    (r.mentions || []).forEach(m => { m.index = lecture.mentions.length + 1; lecture.mentions.push(m); });
+    lecture.passe2.lots++;
+    lecture.passe2.modele = r.modele || lecture.passe2.modele;
+    if(r.usage){ lecture.passe2.usage.entree += r.usage.entree || 0; lecture.passe2.usage.sortie += r.usage.sortie || 0; }
+  }
+  lecture.pagesLues = totalPages; lecture.pagesTotal = totalPages;
+  return lecture;
+}
+function panneauPasse2(conteneur, totalPages, motifTexte, lancer){
+  conteneur.innerHTML = '<div class="lect-p2"><b class="titre">Passe 2 — lecture d\'image</b>'
+    + '<p class="motif">' + echap(motifTexte) + '</p>'
+    + '<div class="chiffres"><span>Pages à traiter<b>' + totalPages + '</b></span><span>Coût global estimé<b data-role="cout">…</b></span><span>Modèle<b data-role="modele" style="font-size:13px">…</b></span></div>'
+    + '<p class="motif" data-role="droit">Vérification du compte connecté…</p>'
+    + '<button class="btn plein" type="button" data-act="passe2" disabled>Lancer la lecture d\'image</button>'
+    + '<p class="avance" data-role="avance"></p></div>';
+  const bouton = conteneur.querySelector('[data-act="passe2"]');
+  const droit = conteneur.querySelector('[data-role="droit"]');
+  const avance = conteneur.querySelector('[data-role="avance"]');
+  let estimation = null;
+  appelLecture({action:"estimer"}).then(e => {
+    estimation = e;
+    conteneur.querySelector('[data-role="cout"]').textContent = (totalPages * e.coutPageEur).toLocaleString("fr-FR", {style:"currency", currency:"EUR"}) + " (≈ " + e.coutPageEur.toLocaleString("fr-FR", {style:"currency", currency:"EUR"}) + " par page)";
+    conteneur.querySelector('[data-role="modele"]').textContent = e.modele || "—";
+    if(e.autorise){ droit.textContent = "Compte autorisé : " + e.courriel + ". Le déclenchement engage la dépense ci-dessus."; bouton.disabled = false; }
+    else droit.textContent = "Déclenchement impossible — " + (e.motif || "compte non autorisé") + (e.courriel ? " (" + e.courriel + ")" : "") + ".";
+  }).catch(err => { droit.textContent = "Serveur de lecture indisponible — " + err.message; });
+  bouton.addEventListener("click", async () => {
+    if(!estimation || !estimation.autorise) return;
+    if(!confirm("Envoyer " + totalPages + " page" + (totalPages > 1 ? "s" : "") + " en lecture d'image, pour un coût estimé de " + (totalPages * estimation.coutPageEur).toLocaleString("fr-FR", {style:"currency", currency:"EUR"}) + " ?")) return;
+    bouton.disabled = true;
+    try{ await lancer(t => { avance.textContent = t; }, estimation); }
+    catch(e){ avance.textContent = "Échec — " + (e.message || String(e)); bouton.disabled = false; }
+  });
+}
+
 const EHF_NORMALISER = (t) => String(t || "")
   .replace(/\\([_*#])/g, "$1")
   .replace(/ /g, " ")
@@ -1456,21 +1537,23 @@ async function ouvrirLectureEHF(doc, g){
   fond.querySelector('[data-act="fermer"]').addEventListener("click", () => fond.remove());
   fond.addEventListener("click", e => { if(e.target === fond) fond.remove(); });
 
-  let blob, lecture, retenues;
+  let blob, lecture, retenues, totalPages = 0, motifPasse2 = null;
+  const parcelles = (g.parcelles || []).map(i => etat.parcelles[i]).filter(Boolean)
+    .map(p => ({section: p.props.section, numero: p.props.numero, commune: p.props.commune || p.props.nom_com}));
   try{
     blob = await driveTelecharger(doc.drive_id);
     etatTxt().textContent = "Lecture du texte…";
     const r = await textePdfPages(blob, 800, (i, n) => { const e = etatTxt(); if(e) e.textContent = "Lecture du texte… page " + i + " / " + n; });
+    totalPages = r.total;
     if(!r.pages.some(p => p.texte.replace(/\s/g, "").length > 40)){
-      gauche.innerHTML = '<p class="lect-vide">Aucune couche de texte dans ce document : il relève de la passe 2 (lecture d\'image), qui n\'est pas encore branchée.</p>';
-      return;
+      motifPasse2 = "Aucune couche de texte dans ce document (fiche scannée) : la passe 1 par code ne peut rien pré-saisir.";
+    }else{
+      lecture = lireEtatHypothecaire(r.pages);
+      lecture.pagesLues = r.pages.length;
+      lecture.pagesTotal = r.total;
+      retenues = ehfMentionsDuGroupe(lecture, parcelles);
+      if(!lecture.mentions.length) motifPasse2 = "La couche de texte existe mais la passe 1 n\'y a reconnu aucune formalité : la structure n\'est pas celle d\'un état-réponse ANF.";
     }
-    lecture = lireEtatHypothecaire(r.pages);
-    lecture.pagesLues = r.pages.length;
-    lecture.pagesTotal = r.total;
-    const parcelles = (g.parcelles || []).map(i => etat.parcelles[i]).filter(Boolean)
-      .map(p => ({section: p.props.section, numero: p.props.numero, commune: p.props.commune || p.props.nom_com}));
-    retenues = ehfMentionsDuGroupe(lecture, parcelles);
   }catch(e){
     gauche.innerHTML = '<p class="lect-vide">Échec : ' + echap(e.message || String(e)) + '</p>';
     return;
@@ -1488,6 +1571,11 @@ async function ouvrirLectureEHF(doc, g){
 
     if(!retenues.length){
       h += '<p class="lect-vide">Aucune formalité ne cite les parcelles du groupe. À vérifier à l\'œil avant de conclure.</p>';
+    }
+    if(lecture.passe2){
+      h += '<p class="lect-note">Lecture d\'image (passe 2) : ' + lecture.passe2.pages + ' page' + (lecture.passe2.pages > 1 ? 's' : '') + ', modèle ' + echap(lecture.passe2.modele || "") + '. Chaque champ porte son moteur ; validez ligne par ligne en regard de l\'image.</p>';
+    }else if(motifPasse2){
+      h += '<div data-role="p2"></div>';
     }
     retenues.forEach((m, k) => {
       h += '<div class="lect-mention" data-k="' + k + '"><div class="lect-mtete"><b>' + echap((m.natures && m.natures.valeur) || "—") + '</b>'
@@ -1552,13 +1640,13 @@ async function ouvrirLectureEHF(doc, g){
           mentions: retenues,
           effetRelatif: gauche.querySelector('[data-act="effet"]').value,
           pagesLues: lecture.pagesLues, pagesTotal: lecture.pagesTotal,
-          luLe: lecture.luLe, moteurs
+          luLe: lecture.luLe, moteurs, passe2: lecture.passe2 || null
         }});
         await appelDossier({action:"document", siren: etat.dossier.siren, document: doc});
         await appelDossier({action:"journal", siren: etat.dossier.siren, quoi:"lecture-ehf",
           detail:{document: doc.drive_id, groupe: g.num, formalites: lecture.mentions.length,
                   retenues: retenues.length, validees: retenues.filter(m => m.valide).length,
-                  pages_lues: lecture.pagesLues, pages_total: lecture.pagesTotal, moteurs}});
+                  pages_lues: lecture.pagesLues, pages_total: lecture.pagesTotal, moteurs, passe2: lecture.passe2 || null}});
         msg.textContent = "Lecture enregistrée.";
         msg.className = "lect-msg ok";
       }catch(e){
@@ -1567,7 +1655,31 @@ async function ouvrirLectureEHF(doc, g){
       }
     });
   };
-  rendreLecture();
+
+  const lancerPasse2 = async (progres, estimation) => {
+    const contexte = {nom: doc.nom, groupe: numeroGroupe4(g.num), parcelles};
+    const r = await lecturePasse2(blob, totalPages, contexte, progres);
+    r.passe2.coutEstimeEur = Math.round(totalPages * estimation.coutPageEur * 100) / 100;
+    r.passe2.courriel = estimation.courriel;
+    lecture = r; motifPasse2 = null;
+    retenues = ehfMentionsDuGroupe(lecture, parcelles);
+    try{
+      await appelDossier({action:"journal", siren: etat.dossier.siren, quoi:"lecture-ehf-passe2",
+        detail:{document: doc.drive_id, groupe: g.num, pages: totalPages, lots: r.passe2.lots, modele: r.passe2.modele,
+                usage: r.passe2.usage, cout_estime_eur: r.passe2.coutEstimeEur, declenche_par: estimation.courriel, formalites: lecture.mentions.length}});
+    }catch(e){ /* le journal ne doit pas faire échouer la lecture */ }
+    rendreLecture();
+  };
+  const brancherPasse2 = () => {
+    const cible = gauche.querySelector('[data-role="p2"]');
+    if(cible) panneauPasse2(cible, totalPages, motifPasse2, lancerPasse2);
+  };
+
+  if(lecture){ rendreLecture(); brancherPasse2(); }
+  else{
+    gauche.innerHTML = '<div data-role="p2"></div>';
+    brancherPasse2();
+  }
 }
 
 /* ---------- plan de nommage ---------- */
