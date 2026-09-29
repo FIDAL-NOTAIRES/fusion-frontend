@@ -134,7 +134,7 @@
   .groupe-tete.c-orange{border-left-color:#FF982D;background:#FFF5E9}
   .groupe-tete.c-rouge{border-left-color:#B3261E;background:#FCEFED}
   .groupe.ouvert>.groupe-tete.c-vert,.groupe.ouvert>.groupe-tete.c-jaune,.groupe.ouvert>.groupe-tete.c-orange,.groupe.ouvert>.groupe-tete.c-rouge{background:#EDF4F5}
-  .sorties{display:flex;align-items:center;gap:6px;margin:4px 14px 8px;font-size:12px;color:var(--gris)}
+  .sorties{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 14px 8px;font-size:12px;color:var(--gris)}
   .sorties .lib{flex:1}
   .sorties .btn{padding:2px 9px;font-size:12px}
   .groupe.ouvert>.groupe-tete{background:#EDF4F5;border-left-color:var(--carmin)}
@@ -255,8 +255,10 @@
   .origines-tete b{color:var(--orange)}
   .tete-tri{
     padding:7px 14px 4px;font-size:11px;letter-spacing:.6px;text-transform:uppercase;
-    color:var(--canard);background:#F4F8F9;border-bottom:1px solid var(--trait)
+    color:var(--canard);background:#F4F8F9;border-bottom:1px solid var(--trait);
+    display:flex;align-items:center;gap:8px
   }
+  .tete-tri .spf-btn{margin-left:auto;padding:1px 8px;font-size:11px;letter-spacing:0;text-transform:none}
 
   /* ---- Drive et dépôt ---- */
   .btn-drive{
@@ -589,6 +591,51 @@ function spfLuDuGroupe(g){
     && d.lecture.ehf.entete.service && d.lecture.ehf.entete.service.valeur)
     .sort((a, b) => String(b.date_doc || "").localeCompare(String(a.date_doc || "")));
   return docs.length ? spfNormalise(docs[0].lecture.ehf.entete.service.valeur) || null : null;
+}
+/* ---- SPF ATTRIBUÉ À LA MAIN — 29/09/2026 (suite) --------------------------
+   JFD, sur NESTLE FRANCE : tant qu'aucun état n'est déposé, le groupe restait
+   sous « SPF non encore lu » sans moyen d'y remédier. L'opérateur peut donc
+   ATTRIBUER le SPF lui-même, au groupe ou à toute une commune. L'attribution se
+   pose sur les PARCELLES (clé IDU, dans l'état du dossier) : elle survit ainsi
+   aux fusions, détachements et renumérotations. La table DILA ne sert plus qu'à
+   PROPOSER une valeur — jamais à ranger d'elle-même (arbitrage du 15/09/2026).
+   Hiérarchie : le SPF lu et validé dans un état hypothécaire l'emporte toujours
+   sur l'attribution à la main ; un groupe dont les parcelles portent des SPF
+   différents n'en reçoit aucun (et le dit). */
+function spfManuelDuGroupe(g){
+  if(!g || !etat.spfParIdu) return null;
+  const vals = new Set([...g.membres].map(i => etat.parcelles[i] && etat.spfParIdu[etat.parcelles[i].props.idu]).filter(Boolean));
+  return vals.size === 1 ? [...vals][0] : null;
+}
+function spfDuGroupe(g){ return spfLuDuGroupe(g) || spfManuelDuGroupe(g); }
+function spfPropose(insee){
+  const t = spfDe(insee);
+  if(t) return {valeur: t, choix: [t]};
+  const m = SPF.multiples[departementDe(insee)];
+  return {valeur: "", choix: m || []};
+}
+function attribuerSpf(groupes, libelle){
+  if(!groupes.length) return;
+  const insee = [...groupes[0].membres].map(i => etat.parcelles[i].props.commune).filter(Boolean)[0] || "";
+  const prop = spfPropose(insee);
+  const actuel = spfManuelDuGroupe(groupes[0]) || prop.valeur;
+  const saisi = prompt("Service de la publicité foncière pour " + libelle + " :"
+    + (prop.choix.length > 1 ? "\n(services du département : " + prop.choix.join(", ") + ")" : "")
+    + "\nLaisser vide pour retirer l'attribution.", actuel);
+  if(saisi === null) return;
+  const v = spfNormalise(saisi);
+  etat.spfParIdu = etat.spfParIdu || {};
+  let n = 0;
+  groupes.forEach(g => g.membres.forEach(i => {
+    const idu = etat.parcelles[i] && etat.parcelles[i].props.idu;
+    if(!idu) return;
+    if(v) etat.spfParIdu[idu] = v; else delete etat.spfParIdu[idu];
+    n++;
+  }));
+  marquerModifie("spf-attribue", {groupes: groupes.map(g => g.num), parcelles: n, spf: v || null, source: "manuel"});
+  signaler(v ? "SPF " + v + " attribué à " + n + " parcelle(s) — " + libelle + "."
+             : "Attribution de SPF retirée — " + libelle + ".");
+  rendre();
 }
 function spfDe(insee){
   if(!insee) return null;
@@ -1903,7 +1950,7 @@ function cleGeographique(g){
   const insee = [...new Set(membres.map(p => p.props.commune).filter(Boolean))].sort();
   const communes = [...new Set(membres.map(p => p.props.nom_commune).filter(Boolean))].sort();
   const sections = [...new Set(membres.map(p => p.props.section).filter(Boolean))].sort();
-  const spf = spfLuDuGroupe(g) || "~";   // SPF lu et validé (15/09/2026), groupes non documentés en fin
+  const spf = spfDuGroupe(g) || "~";   // SPF lu et validé (15/09/2026), groupes non documentés en fin
   return [spf, communes[0] || "~", sections.join(" "), String(g.num).padStart(6,"0")].join("|");
 }
 function calculerConcordanceGeographique(){
@@ -3630,9 +3677,15 @@ async function sortirAnnexeServitudes(format){
 function rendreSorties(g){
   const z = document.createElement("div"); z.className = "sorties";
   const c = couleurGroupe(g);
-  z.innerHTML = '<span class="lib">Fiche du groupe' + (c ? ' — <b style="color:' + COULEURS[c].hex + '">' + COULEURS[c].nom + '</b>' : '') + '</span>'
+  const lu = spfLuDuGroupe(g), manuel = spfManuelDuGroupe(g);
+  z.innerHTML = '<span class="lib">SPF : ' + (lu ? '<b>' + echap(lu) + '</b> <em>(lu dans l\u2019état hypothécaire)</em>'
+      : manuel ? '<b>' + echap(manuel) + '</b> <em>(attribué à la main)</em>' : '<em>non encore lu</em>') + '</span>'
+    + (lu ? '' : '<button class="btn" type="button" data-spf="1">' + (manuel ? 'Modifier' : 'Attribuer') + '</button>')
+    + '<span style="flex-basis:100%;height:0"></span><span class="lib">Fiche du groupe' + (c ? ' — <b style="color:' + COULEURS[c].hex + '">' + COULEURS[c].nom + '</b>' : '') + '</span>'
     + '<button class="btn" type="button" data-f="docx">Word</button><button class="btn" type="button" data-f="pdf">PDF</button>';
-  z.querySelectorAll("button").forEach(b => b.addEventListener("click", async () => { b.disabled = true; try{ await sortirGroupe(g, b.dataset.f); }catch(e){ signaler(e.message, true); } finally{ b.disabled = false; } }));
+  const bSpf = z.querySelector("[data-spf]");
+  if(bSpf) bSpf.addEventListener("click", () => attribuerSpf([g], "le groupe " + numeroGroupe4(g.num)));
+  z.querySelectorAll("button[data-f]").forEach(b => b.addEventListener("click", async () => { b.disabled = true; try{ await sortirGroupe(g, b.dataset.f); }catch(e){ signaler(e.message, true); } finally{ b.disabled = false; } }));
   return z;
 }
 
@@ -3713,7 +3766,7 @@ function rendre(){
       const insee = [...new Set(membres.map(p => p.props.commune).filter(Boolean))].sort();
       const sections = [...new Set(membres.map(p => p.props.section).filter(Boolean))].sort();
       // SPF LU ET VALIDÉ dans l'état hypothécaire du groupe, jamais la table (15/09/2026)
-      const spf = spfLuDuGroupe(g) || "";
+      const spf = spfDuGroupe(g) || "";
       const dep = insee.length ? departementDe(insee[0]) : "";
       return {spf, dep, commune: communes[0] || "", sections: sections.join(" "), num: g.num};
     };
@@ -3728,6 +3781,20 @@ function rendre(){
                     + " — " + (k.commune || "Commune inconnue");
       if(enTete !== teteCourante){
         const h = document.createElement("div"); h.className = "tete-tri"; h.textContent = enTete;
+        if(!k.spf){
+          // Attribution à toute la commune : les groupes de cette commune encore sans SPF
+          const b = document.createElement("button");
+          b.type = "button"; b.className = "btn spf-btn"; b.textContent = "Attribuer le SPF";
+          b.title = "Attribuer un service de la publicité foncière à tous les groupes de cette commune encore sans SPF";
+          const communeCible = k.commune;
+          b.addEventListener("click", ev => {
+            ev.stopPropagation();
+            const cibles = etat.groupes.filter(x => !spfDuGroupe(x)
+              && [...x.membres].some(i => etat.parcelles[i].props.nom_commune === communeCible));
+            attribuerSpf(cibles, "les " + cibles.length + " groupe(s) de " + communeCible);
+          });
+          h.appendChild(b);
+        }
         liste.appendChild(h); teteCourante = enTete;
       }
       const membres = [...g.membres].map(i => etat.parcelles[i])
@@ -3857,7 +3924,7 @@ function traiterTexte(texte){
     chargerGeoJSON(objet);
     dessiner.cadre = false;
     etat.dossier = null; etat.persist.actif = false; etat.ignores = new Set(); etat.filiation = {maillons: []}; etat.concordance = [];
-    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false;
+    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false; etat.spfParIdu = {};
     afficherPersist("Jeu local — non enregistré");
     regrouperAutomatiquement();
     rendre();
@@ -3888,6 +3955,7 @@ function etatPersistable(){
     sansGeometrie: (etat.sansGeometrie || []).map(x => x.idu).filter(Boolean),
     filiation: {maillons: (etat.filiation && etat.filiation.maillons) || []},
     concordance: etat.concordance || [],
+    spf_parcelles: etat.spfParIdu || {},
     numerotation_definitive: etat.numerotationFaite ? (etat.numerotationDate || new Date().toISOString()) : null
   };
 }
@@ -3982,6 +4050,7 @@ function ouvrirDepuisBase(d){
   etat.ignores = new Set(e.ignores || []);
   etat.filiation = {maillons: (e.filiation && Array.isArray(e.filiation.maillons)) ? e.filiation.maillons : []};
   etat.concordance = Array.isArray(e.concordance) ? e.concordance : [];
+  etat.spfParIdu = (e.spf_parcelles && typeof e.spf_parcelles === "object") ? e.spf_parcelles : {};
   if(e.seuils){
     if(e.seuils.rapprochement_m != null){ document.getElementById("rapproch").value = e.seuils.rapprochement_m; document.getElementById("rapproch-val").textContent = e.seuils.rapprochement_m + " m"; }
     if(e.seuils.voisinage_m != null){ document.getElementById("rayon").value = e.seuils.voisinage_m; document.getElementById("rayon-val").textContent = e.seuils.voisinage_m + " m"; }
@@ -4209,7 +4278,7 @@ async function chercherParcelles(siren, libelle, forcer){
     etat.ouvert = null;                 // vue d'ensemble d'abord : les groupes repliés
     etat.sansGeometrie = sansGeometrie;
     etat.dossier = {siren, denomination: (d1.societe && d1.societe.denomination) || libelle || null, millesime: d1.millesime || null};
-    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false; etat.numerotationDate = null;
+    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false; etat.numerotationDate = null; etat.spfParIdu = {};
     etat.groupes.forEach(g => { g.drive = {}; });
     rendre();
     fermer();
