@@ -560,6 +560,36 @@ function departementDe(insee){
   const c = String(insee || "");
   return c.startsWith("97") ? c.slice(0,3) : c.slice(0,2);
 }
+/* ---- SPF LU DANS L'ÉTAT HYPOTHÉCAIRE — correctif du 29/09/2026 ----------------
+   ⚠ APPLIQUE L'ARBITRAGE DU 15/09/2026, RESTÉ NON CODÉ : « le SPF est LU dans
+   l'état hypothécaire au moment du dépôt, jamais deviné ». Jusqu'ici la liste
+   des groupes et la numérotation ne consultaient QUE la table DILA ci-dessus,
+   qui ne sait rien des départements à ressort multiple (le Nord : Dunkerque,
+   Lille, Valenciennes) — et le service lu dans l'en-tête de l'état n'allait
+   nulle part : on ne pouvait donc PAS valider un SPF pour un groupe.
+   Désormais, dans l'écran de contrôle, le service de l'en-tête est MODIFIABLE et
+   porte une case « SPF validé pour ce groupe ». Le service validé de l'état le
+   plus récent du groupe fait foi pour TOUTES ses parcelles. Un groupe sans état
+   validé n'a pas de SPF : il se range sous « SPF non encore lu », trié par
+   commune puis section (tri SPF réservé aux groupes documentés, 15/09/2026). */
+function spfNormalise(t){
+  let v = String(t || "").trim()
+    .replace(/^(le\s+)?service\s+de\s+(la\s+)?publicit[ée]\s+fonci[èe]re\s+(de|d['’])\s*/i, "")
+    .replace(/^s\.?\s?p\.?\s?f\.?\s+(de|d['’])?\s*/i, "")
+    .replace(/\s+/g, " ").trim();
+  if(!v) return "";
+  return v.toLowerCase().replace(/(^|[\s\-'’])([a-zà-ÿ])/g, (m, a, b) => a + b.toUpperCase())
+    // particules des noms composés en minuscules : Avesnes-sur-Helpe, Boulogne-sur-Mer
+    .replace(/-(Sur|Sous|En|Le|La|Les|De|Du|Des|Lès|Lez|Au|Aux)(?=-)/g, (m, x) => "-" + x.toLowerCase());
+}
+function spfLuDuGroupe(g){
+  if(!g) return null;
+  const docs = (etat.documents || []).filter(d => d.groupe === g.num && d.type === "EHF"
+    && d.lecture && d.lecture.ehf && d.lecture.ehf.entete && d.lecture.ehf.entete.spfValide
+    && d.lecture.ehf.entete.service && d.lecture.ehf.entete.service.valeur)
+    .sort((a, b) => String(b.date_doc || "").localeCompare(String(a.date_doc || "")));
+  return docs.length ? spfNormalise(docs[0].lecture.ehf.entete.service.valeur) || null : null;
+}
 function spfDe(insee){
   if(!insee) return null;
   if(SPF.commune[insee]) return SPF.commune[insee];
@@ -1682,7 +1712,17 @@ async function ouvrirLectureEHF(doc, g){
   const rendreLecture = () => {
     const ent = lecture.entete;
     let h = '<div class="lect-entete"><b>En-tête</b><ul>';
-    [["service","Service"],["delivreLe","Délivré le"],["dossierANF","Dossier ANF"],["demandeNumero","N° de demande"],["deposeeLe","Déposée le"],["periodeReleve","Période couverte"]]
+    // Service de la publicité foncière : MODIFIABLE et à VALIDER — c'est lui qui
+    // range le groupe (SPF lu, jamais deviné, 15/09/2026). FUSION propose ce
+    // qu'il a lu, l'opérateur corrige s'il le faut et coche.
+    {
+      const sv = ent.service;
+      h += '<li class="lect-spf">Service de la publicité foncière : '
+        + '<input data-act="spf" value="' + echap(sv ? sv.valeur : "") + '" placeholder="ex. Lille 1" style="min-width:12em">'
+        + (sv && sv.page ? ' <button class="pg" data-page="' + sv.page + '">p.' + sv.page + '</button>' : ' <em>non lu</em>')
+        + ' <label class="lect-ok"><input type="checkbox" data-act="spfok"' + (ent.spfValide ? " checked" : "") + '> SPF validé pour ce groupe</label></li>';
+    }
+    [["delivreLe","Délivré le"],["dossierANF","Dossier ANF"],["demandeNumero","N° de demande"],["deposeeLe","Déposée le"],["periodeReleve","Période couverte"]]
       .forEach(([k, lib]) => { if(ent[k]) h += '<li>' + lib + ' : <b>' + echap(ent[k].valeur) + '</b> <button class="pg" data-page="' + ent[k].page + '">p.' + ent[k].page + '</button></li>'; });
     h += '</ul><p class="lect-compte">' + lecture.mentions.length + ' formalité' + (lecture.mentions.length > 1 ? 's' : '') + ' lue' + (lecture.mentions.length > 1 ? 's' : '')
       + ' sur ' + lecture.pagesLues + ' page' + (lecture.pagesLues > 1 ? 's' : '')
@@ -1742,6 +1782,25 @@ async function ouvrirLectureEHF(doc, g){
       m[cle] = {valeur: v, page: m[cle] ? m[cle].page : m.pages.debut, moteur: "humain"};
       e.target.closest("label").querySelector(".lect-src em").textContent = "humain";
     }));
+    {
+      const inSpf = gauche.querySelector('input[data-act="spf"]');
+      const okSpf = gauche.querySelector('input[data-act="spfok"]');
+      if(inSpf) inSpf.addEventListener("change", e => {
+        const v = e.target.value.trim();
+        const ancien = lecture.entete.service;
+        lecture.entete.service = v ? {valeur: v, page: ancien ? ancien.page : 1, moteur: "humain"} : null;
+        if(!v){ lecture.entete.spfValide = false; if(okSpf) okSpf.checked = false; }
+      });
+      if(okSpf) okSpf.addEventListener("change", e => {
+        if(e.target.checked && !(lecture.entete.service && lecture.entete.service.valeur)){
+          e.target.checked = false;
+          const msg = gauche.querySelector(".lect-msg");
+          if(msg){ msg.textContent = "Saisissez d'abord le service de la publicité foncière."; msg.className = "lect-msg alerte"; }
+          return;
+        }
+        lecture.entete.spfValide = e.target.checked;
+      });
+    }
     gauche.querySelectorAll('input[data-act="valider"]').forEach(inp => inp.addEventListener("change", e => {
       retenues[Number(e.target.closest(".lect-mention").dataset.k)].valide = e.target.checked;
     }));
@@ -1767,8 +1826,15 @@ async function ouvrirLectureEHF(doc, g){
           detail:{document: doc.drive_id, groupe: g.num, formalites: lecture.mentions.length,
                   retenues: retenues.length, validees: retenues.filter(m => m.valide).length,
                   pages_lues: lecture.pagesLues, pages_total: lecture.pagesTotal, moteurs, passe2: lecture.passe2 || null}});
-        msg.textContent = "Lecture enregistrée.";
+        if(lecture.entete.spfValide && lecture.entete.service){
+          try{ await appelDossier({action:"journal", siren: etat.dossier.siren, quoi:"spf-valide",
+            detail:{document: doc.drive_id, groupe: g.num, spf: spfNormalise(lecture.entete.service.valeur),
+                    moteur: lecture.entete.service.moteur || "code"}}); }catch(e){ /* le journal ne bloque pas */ }
+        }
+        msg.textContent = "Lecture enregistrée." + (lecture.entete.spfValide && lecture.entete.service
+          ? " Groupe rangé sous SPF " + spfNormalise(lecture.entete.service.valeur) + "." : "");
         msg.className = "lect-msg ok";
+        try{ rendre(); }catch(e){ /* la liste se redessinera au prochain geste */ }
       }catch(e){
         msg.textContent = "Non enregistré — " + (e.message || "base indisponible");
         msg.className = "lect-msg alerte";
@@ -1837,7 +1903,7 @@ function cleGeographique(g){
   const insee = [...new Set(membres.map(p => p.props.commune).filter(Boolean))].sort();
   const communes = [...new Set(membres.map(p => p.props.nom_commune).filter(Boolean))].sort();
   const sections = [...new Set(membres.map(p => p.props.section).filter(Boolean))].sort();
-  const spf = insee.map(spfDe).filter(Boolean).sort()[0] || "~";
+  const spf = spfLuDuGroupe(g) || "~";   // SPF lu et validé (15/09/2026), groupes non documentés en fin
   return [spf, communes[0] || "~", sections.join(" "), String(g.num).padStart(6,"0")].join("|");
 }
 function calculerConcordanceGeographique(){
@@ -3646,18 +3712,19 @@ function rendre(){
       const communes = [...new Set(membres.map(p => p.props.nom_commune).filter(Boolean))].sort();
       const insee = [...new Set(membres.map(p => p.props.commune).filter(Boolean))].sort();
       const sections = [...new Set(membres.map(p => p.props.section).filter(Boolean))].sort();
-      const spf = insee.map(spfDe).filter(Boolean).sort()[0] || "";
+      // SPF LU ET VALIDÉ dans l'état hypothécaire du groupe, jamais la table (15/09/2026)
+      const spf = spfLuDuGroupe(g) || "";
       const dep = insee.length ? departementDe(insee[0]) : "";
       return {spf, dep, commune: communes[0] || "", sections: sections.join(" "), num: g.num};
     };
     const ordonnes = etat.groupes.map(g => ({g, k: cleTri(g)})).sort((u,v) =>
-      u.k.spf.localeCompare(v.k.spf, "fr") || u.k.commune.localeCompare(v.k.commune, "fr")
+      // groupes documentés d'abord, par SPF ; les autres ensuite, par commune
+      (!u.k.spf - !v.k.spf) || u.k.spf.localeCompare(v.k.spf, "fr") || u.k.commune.localeCompare(v.k.commune, "fr")
       || u.k.sections.localeCompare(v.k.sections, "fr") || (u.k.num - v.k.num));
 
     let teteCourante = null;
     ordonnes.forEach(({g, k}) => {
-      const enTete = (k.spf ? "SPF " + k.spf
-                      : (SPF.multiples[k.dep] ? "SPF à préciser (" + SPF.multiples[k.dep].join(" / ") + ")" : "SPF inconnu"))
+      const enTete = (k.spf ? "SPF " + k.spf : "SPF non encore lu")
                     + " — " + (k.commune || "Commune inconnue");
       if(enTete !== teteCourante){
         const h = document.createElement("div"); h.className = "tete-tri"; h.textContent = enTete;
