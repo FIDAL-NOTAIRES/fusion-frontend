@@ -215,6 +215,27 @@
   .diverg .btn{padding:2px 8px;font-size:12px}
   .diverg .acts{display:flex;gap:6px}
   .diverg .verbatim p{margin:2px 0;padding-left:8px;border-left:3px solid #E6D28A;font-style:italic}
+  /* ---- appui HISTO (09/10/2026) ---- */
+  .histo-corps{flex:1;overflow:auto;padding:14px 18px}
+  .histo-corps h4{font-family:Georgia,serif;color:var(--nuit);margin:16px 0 8px;font-weight:normal;font-size:16px}
+  .histo-aide{font-size:13px;color:var(--gris);margin:0 0 8px}
+  .histo-aide.alerte{color:#B3261E}
+  .histo-ligne{display:grid;grid-template-columns:minmax(150px,auto) 1fr auto auto;gap:10px;align-items:center;padding:6px 10px;border-radius:6px;font-size:13px;border-left:4px solid var(--trait);margin:3px 0;background:#fff}
+  .histo-ligne.ok{border-left-color:#1F7A4D;background:#F2F9F5}
+  .histo-ligne.div{border-left-color:#FF982D;background:#FFF6EA}
+  .histo-ligne.jaune{border-left-color:#D4A800;background:#FFF9DB}
+  .histo-ligne.tranche{opacity:.7}
+  .histo-ligne .ref{font-weight:600;color:var(--nuit)}
+  .histo-ligne .via{color:var(--gris)}
+  .histo-ligne .etiq,.histo-saisie .etiq{font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  .histo-ligne .acts{display:flex;gap:6px}
+  .histo-lot{margin:6px 0}
+  .histo-saisie{border:1px solid #FFC98A;border-left:4px solid #FF982D;border-radius:6px;padding:10px;margin:6px 0;background:#FFFBF5;display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end}
+  .histo-saisie .titre{flex-basis:100%;font-size:13px;font-weight:600;color:var(--nuit)}
+  .histo-saisie label{display:flex;flex-direction:column;font-size:11px;color:var(--gris);gap:2px}
+  .histo-saisie label.large{flex-basis:100%}
+  .histo-saisie input{width:140px;padding:4px 6px;border:1px solid var(--trait);border-radius:4px;font-size:13px}
+  .histo-saisie select{padding:4px 6px;font-size:13px}
   /* ---- filiation cadastrale ---- */
   .lect.fil .lect-gauche{width:58%}
   .fil-chaine{border:1px solid var(--trait);border-radius:8px;margin:0 0 12px;background:#fff}
@@ -668,6 +689,7 @@ const etat = {
   zoomSur: null,         // groupe sur lequel caler la carte au prochain rendu
   trancherOuvert: false, // onglet « Points à trancher » : replié par défaut, l'état survit au re-rendu
   concordance: [],       // mouvements de périmètre après numérotation (fusion, détachement) — table de concordance persistée avec le dossier
+  histo: histoVide(),    // appui HISTO du dossier en cours (09/10/2026) : résultats de l'appel, décisions et rattachements
   filiation: {maillons: []}, // filiation cadastrale du DOSSIER EN COURS : maillons ancien → nouveau, proposés / validés / refusés / saisis à la main
   suggestions: [],       // rapprochements proposés {a, b, distance, motifs}
   suggActive: null,      // clé du rapprochement épinglé (cliqué) : ses deux groupes restent allumés et la carte se cale dessus
@@ -1323,6 +1345,7 @@ function preparerOAuth(){
         etat.drive.expire = Date.now() + (Number(r.expires_in || 3600) - 60) * 1000;
         majBoutonDrive("Drive connecté", "ok");
         rendre();
+        if(etat.histo && etat.histo.statut === "attente-drive") histoLancer();
       }else{
         majBoutonDrive("Drive : accès refusé", "alerte");
       }
@@ -2578,7 +2601,7 @@ async function filRechercher(g, progres){
 // Chaînes : depuis chaque ancienne référence, on suit les maillons non refusés jusqu'à une référence actuelle du groupe.
 function filChaines(g){
   const anciennes = filAnciennes(g), actuelles = filActuelles(g);
-  const maillons = (etat.filiation.maillons || []).filter(x => x.groupe === g.num);
+  const maillons = (etat.filiation.maillons || []).filter(x => x.groupe === g.num).concat(histoMaillonsRetenus(g));
   const chaines = [];
   anciennes.forEach((anc, cle) => {
     const suite = (depuis, vus, profondeur) => {
@@ -2592,13 +2615,13 @@ function filChaines(g){
   });
   return chaines;
 }
-function filResolue(arbre){ return arbre.some(n => (n.actuelle && n.maillon.statut !== "propose") || filResolue(n.enfants)); }
+function filResolue(arbre){ return arbre.some(n => (n.actuelle && (n.maillon.statut !== "propose" || histoConcorde(n.maillon))) || filResolue(n.enfants)); }
 
 // Tableau des origines cadastrales : une ligne par maillon validé ou saisi, colonnes référence actuelle, ancienne, acte, date.
 function filTableauOrigines(g){
   const lignes = [];
   const marcher = (noeuds, chemin) => noeuds.forEach(n => {
-    const x = n.maillon; if(x.statut === "propose") return;
+    const x = n.maillon; if(x.statut === "propose" && !histoConcorde(x)) return;
     lignes.push({actuelle: n.actuelle ? filLibelle(x.nouveau) : filLibelle(x.nouveau) + " (intermédiaire)", ancienne: filLibelle(x.ancien),
       acte: x.statut === "manuel" ? "saisie manuelle" + (x.commentaire ? " — " + x.commentaire : "") : ((x.nature ? x.nature + " — " : "") + (x.source ? x.source.nom + (x.source.page ? ", p. " + x.source.page : "") : "")),
       date: x.date || "", manuel: x.statut === "manuel"});
@@ -2606,6 +2629,333 @@ function filTableauOrigines(g){
   });
   filChaines(g).forEach(c => marcher(c.arbre, [c.cle]));
   return lignes;
+}
+
+/* ---------- appui HISTO : filiation cadastrale tirée du DFI (cadré le 09/10/2026) ----------
+   Arbitrages du 09/10/2026 (fiche dfi-format-json) :
+   - PRINCIPE : les états hypothécaires font foi ; HISTO n'est qu'un APPUI, qui donne vite
+     la vue de toutes les divisions ; FUSION reste l'outil maître ;
+   - APPEL AUTOMATIQUE à l'ouverture du dossier, sur tout le lot de parcelles (300 par appel) ;
+   - CROISEMENT des deux sources (cadastre HISTO / mentions de division lues dans les pièces) :
+     vu par les deux = tenu pour sûr (vert) ; vu par une seule = divergence à trancher ;
+     un maillon saisi à la main que HISTO confirme n'est plus une anomalie jaune ;
+   - RÉFÉRENCES DE PUBLICITÉ FONCIÈRE : une formalité de l'état hypothécaire qui cite la parcelle
+     issue du mouvement (ou sa mère) dans une fenêtre de douze mois autour de la date HISTO
+     → reprise automatique si elle est seule ; sinon validation manuelle pré-saisie ;
+     aucune formalité → jaune « à compléter » (éléments hypothécaires à demander) ;
+     remaniement et rénovation sont administratifs : aucune formalité attendue ;
+   - RÉDACTION : bloc 1, sous-titre « Origine cadastrale », une phrase par maillon, du plus
+     récent au plus ancien ; parcelle sans appui HISTO → jaune.                                */
+const HISTO_API = "https://histo-sand.vercel.app/api/filiation";
+const HISTO_PAR_APPEL = 300;                 // plafond du contrat 1.0
+const HISTO_FENETRE_MOIS = 12;               // tranché le 09/10/2026
+const HISTO_SANS_FORMALITE = new Set(["remaniement", "rénovation"]);
+
+function histoVide(){ return {statut: "attente", resultats: {}, situation: null, genere_le: null, erreur: null, decisions: {}, publications: {}}; }
+const histoCle = (ancien, nouveau) => filCleCourte(ancien) + ">" + filCleCourte(nouveau);
+const histoCleMaillon = (m) => filCleCourte(m.parcelle) + "|" + m.document.id_dfi + "|" + (m.document.lot || "");
+const histoClePub = (m) => m.document.id_dfi + "|" + (m.document.lot || "");   // une formalité par mouvement, toutes sœurs confondues
+
+// Référence d'appel tirée de l'IDU (14 caractères : INSEE, préfixe, section, numéro)
+function histoReference(p, groupe){
+  const idu = String(p.props.idu || "");
+  const insee = idu.length >= 14 ? idu.slice(0, 5) : String(p.props.commune || "");
+  const prefixe = idu.length >= 14 ? idu.slice(5, 8) : "000";
+  return {insee, prefixe, section: p.props.section, numero: String(p.props.numero), groupe: String(groupe), identifiant: idu || null};
+}
+
+// Appel automatique : à l'ouverture du dossier, ou dès que le Drive est connecté s'il ne l'était pas
+async function histoLancer(){
+  if(!etat.dossier && !(etat.parcelles || []).length) return;
+  if(!driveConnecte()){ etat.histo.statut = "attente-drive"; return; }
+  if(etat.histo.statut === "en-cours") return;
+  const parGroupe = new Map(); (etat.groupes || []).forEach(g => g.membres.forEach(i => parGroupe.set(i, g.num)));
+  const refs = (etat.parcelles || []).filter(p => p && p.props && p.props.section && p.props.numero).map(p => histoReference(p, parGroupe.get(p.i) ?? ""));
+  if(!refs.length) return;
+  etat.histo.statut = "en-cours"; etat.histo.erreur = null;
+  try{
+    const resultats = {};
+    for(let i = 0; i < refs.length; i += HISTO_PAR_APPEL){
+      const r = await fetch(HISTO_API, {method: "POST", headers: {"Content-Type": "application/json", Authorization: "Bearer " + etat.drive.token},
+        body: JSON.stringify({appelant: "fusion", references: refs.slice(i, i + HISTO_PAR_APPEL)})});
+      const j = await r.json().catch(() => ({}));
+      if(!r.ok) throw new Error((j.erreur && j.erreur.message) || ("HISTO : HTTP " + r.status));
+      etat.histo.situation = j.histo ? j.histo.situation_dfi : null;
+      etat.histo.genere_le = j.histo ? j.histo.genere_le : new Date().toISOString();
+      (j.resultats || []).forEach((x, k) => { const id = x.identifiant || refs[i + k].identifiant || (refs[i + k].section + refs[i + k].numero); resultats[id] = x; });
+    }
+    etat.histo.resultats = resultats; etat.histo.statut = "fait";
+  }catch(e){
+    etat.histo.statut = "erreur"; etat.histo.erreur = e.message;
+    signaler("Appui HISTO indisponible (" + e.message + ") : FUSION continue sur les seules pièces.", true);
+  }
+  histoIndex.cache = null;
+  rendre();
+}
+
+// Résultat HISTO d'une parcelle du dossier
+function histoDe(p){ return etat.histo.resultats[p.props.idu] || etat.histo.resultats[p.props.section + p.props.numero] || null; }
+
+// Maillons HISTO d'un groupe, dédoublonnés (deux parcelles sœurs partagent leurs ancêtres)
+function histoMaillons(g){
+  const vus = new Map();
+  [...g.membres].map(i => etat.parcelles[i]).filter(Boolean).forEach(p => {
+    const r = histoDe(p); if(!r || !Array.isArray(r.arbre)) return;
+    r.arbre.forEach(m => { const k = histoCleMaillon(m); if(!vus.has(k)) vus.set(k, m); });
+  });
+  return [...vus.values()].sort((a, b) => String(b.document.date_effet || "").localeCompare(String(a.document.date_effet || "")) || a.profondeur - b.profondeur);
+}
+// Parcelles du groupe sans appui HISTO (commune non chargée, aucun mouvement, introuvable, erreur)
+function histoSansAppui(g){
+  if(etat.histo.statut !== "fait") return [];
+  return [...g.membres].map(i => etat.parcelles[i]).filter(Boolean).filter(p => { const r = histoDe(p); return !r || r.statut !== "traite" || !r.trouve; })
+    .map(p => { const r = histoDe(p); return {parcelle: p, motif: !r ? "non renvoyée par HISTO" : r.statut !== "traite" ? (r.erreur ? r.erreur.message : r.statut)
+      : ({"commune-non-chargee": "commune non chargée dans HISTO", "aucun-mouvement": "aucun mouvement au DFI", "introuvable": "référence introuvable au cadastre"}[r.etat_dfi && r.etat_dfi.motif] || "aucun mouvement au DFI")}; });
+}
+
+// Index global des couples ancien > nouveau vus par HISTO (pour le croisement avec les pièces)
+function histoIndex(){
+  if(histoIndex.cache) return histoIndex.cache;
+  const s = new Set();
+  Object.values(etat.histo.resultats || {}).forEach(r => (r.arbre || []).forEach(m => (m.parcelles_origine || []).forEach(o => s.add(histoCle(o, m.parcelle)))));
+  return (histoIndex.cache = s);
+}
+const histoConcorde = (x) => etat.histo.statut === "fait" && histoIndex().has(histoCle(x.ancien, x.nouveau));
+
+// Croisement des deux sources pour un groupe
+function histoCroisement(g){
+  const pieces = (etat.filiation.maillons || []).filter(x => x.groupe === g.num && x.moteur !== "histo");
+  const parCle = new Map(); pieces.forEach(x => { const k = histoCle(x.ancien, x.nouveau); if(!parCle.has(k)) parCle.set(k, []); parCle.get(k).push(x); });
+  const concordants = [], histoSeuls = [], piecesSeules = [];
+  if(etat.histo.statut !== "fait") return {concordants, histoSeuls, piecesSeules};
+  const vusHisto = new Set();
+  histoMaillons(g).forEach(m => (m.parcelles_origine || []).forEach(o => {
+    const k = histoCle(o, m.parcelle); vusHisto.add(k);
+    const lies = (parCle.get(k) || []).filter(x => x.statut !== "refuse");
+    if(lies.length) concordants.push({cle: k, maillon: m, ancien: o, pieces: lies});
+    else histoSeuls.push({cle: k, maillon: m, ancien: o, refuse: (parCle.get(k) || []).length > 0, decision: etat.histo.decisions[g.num + "|" + k] || null});
+  }));
+  // les maillons des pièces validés ou saisis à la main que HISTO ne voit pas (une simple proposition se tranche dans l'écran de filiation)
+  pieces.filter(x => x.statut !== "refuse" && x.statut !== "propose" && !vusHisto.has(histoCle(x.ancien, x.nouveau))).forEach(x => {
+    piecesSeules.push({cle: histoCle(x.ancien, x.nouveau), maillon: x, decision: etat.histo.decisions[g.num + "|" + histoCle(x.ancien, x.nouveau)] || null});
+  });
+  return {concordants, histoSeuls, piecesSeules};
+}
+// Ce qui reste à trancher dans le croisement (divergences sans décision)
+function histoATrancher(g){
+  const c = histoCroisement(g);
+  return c.histoSeuls.filter(x => !x.decision).length + c.piecesSeules.filter(x => !x.decision).length;
+}
+
+// Mentions de l'état hypothécaire du groupe citant une référence (actuelle ou ancienne)
+function histoMentionsCitant(g, refs){
+  const cles = new Set(refs.map(filCleCourte)), out = [];
+  (etat.documents || []).filter(d => d.groupe === g.num && d.type === "EHF" && d.lecture && d.lecture.ehf && Array.isArray(d.lecture.ehf.mentions)).forEach(d =>
+    d.lecture.ehf.mentions.forEach(m => {
+      if(BLOC_RE.inscription.test(blocV(m.natures)) || BLOC_RE.exclure.test(blocV(m.natures))) return;
+      if((m.immeubles || []).some(i => i.section && i.numero && cles.has(filCleCourte(i)))) out.push(Object.assign({}, m, {doc: d}));
+    }));
+  return out;
+}
+function histoEcartMois(dateIso, m){
+  const ref = dateDepuisISO(dateIso); if(!ref) return null;
+  const ecarts = [blocDate(blocV(m.dateActe)), blocDate(blocV(m.dateDepot))].filter(Boolean).map(d => Math.abs(d - ref) / (30.44 * 864e5));
+  return ecarts.length ? Math.min(...ecarts) : null;
+}
+// Rattachement d'un maillon HISTO à une formalité : {etat: "sans-objet"|"auto"|"valide"|"a-valider"|"a-completer", formalite, candidates}
+function histoPublication(g, m){
+  if(HISTO_SANS_FORMALITE.has(m.nature)) return {etat: "sans-objet"};
+  const k = g.num + "|" + histoClePub(m), saisie = etat.histo.publications[k];
+  if(saisie && saisie.statut === "valide") return {etat: "valide", formalite: saisie};
+  const citant = histoMentionsCitant(g, [m.parcelle, ...(m.parcelles_soeurs || []), ...(m.parcelles_origine || [])])
+    .map(x => ({mention: x, ecart: histoEcartMois(m.document.date_effet, x)})).filter(x => x.ecart != null).sort((a, b) => a.ecart - b.ecart);
+  const dansFenetre = citant.filter(x => x.ecart <= HISTO_FENETRE_MOIS);
+  if(dansFenetre.length === 1) return {etat: "auto", formalite: histoFormalite(dansFenetre[0].mention), ecart: dansFenetre[0].ecart};
+  if(citant.length) return {etat: "a-valider", formalite: histoFormalite(citant[0].mention), candidates: citant.slice(0, 5).map(x => Object.assign(histoFormalite(x.mention), {ecart: x.ecart})), motif: dansFenetre.length > 1 ? "plusieurs formalités dans la fenêtre de douze mois" : "aucune formalité dans la fenêtre de douze mois"};
+  return {etat: "a-completer"};
+}
+function histoFormalite(m){
+  return {natures: blocV(m.natures), redacteur: blocV(m.redacteur), commune: blocV(m.commune), dateActe: blocV(m.dateActe),
+    service: blocV(m.service), dateDepot: blocV(m.dateDepot), volume: blocV(m.volume), numero: blocV(m.numero), piece: m.doc ? m.doc.nom : ""};
+}
+
+// Matière HISTO d'un groupe, prête pour les anomalies et la rédaction
+function histoMatiere(g){
+  const vide = {actif: false, phrases: [], aCompleter: [], aValider: 0, aTrancher: 0, sansAppui: [], concordants: 0};
+  if(etat.histo.statut !== "fait") return vide;
+  // n'entrent au paragraphe que les mouvements sûrs : vus par les deux sources, ou retenus par le collaborateur
+  const croise = histoCroisement(g), surs = new Set(croise.concordants.map(x => x.cle).concat(croise.histoSeuls.filter(x => x.decision === "retenu").map(x => x.cle)));
+  const phrases = [], aCompleter = []; let aValider = 0;
+  // les sœurs issues d'un même mouvement (même document, mêmes origines) sont rédigées en une seule phrase
+  const parMouvement = new Map();
+  histoMaillons(g).forEach(m => {
+    const origines = (m.parcelles_origine || []).filter(o => surs.has(histoCle(o, m.parcelle)));
+    if(!origines.length) return;
+    const k = m.document.id_dfi + "|" + (m.document.lot || "") + "|" + m.nature + "|" + origines.map(filCleCourte).sort().join(",");
+    if(!parMouvement.has(k)) parMouvement.set(k, {m, origines, filles: [], pubs: []});
+    const x = parMouvement.get(k); x.filles.push(m.parcelle); x.pubs.push(histoPublication(g, m));
+  });
+  parMouvement.forEach(x => {
+    // une formalité pour l'ensemble : la première reprise ou validée l'emporte, sinon le premier état restant
+    const pub = x.pubs.find(p => p.etat === "valide") || x.pubs.find(p => p.etat === "auto") || x.pubs[0];
+    if(pub.etat === "a-valider") aValider++;
+    if(pub.etat === "a-completer") aCompleter.push(x.m);
+    phrases.push({date: x.m.document.date_effet || "", t: histoPhrase(x.m, x.origines, pub, x.filles), pub});
+  });
+  // les maillons des pièces que HISTO ne voit pas, et que le collaborateur a gardés, entrent aussi au paragraphe (FUSION reste maître)
+  croise.piecesSeules.filter(x => x.decision === "vu" && x.maillon.statut !== "propose").forEach(x => {
+    phrases.push({date: x.maillon.date || "", t: "La parcelle cadastrée section " + FIL_NZ(x.maillon.nouveau.section) + " numéro " + (+x.maillon.nouveau.numero) + " est issue de la parcelle cadastrée section " + FIL_NZ(x.maillon.ancien.section) + " numéro " + (+x.maillon.ancien.numero) + (x.maillon.source && x.maillon.source.nom ? ", ainsi qu'il résulte de la pièce « " + x.maillon.source.nom + " »" : "") + ".", pub: {etat: "pieces"}});
+  });
+  phrases.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  return {actif: true, phrases, aCompleter, aValider, aTrancher: croise.histoSeuls.filter(x => !x.decision).length + croise.piecesSeules.filter(x => !x.decision).length,
+    sansAppui: histoSansAppui(g), concordants: croise.concordants.length};
+}
+
+// Formules par nature de mouvement ; « o » est la désignation des origines, avec son article (de la parcelle… / des parcelles…)
+const HISTO_FORMULES = {
+  "division": (o) => "de la division " + o.de,
+  "réunion": (o) => "de la réunion " + o.de,
+  "réunion et division": (o) => "de la réunion et de la division " + o.de,
+  "lotissement": (o) => "du lotissement " + o.de,
+  "remaniement": (o) => "du remaniement du cadastre, sous l'ancienne référence " + o.nu,
+  "rénovation": (o) => "de la rénovation du cadastre, sous l'ancienne référence " + o.nu,
+  "renumérotation": (o) => "d'une renumérotation, sous l'ancienne référence " + o.nu,
+  "extraction du domaine non cadastré": () => "du domaine non cadastré"
+};
+function histoRefTexte(p){ return "section " + FIL_NZ(p.section) + " numéro " + (+p.numero); }
+function histoEnum(l){ return l.length > 1 ? l.slice(0, -1).join(", ") + " et " + l[l.length - 1] : l[0]; }
+function histoOrigines(origines){
+  const l = origines.map(histoRefTexte), plur = l.length > 1;
+  return {de: (plur ? "des parcelles cadastrées " : "de la parcelle cadastrée ") + histoEnum(l), nu: histoEnum(l)};
+}
+function histoPhrase(m, origines, pub, filles){
+  const f0 = filles && filles.length ? filles : [m.parcelle], plur = f0.length > 1;
+  const formule = HISTO_FORMULES[m.nature] || HISTO_FORMULES["division"];
+  let t = (plur ? "Les parcelles cadastrées " : "La parcelle cadastrée ") + histoEnum(f0.map(histoRefTexte)) + (plur ? " sont issues " : " est issue ") + formule(histoOrigines(origines));
+  if(m.document.annee) t += ", intervenu" + (/^(remaniement|lotissement)$/.test(m.nature) ? "" : "e") + " en " + m.document.annee;
+  const f = pub.formalite;
+  if((pub.etat === "auto" || pub.etat === "valide") && f){
+    t += ", suivant acte" + (f.redacteur ? " reçu par " + f.redacteur.replace(/^NOT\s+/i, "Maître ") + (f.commune ? ", notaire à " + f.commune : "") : "") + (f.dateActe ? ", le " + f.dateActe : "");
+    if(f.service || f.volume) t += ", publié" + (f.service ? " au service de la publicité foncière de " + f.service : "") + (f.dateDepot ? " le " + f.dateDepot : "") + (f.volume ? ", volume " + f.volume : "") + (f.numero ? " numéro " + f.numero : "");
+  }
+  return t + ".";
+}
+
+// Paragraphes du bloc 1 (rédaction)
+function histoParagraphes(g){
+  const H = histoMatiere(g), P = [];
+  if(etat.histo.statut === "erreur") { P.push({style: "sous2", t: "ORIGINE CADASTRALE"}); P.push({style: "alerte", couleur: "jaune", t: "À compléter — appui cadastral HISTO indisponible lors de la génération (" + (etat.histo.erreur || "erreur") + ") : filiation à établir à partir des pièces."}); return P; }
+  if(!H.actif) return P;
+  if(!H.phrases.length && !H.sansAppui.length) return P;
+  P.push({style: "sous2", t: "ORIGINE CADASTRALE"});
+  H.phrases.forEach(x => P.push({style: "p", t: x.t}));
+  if(H.aValider) P.push({style: "alerte", couleur: "orange", t: H.aValider + " référence" + (H.aValider > 1 ? "s" : "") + " de publicité foncière à valider dans l'écran Appui HISTO avant de reporter ce paragraphe."});
+  if(H.aCompleter.length) P.push({style: "alerte", couleur: "jaune", t: "À compléter — éléments hypothécaires à demander : formalité" + (H.aCompleter.length > 1 ? "s" : "") + " ayant opéré " + H.aCompleter.map(m => "la " + m.nature + " de " + (m.parcelles_origine || []).map(filLibelle).join(", ") + " (" + (m.document.annee || "date inconnue") + ")").join(" ; ") + " — absente" + (H.aCompleter.length > 1 ? "s" : "") + " de la documentation hypothécaire déposée."});
+  if(H.sansAppui.length) P.push({style: "alerte", couleur: "jaune", t: "À compléter — appui cadastral HISTO absent pour " + H.sansAppui.map(x => filLibelle({section: x.parcelle.props.section, numero: x.parcelle.props.numero}) + " (" + x.motif + ")").join(", ") + " : filiation à établir à partir des pièces."});
+  return P;
+}
+
+// Anomalies du groupe (matière de la mention de tête)
+function histoAnomalies(g){
+  const A = [];
+  if(etat.histo.statut === "erreur"){ A.push({couleur: "jaune", texte: "Appui cadastral HISTO indisponible : filiation établie sur les seules pièces."}); return A; }
+  const H = histoMatiere(g); if(!H.actif) return A;
+  if(H.aTrancher) A.push({couleur: "orange", texte: H.aTrancher + " divergence" + (H.aTrancher > 1 ? "s" : "") + " de filiation entre le cadastre (HISTO) et les pièces, à trancher dans l'écran Appui HISTO."});
+  if(H.aValider) A.push({couleur: "orange", texte: H.aValider + " rattachement" + (H.aValider > 1 ? "s" : "") + " de publicité foncière à valider (écran Appui HISTO)."});
+  if(H.aCompleter.length) A.push({couleur: "jaune", texte: H.aCompleter.length + " mouvement" + (H.aCompleter.length > 1 ? "s" : "") + " cadastra" + (H.aCompleter.length > 1 ? "ux" : "l") + " sans formalité dans la documentation hypothécaire : éléments à demander."});
+  if(H.sansAppui.length) A.push({couleur: "jaune", texte: "Appui cadastral HISTO absent pour " + H.sansAppui.length + " parcelle" + (H.sansAppui.length > 1 ? "s" : "") + " : filiation à établir à partir des pièces."});
+  return A;
+}
+
+// Maillons HISTO retenus, présentés à la filiation de FUSION comme des maillons validés (moteur « histo »)
+function histoMaillonsRetenus(g){
+  if(etat.histo.statut !== "fait") return [];
+  return histoCroisement(g).histoSeuls.filter(x => x.decision === "retenu").map(x => ({id: "h|" + x.cle, groupe: g.num,
+    ancien: {section: x.ancien.section, numero: x.ancien.numero}, nouveau: {section: x.maillon.parcelle.section, numero: x.maillon.parcelle.numero},
+    statut: "valide", moteur: "histo", nature: "cadastre (HISTO) — " + x.maillon.nature, date: x.maillon.document.date_effet || null, source: null}));
+}
+
+/* ---------- écran Appui HISTO ---------- */
+function ouvrirHisto(g){
+  const fond = document.createElement("div");
+  fond.className = "lect-fond";
+  fond.innerHTML = '<div class="lect histo"><div class="lect-tete"><b>Appui HISTO — filiation cadastrale</b>'
+    + '<span class="lect-sous">groupe ' + numeroGroupe4(g.num) + (etat.histo.situation ? " — DFI " + echap(etat.histo.situation) : "") + '</span>'
+    + '<button class="btn" data-act="relancer" type="button">Relancer HISTO</button>'
+    + '<button class="btn" data-act="fermer" type="button">Fermer</button></div><div class="histo-corps"></div></div>';
+  document.body.appendChild(fond);
+  const corps = fond.querySelector(".histo-corps");
+  const fermer = () => { fond.remove(); rendre(); };
+  fond.querySelector('[data-act="fermer"]').addEventListener("click", fermer);
+  fond.addEventListener("click", e => { if(e.target === fond) fermer(); });
+  fond.querySelector('[data-act="relancer"]').addEventListener("click", async e => { e.target.disabled = true; e.target.textContent = "Appel en cours…"; etat.histo.statut = "attente"; await histoLancer(); dessiner(); e.target.disabled = false; e.target.textContent = "Relancer HISTO"; });
+
+  const decider = (cle, valeur) => { const k = g.num + "|" + cle; if(valeur) etat.histo.decisions[k] = valeur; else delete etat.histo.decisions[k]; marquerModifie("histo-decision", {groupe: g.num, cle, decision: valeur || "annulee"}); dessiner(); };
+
+  function dessiner(){
+    if(etat.histo.statut === "en-cours" || etat.histo.statut === "attente"){ corps.innerHTML = '<p class="histo-aide">Appel à HISTO en cours…</p>'; return; }
+    if(etat.histo.statut === "attente-drive"){ corps.innerHTML = '<p class="histo-aide">Connectez le Drive : l\'appel à HISTO partira aussitôt.</p>'; return; }
+    if(etat.histo.statut === "erreur"){ corps.innerHTML = '<p class="histo-aide alerte">HISTO n\'a pas répondu : ' + echap(etat.histo.erreur) + '. FUSION continue sur les seules pièces ; cliquez « Relancer HISTO ».</p>'; return; }
+    const c = histoCroisement(g), sans = histoSansAppui(g), maillons = histoMaillons(g);
+    let h = '<p class="histo-aide">Le cadastre (HISTO) sert d\'appui ; ce sont les états hypothécaires qui font foi. Vert : vu par les deux sources. Orange : vu par une seule, à trancher.</p>';
+    // 1 — croisement
+    h += '<h4>Croisement cadastre / pièces</h4>';
+    const ligne = (cls, ref, via, etiquette, actions) => '<div class="histo-ligne ' + cls + '"><span class="ref">' + ref + '</span><span class="via">' + via + '</span><span class="etiq">' + etiquette + '</span><span class="acts">' + actions + '</span></div>';
+    if(!c.concordants.length && !c.histoSeuls.length && !c.piecesSeules.length) h += '<p class="histo-aide">Aucun mouvement connu pour ce groupe, ni au cadastre ni dans les pièces.</p>';
+    c.concordants.forEach(x => { h += ligne("ok", echap(filLibelle(x.maillon.parcelle)) + " ← " + echap(filLibelle(x.ancien)), echap(x.maillon.nature) + (x.maillon.document.annee ? " — " + x.maillon.document.annee : "") + " · pièce : " + echap(x.pieces[0].source ? x.pieces[0].source.nom : "saisie manuelle"), "concordant", ""); });
+    const nonTranches = c.histoSeuls.filter(x => !x.decision);
+    if(nonTranches.length > 1) h += '<div class="histo-lot"><button class="btn" data-lot="retenu" type="button">Retenir les ' + nonTranches.length + ' mouvements vus au seul cadastre</button></div>';
+    c.histoSeuls.forEach(x => { h += ligne(x.decision ? "tranche" : "div", echap(filLibelle(x.maillon.parcelle)) + " ← " + echap(filLibelle(x.ancien)), echap(x.maillon.nature) + (x.maillon.document.annee ? " — " + x.maillon.document.annee : "") + " · vu au seul cadastre" + (x.refuse ? " (refusé dans les pièces)" : ""),
+      x.decision === "retenu" ? "retenu" : x.decision === "ecarte" ? "écarté" : "à trancher",
+      x.decision ? '<button class="btn" data-cle="' + echap(x.cle) + '" data-dec="" type="button">Annuler</button>' : '<button class="btn plein" data-cle="' + echap(x.cle) + '" data-dec="retenu" type="button">Retenir</button><button class="btn" data-cle="' + echap(x.cle) + '" data-dec="ecarte" type="button">Écarter</button>'); });
+    c.piecesSeules.forEach(x => { h += ligne(x.decision ? "tranche" : "div", echap(filLibelle(x.maillon.nouveau)) + " ← " + echap(filLibelle(x.maillon.ancien)), "vu dans les seules pièces · " + echap(x.maillon.source ? x.maillon.source.nom : "saisie manuelle"),
+      x.decision === "vu" ? "conservé" : "à trancher",
+      x.decision ? '<button class="btn" data-cle="' + echap(x.cle) + '" data-dec="" type="button">Annuler</button>' : '<button class="btn plein" data-cle="' + echap(x.cle) + '" data-dec="vu" type="button">Conserver</button>'); });
+    // 2 — publicité foncière
+    const vusPub = new Set();
+    const aRattacher = maillons.filter(m => { const k = histoClePub(m); if(vusPub.has(k)) return false; vusPub.add(k); return true; })
+      .map(m => ({m, pub: histoPublication(g, m)})).filter(x => x.pub.etat !== "sans-objet");
+    h += '<h4>Références de publicité foncière</h4>';
+    if(!aRattacher.length) h += '<p class="histo-aide">Aucun mouvement appelant une formalité (les remaniements et rénovations sont administratifs).</p>';
+    aRattacher.forEach(({m, pub}) => {
+      const k = histoClePub(m), titre = echap([m.parcelle, ...(m.parcelles_soeurs || [])].map(filLibelle).join(", ")) + " ← " + echap((m.parcelles_origine || []).map(filLibelle).join(", ")) + " · " + echap(m.nature) + " · " + echap(m.document.date_effet || "");
+      if(pub.etat === "auto" || pub.etat === "valide"){
+        const f = pub.formalite;
+        h += ligne("ok", titre, echap([f.natures, f.dateActe, f.volume ? "vol. " + f.volume + (f.numero ? " n° " + f.numero : "") : ""].filter(Boolean).join(" · ")), pub.etat === "auto" ? "repris automatiquement" : "validé à la main", pub.etat === "valide" ? '<button class="btn" data-pub-annuler="' + echap(k) + '" type="button">Modifier</button>' : "");
+      }else if(pub.etat === "a-completer"){
+        h += ligne("jaune", titre, "aucune formalité citant ces parcelles dans les états hypothécaires lus", "à compléter", "");
+      }else{
+        const f = pub.formalite || {};
+        const champ = (n, lib) => '<label>' + lib + '<input data-champ="' + n + '" value="' + echap(f[n] || "") + '"></label>';
+        h += '<div class="histo-saisie" data-pub="' + echap(k) + '"><div class="titre">' + titre + ' <span class="etiq">à valider — ' + echap(pub.motif) + '</span></div>'
+          + (pub.candidates && pub.candidates.length > 1 ? '<label class="large">Formalité proposée<select data-candidates>' + pub.candidates.map((x, i) => '<option value="' + i + '">' + echap([x.natures, x.dateActe, x.volume ? "vol. " + x.volume + " n° " + x.numero : "", "écart " + Math.round(x.ecart) + " mois"].filter(Boolean).join(" · ")) + '</option>').join("") + '</select></label>' : "")
+          + champ("natures", "Nature") + champ("redacteur", "Rédacteur") + champ("commune", "Résidence") + champ("dateActe", "Date de l'acte") + champ("service", "Service de publicité foncière") + champ("dateDepot", "Date de dépôt") + champ("volume", "Volume") + champ("numero", "Numéro")
+          + '<button class="btn plein" data-valider type="button">Valider</button></div>';
+      }
+    });
+    // 3 — parcelles sans appui
+    if(sans.length){ h += '<h4>Parcelles sans appui cadastral</h4>'; sans.forEach(x => { h += ligne("jaune", echap(filLibelle({section: x.parcelle.props.section, numero: x.parcelle.props.numero})), echap(x.motif), "à compléter", ""); }); }
+    corps.innerHTML = h;
+
+    corps.querySelectorAll("[data-dec]").forEach(b => b.addEventListener("click", () => decider(b.dataset.cle, b.dataset.dec)));
+    const lot = corps.querySelector("[data-lot]");
+    if(lot) lot.addEventListener("click", () => { nonTranches.forEach(x => { etat.histo.decisions[g.num + "|" + x.cle] = "retenu"; }); marquerModifie("histo-decision", {groupe: g.num, lot: nonTranches.length, decision: "retenu"}); dessiner(); });
+    corps.querySelectorAll("[data-pub-annuler]").forEach(b => b.addEventListener("click", () => { delete etat.histo.publications[g.num + "|" + b.dataset.pubAnnuler]; marquerModifie("histo-publication", {groupe: g.num, maillon: b.dataset.pubAnnuler, statut: "rouverte"}); dessiner(); }));
+    corps.querySelectorAll(".histo-saisie").forEach(z => {
+      const k = z.dataset.pub, entree = aRattacher.find(x => histoClePub(x.m) === k);
+      const sel = z.querySelector("[data-candidates]");
+      if(sel) sel.addEventListener("change", () => { const f = entree.pub.candidates[+sel.value]; z.querySelectorAll("[data-champ]").forEach(i => { i.value = f[i.dataset.champ] || ""; }); });
+      z.querySelector("[data-valider]").addEventListener("click", () => {
+        const f = {statut: "valide", valide_le: new Date().toISOString()};
+        z.querySelectorAll("[data-champ]").forEach(i => { f[i.dataset.champ] = i.value.trim(); });
+        if(!f.volume && !f.dateActe){ signaler("Indiquez au moins la date de l'acte ou le volume de publication.", true); return; }
+        etat.histo.publications[g.num + "|" + k] = f;
+        marquerModifie("histo-publication", {groupe: g.num, maillon: k, statut: "valide"});
+        dessiner();
+      });
+    });
+  }
+  dessiner();
 }
 
 /* ---------- écran de filiation ---------- */
@@ -3045,12 +3395,15 @@ function rendreOrigines(g){
   const zone = document.createElement("div"); zone.className = "origines-zone";
   const anciennes = filAnciennes(g), lignes = filTableauOrigines(g), chaines = filChaines(g);
   const aRelier = chaines.filter(c => !c.resolue).length;
-  if(!anciennes.size && !lignes.length) return zone;
+  const H = histoMatiere(g), nHisto = H.aTrancher + H.aValider, histoVisible = etat.histo && etat.histo.statut !== "attente";
+  if(!anciennes.size && !lignes.length && !histoVisible) return zone;
   zone.innerHTML = '<div class="origines-tete">Origines cadastrales' + (aRelier ? ' — <b>' + aRelier + '</b> référence' + (aRelier > 1 ? 's anciennes' : ' ancienne') + ' à relier' : ' — filiation établie')
-    + '<button class="btn" type="button" data-act="filiation">Filiation cadastrale</button></div>'
+    + '<button class="btn" type="button" data-act="filiation">Filiation cadastrale</button>'
+    + (histoVisible ? '<button class="btn' + (nHisto ? ' plein' : '') + '" type="button" data-act="histo">Appui HISTO' + (etat.histo.statut === "en-cours" ? " (appel…)" : etat.histo.statut === "erreur" ? " (indisponible)" : nHisto ? " — " + nHisto + " à trancher" : H.concordants ? " — " + H.concordants + " concordant" + (H.concordants > 1 ? "s" : "") : "") + '</button>' : '') + '</div>'
     + (lignes.length ? '<table class="origines"><thead><tr><th>Référence actuelle</th><th>Référence ancienne</th><th>Acte ou document faisant le lien</th><th>Date</th></tr></thead><tbody>'
       + lignes.map(l => '<tr' + (l.manuel ? ' class="manuel"' : '') + '><td>' + echap(l.actuelle) + '</td><td>' + echap(l.ancienne) + '</td><td>' + echap(l.acte) + '</td><td>' + echap(l.date) + '</td></tr>').join("") + '</tbody></table>' : '');
   zone.querySelector('[data-act="filiation"]').addEventListener("click", () => ouvrirFiliation(g));
+  const bh = zone.querySelector('[data-act="histo"]'); if(bh) bh.addEventListener("click", () => ouvrirHisto(g));
   return zone;
 }
 
@@ -3320,7 +3673,7 @@ function matiereGroupe(g){
   // pièces
   const mainlevees = docs.filter(d => /MAINLEV|ACCORD/i.test((d.nom_origine || "") + " " + (d.nom || "")));
   const aQualifier = docs.filter(d => d.type === "AQ");
-  const chaines = filChaines(g), aRelier = chaines.filter(c => !c.resolue).length, manuels = (etat.filiation.maillons || []).filter(x => x.groupe === g.num && x.statut === "manuel").length;
+  const chaines = filChaines(g), aRelier = chaines.filter(c => !c.resolue).length, manuels = (etat.filiation.maillons || []).filter(x => x.groupe === g.num && x.statut === "manuel" && !histoConcorde(x)).length;   // un maillon manuel que HISTO confirme n'est plus une anomalie
   const divergences = divergencesParcelles().filter(x => x.groupe === g.num).length;
   const nonValidees = mentions.filter(m => !m.valide).length;
 
@@ -3344,6 +3697,7 @@ function matiereGroupe(g){
     const nq = reprises.reduce((s, d) => s + ((d.lecture.reprise.questions || []).length && !d.lecture.reprise.traite ? d.lecture.reprise.questions.length : 0), 0);
     anomalies.push({couleur: "jaune", texte: "Documentation reprise (" + reprises.map(d => d.lecture.reprise.source).filter((v, i, a) => a.indexOf(v) === i).join(", ") + "), à recontrôler contre les pièces lues" + (nq ? " — " + nq + " point" + (nq > 1 ? "s" : "") + " noté" + (nq > 1 ? "s" : "") + " par le rédacteur en attente" : "") + "."});
   }
+  histoAnomalies(g).forEach(a => anomalies.push(a));
   anomalies.sort((a, b) => GRAVITE[b.couleur] - GRAVITE[a.couleur]);
   const couleur = anomalies.length ? anomalies[0].couleur : "vert";
 
@@ -3377,6 +3731,7 @@ function redigerGroupe(g, options){
   P.push({style: "p", t: "Total surface : " + blocContenance(total) + "."});
   const indiv = M.parcelles.filter(p => /IND|QUOTE|\d+\s*\/\s*\d+/i.test(p.droit || ""));
   if(indiv.length) P.push({style: "p", gras: true, souligne: true, t: "Parcelle" + (indiv.length > 1 ? "s" : "") + " détenue" + (indiv.length > 1 ? "s" : "") + " en indivision : " + blocNumeros(indiv) + " — les autres indivisaires devront intervenir à l'acte."});
+  histoParagraphes(g).forEach(x => P.push(x));   // origine cadastrale, du plus récent au plus ancien (09/10/2026)
 
   // 2 — effet relatif
   P.push({style: "sous", t: "EFFET RELATIF"});
@@ -3429,7 +3784,7 @@ function redigerGroupe(g, options){
   // 4 — inscriptions hypothécaires
   P.push({style: "sous", t: "INSCRIPTIONS HYPOTHÉCAIRES"});
   if(!M.dernierEhf) P.push({style: "note", t: "Bloc à établir après lecture d'un état hypothécaire."});
-  else if(!M.inscriptions.length) P.push({style: "p", t: "Suivant état hypothécaire en date du " + dateEhf + ", il n'existe aucune inscription hypothécaire en cours de validité."});
+  else if(!M.inscriptions.length) P.push({style: "p", t: "Aux termes de l'état hypothécaire en date du " + dateEhf + ", il n'existe aucune inscription hypothécaire en cours de validité."});
   else{
     P.push({style: "p", t: "Il résulte du titre que le bien est grevé des inscriptions hypothécaires suivantes :"});
     const toutes = new Set(M.parcelles.map(filCleCourte));
@@ -3923,11 +4278,12 @@ function traiterTexte(texte){
   try{
     chargerGeoJSON(objet);
     dessiner.cadre = false;
-    etat.dossier = null; etat.persist.actif = false; etat.ignores = new Set(); etat.filiation = {maillons: []}; etat.concordance = [];
+    etat.dossier = null; etat.persist.actif = false; etat.ignores = new Set(); etat.filiation = {maillons: []}; etat.concordance = []; etat.histo = histoVide();
     etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false; etat.spfParIdu = {};
     afficherPersist("Jeu local — non enregistré");
     regrouperAutomatiquement();
     rendre();
+    histoLancer();
     signaler(etat.parcelles.length + " parcelles chargées, " + etat.groupes.length + " unités foncières détectées.");
   }catch(e){
     signaler(e.message, true);
@@ -3954,6 +4310,7 @@ function etatPersistable(){
     },
     sansGeometrie: (etat.sansGeometrie || []).map(x => x.idu).filter(Boolean),
     filiation: {maillons: (etat.filiation && etat.filiation.maillons) || []},
+    histo: {decisions: (etat.histo && etat.histo.decisions) || {}, publications: (etat.histo && etat.histo.publications) || {}},
     concordance: etat.concordance || [],
     spf_parcelles: etat.spfParIdu || {},
     numerotation_definitive: etat.numerotationFaite ? (etat.numerotationDate || new Date().toISOString()) : null
@@ -4050,6 +4407,7 @@ function ouvrirDepuisBase(d){
   etat.ignores = new Set(e.ignores || []);
   etat.filiation = {maillons: (e.filiation && Array.isArray(e.filiation.maillons)) ? e.filiation.maillons : []};
   etat.concordance = Array.isArray(e.concordance) ? e.concordance : [];
+  etat.histo = Object.assign(histoVide(), {decisions: (e.histo && e.histo.decisions) || {}, publications: (e.histo && e.histo.publications) || {}});
   etat.spfParIdu = (e.spf_parcelles && typeof e.spf_parcelles === "object") ? e.spf_parcelles : {};
   if(e.seuils){
     if(e.seuils.rapprochement_m != null){ document.getElementById("rapproch").value = e.seuils.rapprochement_m; document.getElementById("rapproch-val").textContent = e.seuils.rapprochement_m + " m"; }
@@ -4062,6 +4420,7 @@ function ouvrirDepuisBase(d){
   etat.persist.actif = true;
   proposerRapprochements();
   rendre();
+  histoLancer();                        // appui HISTO lancé d'office à l'ouverture (09/10/2026)
 
   const quand = d.dossier.modifie_le ? new Date(d.dossier.modifie_le).toLocaleString("fr-FR",{dateStyle:"short", timeStyle:"short"}) : "";
   afficherEtatSociete("<b>" + echap(d.dossier.denomination || d.dossier.siren) + "</b> — SIREN " + echap(d.dossier.siren)
@@ -4273,7 +4632,7 @@ async function chercherParcelles(siren, libelle, forcer){
 
     chargerGeoJSON({type:"FeatureCollection", features});
     dessiner.cadre = false;
-    etat.ignores = new Set(); etat.filiation = {maillons: []}; etat.concordance = [];
+    etat.ignores = new Set(); etat.filiation = {maillons: []}; etat.concordance = []; etat.histo = histoVide();
     regrouperAutomatiquement();
     etat.ouvert = null;                 // vue d'ensemble d'abord : les groupes repliés
     etat.sansGeometrie = sansGeometrie;
@@ -4283,6 +4642,7 @@ async function chercherParcelles(siren, libelle, forcer){
     rendre();
     fermer();
     sauverInitial().then(listerDossiers);
+    histoLancer();                      // appui HISTO lancé d'office à l'ouverture (09/10/2026)
 
     const s = d1.societe || {};
     let texte = "<b>" + (s.denomination || brut) + "</b>" + (s.siren ? " — SIREN " + s.siren : "")
