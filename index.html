@@ -108,10 +108,10 @@
   .reglages .reglage{padding:0 14px}
   .reglages .reglage:last-child{padding-bottom:10px}
   .dossiers summary{padding:8px 0}
-  /* 18/10/2026 — flèche de « Dossiers enregistrés » plus visible, comme dans PRIX et COUNTDOWN : orange, à la taille du titre, ▸ replié / ▾ déplié */
-  .dossiers summary::before{content:"▸";font-size:17px;line-height:1;font-weight:700;color:var(--orange);transform:none;transition:none}
-  .dossiers[open] summary::before{content:"▾";transform:none}
-  .dossiers summary:hover::before{color:var(--carmin)}
+  /* 18/10/2026 — flèche de « Dossiers enregistrés » : vrai triangle dessiné en CSS (le caractère ▸ reste minuscule à toute taille), orange, 12 × 16 px, qui pivote vers le bas à l'ouverture */
+  .dossiers summary::before{content:"";display:inline-block;flex:none;width:0;height:0;border-left:12px solid var(--orange);border-top:8px solid transparent;border-bottom:8px solid transparent;font-size:0;transition:transform .15s}
+  .dossiers[open] summary::before{transform:rotate(90deg)}
+  .dossiers summary:hover::before{border-left-color:var(--carmin)}
   .concordance{margin:0;border-top:1px solid var(--trait);background:#FAFBFC}
   .concordance summary{padding:9px 14px}
   .concordance .origines{margin:0 14px 6px;width:calc(100% - 28px)}
