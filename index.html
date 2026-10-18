@@ -4183,6 +4183,7 @@ function formatSurface(m2){
 }
 
 function rendre(){
+  memoriserReprise();
   const liste = document.getElementById("liste");
   liste.innerHTML = "";
   divergencesParcelles.cache = null;
@@ -4431,8 +4432,25 @@ function afficherPersist(texte, classe){
   el.textContent = texte || "";
   el.className = "persist" + (classe ? " " + classe : "");
 }
+/* REPRISE (18/10/2026) — « reprendre où j'en étais » (décidé le 13/10) : à la réouverture d'un dossier, le groupe ouvert en dernier se rouvre
+   tout seul, sans question. Deux mémoires, on prend la plus récente : le navigateur (immédiate, une clé par SIREN) et l'état du dossier
+   (dernier_groupe, enregistré avec le geste suivant, utile depuis un autre poste). Un groupe disparu depuis (fusion, détachement) est ignoré. */
+const CLE_REPRISE = siren => "fusion.reprise." + siren;
+function memoriserReprise(){
+  if(!etat.dossier || etat.ouvert == null) return;
+  etat.dernierGroupe = etat.ouvert; etat.dernierGroupeLe = new Date().toISOString();
+  try{ localStorage.setItem(CLE_REPRISE(etat.dossier.siren), JSON.stringify({groupe: etat.ouvert, quand: Date.now()})); }catch(e){}
+}
+function groupeDeReprise(siren, e, groupes){
+  let local = null; try{ local = JSON.parse(localStorage.getItem(CLE_REPRISE(siren)) || "null"); }catch(err){}
+  const base = e && Number.isInteger(e.dernier_groupe) ? {groupe: e.dernier_groupe, quand: Date.parse(e.dernier_groupe_le || "") || 0} : null;
+  const choix = [local, base].filter(x => x && Number.isInteger(x.groupe)).sort((a, b) => (b.quand || 0) - (a.quand || 0))[0];
+  return choix && groupes.some(g => g.num === choix.groupe) ? choix.groupe : null;
+}
 function etatPersistable(){
   return {
+    dernier_groupe: Number.isInteger(etat.dernierGroupe) ? etat.dernierGroupe : null,
+    dernier_groupe_le: etat.dernierGroupeLe || null,
     ignores: [...etat.ignores],
     seuils: {
       limiteCommuneMinimale_m: parseFloat(document.getElementById("mini").value) || 0,
@@ -4547,17 +4565,21 @@ function ouvrirDepuisBase(d){
     if(e.seuils.toleranceContact_m != null){ document.getElementById("tolerance").value = e.seuils.toleranceContact_m; }
   }
   etat.sansGeometrie = sans.map(p => ({...(p.props||{}), idu: p.idu, motif: "absente du plan au dernier relevé"}));
-  etat.ouvert = null;
   etat.dossier = {siren: d.dossier.siren, denomination: d.dossier.denomination, millesime: d.dossier.millesime};
+  const reprise = groupeDeReprise(d.dossier.siren, e, etat.groupes);   // le dernier groupe ouvert se rouvre tout seul
+  etat.ouvert = reprise; etat.zoomSur = reprise;
+  etat.dernierGroupe = reprise != null ? reprise : (Number.isInteger(e.dernier_groupe) ? e.dernier_groupe : null); etat.dernierGroupeLe = e.dernier_groupe_le || null;
   etat.persist.actif = true;
   proposerRapprochements();
   rendre();
   histoLancer();                        // appui HISTO lancé d'office à l'ouverture (09/10/2026)
+  if(reprise != null){ const el = document.querySelector(".groupe.ouvert"); if(el && el.scrollIntoView) el.scrollIntoView({block: "start"}); }
 
   const quand = d.dossier.modifie_le ? new Date(d.dossier.modifie_le).toLocaleString("fr-FR",{dateStyle:"short", timeStyle:"short"}) : "";
   afficherEtatSociete("<b>" + echap(d.dossier.denomination || d.dossier.siren) + "</b> — SIREN " + echap(d.dossier.siren)
     + (d.dossier.millesime ? " — matrice " + echap(d.dossier.millesime) : "")
     + "<br>Dossier rouvert depuis la base" + (quand ? ", dernière modification le " + quand : "")
+    + (reprise != null ? " — reprise au groupe " + numeroGroupe4(reprise) : "")
     + " : " + avec.length + ' parcelles, <span id="groupes-vivant">' + etat.groupes.length + " groupes</span>"
     + (sans.length ? ', <span class="alerte">' + sans.length + " sans géométrie</span>" : "")
     + '<div class="reinit"><button class="btn danger" id="btn-reinit">Réinitialiser depuis REDPAR</button></div>');
