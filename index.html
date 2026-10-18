@@ -4016,7 +4016,7 @@ async function sortirTableauReprises(){
   const doc = new D.Document({creator: "FUSION — FIDAL Notaires", title: titre, sections: [{
     properties: {page: {size: {orientation: D.PageOrientation.LANDSCAPE, width: 16838, height: 11906}, margin: {top: 720, bottom: 720, left: 720, right: 720}}},
     children: [
-      new D.Paragraph({children: [new D.TextRun({text: titre, bold: true, font: "Georgia", size: 26})], spacing: {after: 80}}),
+      new D.Paragraph({children: [new D.TextRun({text: titre, bold: true, font: "Segoe UI", size: 26})], spacing: {after: 80}}),
       new D.Paragraph({children: [new D.TextRun({text: "Produit le " + blocDateFr(new Date()) + " — texte reproduit tel qu'il a été déposé, cellule vide quand l'information manque. Un seul tableau, sans cellule fusionnée : le tri Word par commune ou par groupe fonctionne.", italics: true, color: "666666", font: "Segoe UI", size: 16})], spacing: {after: 160}}),
       new D.Table({width: {size: REPRISE_COLONNES.reduce((s, c) => s + c[2], 0), type: D.WidthType.DXA}, columnWidths: REPRISE_COLONNES.map(c => c[2]), rows: lignes})
     ]}]});
@@ -4028,7 +4028,7 @@ async function sortirTableauReprises(){
 /* ---------- rendu HTML (aperçu et PDF par impression) ---------- */
 function blocsHtml(sections, titre, options){
   const o = options || {};
-  const css = "body{font-family:Georgia,'Times New Roman',serif;font-size:11.5pt;line-height:1.45;color:#111;margin:22mm 18mm}h1{font-size:18pt;margin:0 0 6mm}h2{font-size:14pt;margin:9mm 0 3mm;padding:2px 8px;border-left:6px solid #888}h3{font-size:11pt;letter-spacing:.6px;text-transform:uppercase;margin:6mm 0 2mm;color:#0B3B4A}h4{font-size:10.5pt;letter-spacing:.4px;text-transform:uppercase;margin:4mm 0 2mm;color:#0B3B4A}p{margin:0 0 2.6mm;text-align:justify}li{margin:0 0 1.6mm}table{border-collapse:collapse;margin:2mm 0 3mm;font-size:10.5pt}td,th{border:1px solid #999;padding:2px 7px;text-align:left}th{background:#EEF1F4}.alerte{color:#fff;padding:3px 8px;margin:0 0 1.5mm;font-family:'Segoe UI',system-ui,sans-serif;font-size:10pt;text-align:left}.note{color:#666;font-style:italic}.lien{font-size:10pt;margin:3mm 0 8mm}.som li{margin:1mm 0}.som .puce{display:inline-block;width:11px;height:11px;border-radius:50%;vertical-align:-1px;margin-right:6px}.gs{text-decoration:underline;font-weight:bold}.pied{color:#666;font-size:9.5pt;margin-top:10mm}@media print{h2{break-before:page}h2:first-of-type{break-before:auto}.alerte{-webkit-print-color-adjust:exact;print-color-adjust:exact}}";
+  const css = "body{font-family:'Segoe UI',system-ui,sans-serif;font-size:11.5pt;line-height:1.45;color:#111;margin:22mm 18mm}h1,h2,h3,h4{font-weight:700}h1{font-size:18pt;margin:0 0 6mm}h2{font-size:14pt;margin:9mm 0 3mm;padding:2px 8px;border-left:6px solid #888}h3{font-size:11pt;letter-spacing:.6px;text-transform:uppercase;margin:6mm 0 2mm;color:#0B3B4A}h4{font-size:10.5pt;letter-spacing:.4px;text-transform:uppercase;margin:4mm 0 2mm;color:#0B3B4A}p{margin:0 0 2.6mm;text-align:justify}li{margin:0 0 1.6mm}table{border-collapse:collapse;margin:2mm 0 3mm;font-size:10.5pt}td,th{border:1px solid #999;padding:2px 7px;text-align:left}th{background:#EEF1F4}.alerte{color:#fff;padding:3px 8px;margin:0 0 1.5mm;font-family:'Segoe UI',system-ui,sans-serif;font-size:10pt;text-align:left}.note{color:#666;font-style:italic}.lien{font-size:10pt;margin:3mm 0 8mm}.som li{margin:1mm 0}.som .puce{display:inline-block;width:11px;height:11px;border-radius:50%;vertical-align:-1px;margin-right:6px}.gs{text-decoration:underline;font-weight:bold}.pied{color:#666;font-size:9.5pt;margin-top:10mm}@media print{h2{break-before:page}h2:first-of-type{break-before:auto}.alerte{-webkit-print-color-adjust:exact;print-color-adjust:exact}}";
   let h = "<!doctype html><html lang='fr'><head><meta charset='utf-8'><title>" + echap(titre) + "</title><style>" + css + "</style></head><body>";
   h += "<h1>" + echap(titre) + "</h1><p class='note'>Document de travail FUSION — produit le " + blocDateFr(new Date()) + ". Les mentions colorées sont des indications internes, à ne pas reporter dans l'acte.</p>";
   if(o.sommaire){
@@ -4063,7 +4063,7 @@ async function blocsDocx(sections, titre, options){
   const D = await chargerDocx(); const o = options || {};
   const hexSans = (c) => COULEURS[c].hex.replace("#", "");
   const enfants = [];
-  const texte = (t, opts) => new D.TextRun(Object.assign({text: t, font: "Georgia", size: 23}, opts || {}));
+  const texte = (t, opts) => new D.TextRun(Object.assign({text: t, font: "Segoe UI", size: 23}, opts || {}));
   enfants.push(new D.Paragraph({children: [texte(titre, {bold: true, size: 36})], spacing: {after: 200}}));
   enfants.push(new D.Paragraph({children: [texte("Document de travail FUSION — produit le " + blocDateFr(new Date()) + ". Les mentions colorées sont des indications internes, à retirer avant de coller dans l'acte.", {italics: true, color: "666666", size: 20})], spacing: {after: 300}}));
   if(o.sommaire){
