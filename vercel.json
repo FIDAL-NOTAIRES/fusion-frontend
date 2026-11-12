@@ -12,6 +12,9 @@
     },
     "api/lecture.js": {
       "maxDuration": 60
+    },
+    "api/carnet.js": {
+      "maxDuration": 30
     }
   }
 }
