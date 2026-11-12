@@ -198,11 +198,13 @@
   .trancher .sugg{border-bottom:0;background:transparent}
   .trancher .sugg-tete{display:none}
   .trancher .rien{padding:2px 14px 8px;font-size:12px;color:var(--gris);font-style:italic}
+  /* 12/11/2026 : FUSION ne reprend aucun ancien document (arbitrage JFD) — zone de reprise et tableau des reprises retirés de l'écran */
+  #reprise,#btn-tableau-reprises{display:none !important}
   /* ---- notaire en charge et pièces à réclamer (12/11/2026) ---- */
   .charge{margin-top:8px;padding:8px 10px;border:1px solid var(--trait);border-radius:6px;background:#FAFBFC;font-size:12.5px}
   .charge-ligne{display:flex;gap:10px;flex-wrap:wrap}
-  .charge-ligne label{flex:1 1 150px;display:flex;flex-direction:column;gap:3px;font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:var(--canard)}
-  .charge-ligne select{font:inherit;font-size:12.5px;text-transform:none;letter-spacing:0;padding:4px 6px;border:1px solid var(--trait);border-radius:4px;background:#fff;color:var(--nuit);max-width:100%}
+  .charge-ligne label{flex:1 1 150px;min-width:0;display:flex;flex-direction:column;gap:3px;font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:var(--canard)}
+  .charge-ligne select{font:inherit;font-size:12.5px;text-transform:none;letter-spacing:0;padding:4px 6px;border:1px solid var(--trait);border-radius:4px;background:#fff;color:var(--nuit);width:100%;min-width:0;max-width:100%}
   .charge-alerte{margin:7px 0 0;padding:5px 8px;border-radius:4px;background:#FFE6C7;color:#7A4300;font-size:12px}
   .charge-note{margin:6px 0 0;font-size:11.5px;color:var(--gris)}
   .lien-btn{border:0;background:none;padding:0;font:inherit;color:var(--canard);text-decoration:underline;cursor:pointer}
@@ -767,6 +769,7 @@ const etat = {
   pieces: {},            // état pointé de chaque pièce à réclamer : {id: {etat, le}} — absente = à réclamer
   piecesOpt: {},         // {travaux: true} quand le client signale des travaux de moins de dix ans
   charge: null,          // {associe, collaborateur} : notaire en charge du dossier, choisis dans CARNET
+  risques: {parGroupe: {}}, // état des risques levé par groupe (12/11/2026) : {statut, travail, le, erps, drive, icpe}
   concordance: [],       // mouvements de périmètre après numérotation (fusion, détachement) — table de concordance persistée avec le dossier
   histo: histoVide(),    // appui HISTO du dossier en cours (09/10/2026) : résultats de l'appel, décisions et rattachements
   filiation: {maillons: []}, // filiation cadastrale du DOSSIER EN COURS : maillons ancien → nouveau, proposés / validés / refusés / saisis à la main
@@ -4189,6 +4192,114 @@ async function sortirAnnexeServitudes(format){
   marquerModifie("sortie-annexe-servitudes", {groupes: sections.length, format});
 }
 
+/* ============================================================
+   ÉTAT DES RISQUES PAR GROUPE (12/11/2026)
+   Arbitrages : dans FUSION, RISQUES ne sert qu'à PRODUIRE l'état des risques du
+   groupe (ni analyse ni alerte) ; il se lève PAR BOUTON, une fois le périmètre
+   foncier arrêté, et vaut six mois. Même appel « portefeuille » que MARTEAU, en
+   mode différé : FUSION commande, puis interroge ; RISQUES ne rappelle jamais.
+   Seule reprise du résultat : les installations classées, pour la ligne des
+   pièces à réclamer (réglementation distincte de l'état des risques).
+   ============================================================ */
+const RISQUES_BASE = "https://risques.vercel.app";
+const MOIS_VALIDITE_ERP = 6;
+const risquesSuivis = new Set();     // travaux en cours d'interrogation dans cette page
+function cleGroupe(g){ return "g" + ([...g.membres].map(i => etat.parcelles[i] && etat.parcelles[i].props.idu).filter(Boolean).sort()[0] || g.num); }
+function risquesDuGroupe(g){ return (etat.risques && etat.risques.parGroupe && etat.risques.parGroupe[cleGroupe(g)]) || null; }
+function risquesPoser(g, valeur){
+  etat.risques = etat.risques || {}; etat.risques.parGroupe = etat.risques.parGroupe || {};
+  etat.risques.parGroupe[cleGroupe(g)] = Object.assign({}, etat.risques.parGroupe[cleGroupe(g)] || {}, valeur);
+}
+function risquesEcheance(r){ const d = r && r.le ? new Date(r.le) : null; if(!d || isNaN(d)) return null; d.setMonth(d.getMonth() + MOIS_VALIDITE_ERP); return d; }
+async function risquesLancer(g){
+  const refs = [...g.membres].map(i => etat.parcelles[i] && etat.parcelles[i].props.idu).filter(x => x && x.length === 14)
+    .map(x => x.slice(0, 5) + "-" + x.slice(5, 8) + "-" + x.slice(8, 10) + "-" + x.slice(10));
+  if(!refs.length){ signaler("Aucune référence cadastrale exploitable dans ce groupe.", true); return; }
+  const actuel = risquesDuGroupe(g);
+  if(actuel && actuel.statut === "termine" && !confirm("Un état des risques existe déjà pour ce groupe (" + new Date(actuel.le).toLocaleDateString("fr-FR") + "). En lever un nouveau ?")) return;
+  try{
+    const r = await fetch(RISQUES_BASE + "/api/portefeuille", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({societe: etat.dossier ? etat.dossier.denomination || etat.dossier.siren : null, appelant: "FUSION", dossier: etat.dossier ? etat.dossier.siren : null,
+                            groupes: [{numero: numeroGroupe4(g.num), parcelles: refs}]})});
+    const d = await r.json().catch(() => ({}));
+    if(!r.ok || !d.travail) throw new Error(d.cause || ("HTTP " + r.status));
+    risquesPoser(g, {statut: "en_cours", travail: d.travail, commande_le: new Date().toISOString(), parcelles: refs.length, message: "commande enregistrée", cause: null});
+    marquerModifie("risques-commande", {groupe: g.num, travail: d.travail, parcelles: refs.length});
+    rendre();
+  }catch(e){ signaler("État des risques non commandé — " + (e.message || "RISQUES indisponible"), true); }
+}
+// Interrogation : une question toutes les cinq secondes, jusqu'au résultat. Reprise toute seule à la réouverture du dossier.
+async function risquesSuivre(g){
+  const r0 = risquesDuGroupe(g); if(!r0 || r0.statut !== "en_cours" || !r0.travail || risquesSuivis.has(r0.travail)) return;
+  const travail = r0.travail, cle = cleGroupe(g); risquesSuivis.add(travail);
+  const encore = () => etat.risques && etat.risques.parGroupe && etat.risques.parGroupe[cle] && etat.risques.parGroupe[cle].travail === travail;
+  const groupe = () => etat.groupes.find(x => cleGroupe(x) === cle);
+  try{
+    for(let tour = 0; tour < 240 && encore(); tour++){
+      await new Promise(ok => setTimeout(ok, tour ? 5000 : 800));
+      let d; try{ const r = await fetch(RISQUES_BASE + "/api/portefeuille?travail=" + encodeURIComponent(travail)); d = await r.json(); }catch(e){ continue; }
+      if(!encore()) return;
+      const gg = groupe(); if(!gg) return;
+      if(d.statut === "en_cours"){
+        const m = (d.message || d.phase || "en cours") + (d.total ? " — " + (d.fait || 0) + " sur " + d.total : "");
+        etat.risques.parGroupe[cle].message = m;
+        const z = document.querySelector('[data-risques="' + cle + '"]'); if(z) z.textContent = m;
+        continue;
+      }
+      if(d.statut === "termine"){
+        const bien = (d.biens || []), erps = d.erps || [];
+        const icpe = []; bien.forEach(b => (b.rubriques || []).forEach(x => { if(x.cle === "icpe" && x.statut === "concerne") icpe.push({numero: b.numero, phrase: x.phrase || ""}); }));
+        risquesPoser(gg, {statut: "termine", le: new Date().toISOString(), rapport: d.rapport || null, erps: erps.map(x => ({numero: x.numero, url: x.url})), expire_le: d.expire_le || null, icpe, message: null});
+        marquerModifie("risques-produit", {groupe: gg.num, travail, erps: erps.length, installations_classees: icpe.length});
+        rendre();
+        risquesDeposer(gg).catch(() => {});
+        signaler("État des risques du groupe " + numeroGroupe4(gg.num) + " produit.");
+        return;
+      }
+      risquesPoser(gg, {statut: "echec", cause: d.cause || (d.statut === "expire" ? "travail expiré" : "échec"), message: null});
+      marquerModifie("risques-echec", {groupe: gg.num, travail, cause: d.cause || d.statut});
+      rendre(); return;
+    }
+  }finally{ risquesSuivis.delete(travail); }
+}
+// Les fichiers de RISQUES ne vivent que trente jours : l'état des risques est copié dans le dossier Drive du groupe.
+async function risquesDeposer(g){
+  const r = risquesDuGroupe(g);
+  if(!r || r.statut !== "termine" || r.drive || !(r.erps || []).length) return;
+  if(!driveConnecte() || !g.drive || !g.drive.dossier) return;
+  const cle = cleGroupe(g), liens = [];
+  for(const [i, x] of r.erps.entries()){
+    const rep = await fetch(x.url); if(!rep.ok) throw new Error("fichier de RISQUES illisible (HTTP " + rep.status + ")");
+    const nom = numeroGroupe4(g.num) + "_ERP_" + r.le.slice(0, 10).replace(/-/g, "") + (r.erps.length > 1 ? "_" + (i + 1) : "") + ".pdf";
+    const f = await driveEnvoyerFichier(new File([await rep.blob()], nom, {type: "application/pdf"}), nom, g.drive.dossier);
+    liens.push({nom, id: f.id, lien: f.webViewLink || ("https://drive.google.com/file/d/" + f.id + "/view")});
+  }
+  if(!etat.risques.parGroupe[cle]) return;
+  etat.risques.parGroupe[cle].drive = liens;
+  marquerModifie("risques-depose", {groupe: g.num, fichiers: liens.map(l => l.nom)});
+  rendre();
+}
+function rendreRisques(g, z){
+  const r = risquesDuGroupe(g), cle = cleGroupe(g);
+  let h = '<span style="flex-basis:100%;height:0"></span><span class="lib">État des risques';
+  if(!r || (!r.statut)) h += '</span><button class="btn" type="button" data-risques-go="1" title="À lever une fois le périmètre foncier du groupe arrêté : il vaut six mois">Lever</button>';
+  else if(r.statut === "en_cours") h += ' — <em data-risques="' + echap(cle) + '">' + echap(r.message || "en cours") + '</em></span>';
+  else if(r.statut === "echec") h += ' — <em>échec : ' + echap(r.cause || "") + '</em></span><button class="btn" type="button" data-risques-go="1">Relancer</button>';
+  else{
+    const ech = risquesEcheance(r), perime = ech && ech < new Date();
+    const liens = (r.drive && r.drive.length ? r.drive.map(l => ({t: l.nom, u: l.lien})) : (r.erps || []).map((x, i) => ({t: "ouvrir" + ((r.erps || []).length > 1 ? " " + (i + 1) : ""), u: x.url})));
+    h += ' du ' + new Date(r.le).toLocaleDateString("fr-FR") + (ech ? ' — <em' + (perime ? ' style="color:' + COULEURS.orange.hex + ';font-weight:600"' : '') + '>' + (perime ? 'périmé depuis le ' : 'valable jusqu\u2019au ') + ech.toLocaleDateString("fr-FR") + '</em>' : '')
+      + ' : ' + liens.map(l => '<a href="' + echap(l.u) + '" target="_blank" rel="noopener">' + echap(l.t) + '</a>').join(", ")
+      + (r.drive && r.drive.length ? '' : ' <em>(lien de RISQUES valable trente jours' + (g.drive && g.drive.dossier ? '' : ' ; créez le Drive pour le conserver') + ')</em>') + '</span>'
+      + (r.drive && r.drive.length ? '' : (g.drive && g.drive.dossier ? '<button class="btn" type="button" data-risques-drive="1">Déposer au Drive</button>' : ''))
+      + '<button class="btn" type="button" data-risques-go="1">Actualiser</button>';
+  }
+  z.insertAdjacentHTML("beforeend", h);
+  const go = z.querySelector("[data-risques-go]"); if(go) go.addEventListener("click", async () => { go.disabled = true; await risquesLancer(g); go.disabled = false; });
+  const dr = z.querySelector("[data-risques-drive]"); if(dr) dr.addEventListener("click", async () => { if(!exigerDrive()) return; dr.disabled = true; try{ await risquesDeposer(g); }catch(e){ signaler("Dépôt au Drive impossible — " + (e.message || "erreur") + ". Ouvrez le lien et enregistrez le fichier.", true); dr.disabled = false; } });
+  if(r && r.statut === "en_cours") risquesSuivre(g);
+}
+
 // Boutons de sortie de la fiche du groupe.
 function rendreSorties(g){
   const z = document.createElement("div"); z.className = "sorties";
@@ -4202,6 +4313,7 @@ function rendreSorties(g){
   const bSpf = z.querySelector("[data-spf]");
   if(bSpf) bSpf.addEventListener("click", () => attribuerSpf([g], "le groupe " + numeroGroupe4(g.num)));
   z.querySelectorAll("button[data-f]").forEach(b => b.addEventListener("click", async () => { b.disabled = true; try{ await sortirGroupe(g, b.dataset.f); }catch(e){ signaler(e.message, true); } finally{ b.disabled = false; } }));
+  if(etat.dossier) rendreRisques(g, z);
   return z;
 }
 
@@ -4304,7 +4416,7 @@ function piecesAReclamer(){
 
   [...etat.groupes].sort((a, b) => a.num - b.num).forEach(g => {
     if(!avecEhf.has(g.num)){ sansEhf.push(g.num); return; }
-    const M = matiereGroupe(g), base = "g" + ([...g.membres].map(i => etat.parcelles[i] && etat.parcelles[i].props.idu).filter(Boolean).sort()[0] || g.num);
+    const M = matiereGroupe(g), base = cleGroupe(g);
     const type = (t) => M.docs.filter(d => d.type === t);
     const memeDate = (docs, m) => { const iso = isoDe(m.dateA); return Boolean(iso) && docs.some(d => d.date_doc === iso); };
 
@@ -4345,8 +4457,9 @@ function piecesAReclamer(){
   });
 
   // 10 — installations classées signalées par l'état des risques (alimenté par le branchement de RISQUES)
-  ((etat.risques && etat.risques.icpe) || []).forEach(x => ajouter({id: "d|icpe|" + (x.id || x.nom), g: Number.isInteger(x.groupe) ? x.groupe : null, circuit: "collab", depose: false,
-    texte: "Installation classée — " + (x.nom || "exploitation") + (x.commune ? " (" + x.commune + ")" : "") + " : arrêtés préfectoraux à demander"}));
+  etat.groupes.forEach(g => { const r = risquesDuGroupe(g); if(!r || r.statut !== "termine" || !(r.icpe || []).length) return;
+    ajouter({id: cleGroupe(g) + "|icpe", g: g.num, circuit: "collab", depose: false,
+      texte: "Installations classées relevées par l'état des risques — arrêtés préfectoraux à demander" + (r.icpe[0].phrase ? " (" + r.icpe[0].phrase.replace(/\s+/g, " ").slice(0, 220) + ")" : "")}); });
 
   // 9 et 12 — demandes systématiques, au niveau du dossier
   const communes = [...new Set(etat.parcelles.map(p => p.props.nom_commune).filter(Boolean))].sort((a, b) => a.localeCompare(b, "fr"));
@@ -4680,7 +4793,7 @@ function traiterTexte(texte){
     chargerGeoJSON(objet);
     dessiner.cadre = false;
     etat.dossier = null; etat.persist.actif = false; etat.ignores = new Set(); etat.filiation = {maillons: []}; etat.concordance = []; etat.histo = histoVide();
-    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false; etat.spfParIdu = {}; etat.pieces = {}; etat.piecesOpt = {}; etat.charge = null;
+    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false; etat.spfParIdu = {}; etat.pieces = {}; etat.piecesOpt = {}; etat.charge = null; etat.risques = {parGroupe: {}};
     afficherPersist("Jeu local — non enregistré");
     regrouperAutomatiquement();
     rendre();
@@ -4734,6 +4847,7 @@ function etatPersistable(){
     pieces: etat.pieces || {},
     pieces_options: etat.piecesOpt || {},
     charge: etat.charge || null,
+    risques: {parGroupe: (etat.risques && etat.risques.parGroupe) || {}},
     numerotation_definitive: etat.numerotationFaite ? (etat.numerotationDate || new Date().toISOString()) : null
   };
 }
@@ -4833,6 +4947,7 @@ function ouvrirDepuisBase(d){
   etat.pieces = (e.pieces && typeof e.pieces === "object") ? e.pieces : {};
   etat.piecesOpt = (e.pieces_options && typeof e.pieces_options === "object") ? e.pieces_options : {};
   etat.charge = (e.charge && typeof e.charge === "object") ? e.charge : null;
+  etat.risques = {parGroupe: (e.risques && e.risques.parGroupe && typeof e.risques.parGroupe === "object") ? e.risques.parGroupe : {}};
   if(e.seuils){
     if(e.seuils.rapprochement_m != null){ document.getElementById("rapproch").value = e.seuils.rapprochement_m; document.getElementById("rapproch-val").textContent = e.seuils.rapprochement_m + " m"; }
     if(e.seuils.voisinage_m != null){ document.getElementById("rayon").value = e.seuils.voisinage_m; document.getElementById("rayon-val").textContent = e.seuils.voisinage_m + " m"; }
@@ -5065,7 +5180,7 @@ async function chercherParcelles(siren, libelle, forcer){
     etat.ouvert = null;                 // vue d'ensemble d'abord : les groupes repliés
     etat.sansGeometrie = sansGeometrie;
     etat.dossier = {siren, denomination: (d1.societe && d1.societe.denomination) || libelle || null, millesime: d1.millesime || null};
-    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false; etat.numerotationDate = null; etat.spfParIdu = {}; etat.pieces = {}; etat.piecesOpt = {}; etat.charge = null;
+    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false; etat.numerotationDate = null; etat.spfParIdu = {}; etat.pieces = {}; etat.piecesOpt = {}; etat.charge = null; etat.risques = {parGroupe: {}};
     etat.groupes.forEach(g => { g.drive = {}; });
     rendre();
     fermer();
