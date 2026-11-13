@@ -4204,6 +4204,7 @@ async function sortirAnnexeServitudes(format){
 const RISQUES_BASE = "https://risques.vercel.app";
 const MOIS_VALIDITE_ERP = 6;
 const risquesSuivis = new Set();     // travaux en cours d'interrogation dans cette page
+const risquesDepotsTentes = new Set(); // états dont le dépôt automatique au Drive a déjà été tenté dans cette page
 function cleGroupe(g){ return "g" + ([...g.membres].map(i => etat.parcelles[i] && etat.parcelles[i].props.idu).filter(Boolean).sort()[0] || g.num); }
 function risquesDuGroupe(g){ return (etat.risques && etat.risques.parGroupe && etat.risques.parGroupe[cleGroupe(g)]) || null; }
 function risquesPoser(g, valeur){
@@ -4252,7 +4253,6 @@ async function risquesSuivre(g){
         risquesPoser(gg, {statut: "termine", le: new Date().toISOString(), rapport: d.rapport || null, erps: erps.map(x => ({numero: x.numero, url: x.url})), expire_le: d.expire_le || null, icpe, message: null});
         marquerModifie("risques-produit", {groupe: gg.num, travail, erps: erps.length, installations_classees: icpe.length});
         rendre();
-        risquesDeposer(gg).catch(() => {});
         signaler("État des risques du groupe " + numeroGroupe4(gg.num) + " produit.");
         return;
       }
@@ -4270,7 +4270,7 @@ async function risquesDeposer(g){
   const cle = cleGroupe(g), liens = [];
   for(const [i, x] of r.erps.entries()){
     const rep = await fetch(x.url); if(!rep.ok) throw new Error("fichier de RISQUES illisible (HTTP " + rep.status + ")");
-    const nom = numeroGroupe4(g.num) + "_ERP_" + r.le.slice(0, 10).replace(/-/g, "") + (r.erps.length > 1 ? "_" + (i + 1) : "") + ".pdf";
+    const nom = numeroGroupe4(g.num) + "_ERP_" + isoDe(new Date(r.le)).replace(/-/g, "") + (r.erps.length > 1 ? "_" + (i + 1) : "") + ".pdf";
     const f = await driveEnvoyerFichier(new File([await rep.blob()], nom, {type: "application/pdf"}), nom, g.drive.dossier);
     liens.push({nom, id: f.id, lien: f.webViewLink || ("https://drive.google.com/file/d/" + f.id + "/view")});
   }
@@ -4298,6 +4298,10 @@ function rendreRisques(g, z){
   const go = z.querySelector("[data-risques-go]"); if(go) go.addEventListener("click", async () => { go.disabled = true; await risquesLancer(g); go.disabled = false; });
   const dr = z.querySelector("[data-risques-drive]"); if(dr) dr.addEventListener("click", async () => { if(!exigerDrive()) return; dr.disabled = true; try{ await risquesDeposer(g); }catch(e){ signaler("Dépôt au Drive impossible — " + (e.message || "erreur") + ". Ouvrez le lien et enregistrez le fichier.", true); dr.disabled = false; } });
   if(r && r.statut === "en_cours") risquesSuivre(g);
+  if(r && r.statut === "termine" && !(r.drive && r.drive.length) && (r.erps || []).length && driveConnecte() && g.drive && g.drive.dossier && !risquesDepotsTentes.has(r.travail || r.le)){
+    risquesDepotsTentes.add(r.travail || r.le);
+    risquesDeposer(g).catch(() => {});
+  }
 }
 
 // Boutons de sortie de la fiche du groupe.
