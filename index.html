@@ -443,6 +443,12 @@
   .lect-p2 .motif{color:#7A5A00;font-size:12px;margin:6px 0}
   .lect-p2 .avance{font-size:12px;color:#444;margin-top:6px;min-height:1.2em}
   .lect-p2 button.btn.plein:disabled{opacity:.45;cursor:not-allowed}
+  .lect-conv{border-top:1px dashed var(--orange);margin-top:10px;padding-top:10px}
+  .lect-conv .actions{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
+  .lect-conv textarea{width:100%;min-height:7em;font:12px/1.4 Consolas,monospace;box-sizing:border-box}
+  .lect-conv .retour{font-size:12px;min-height:1.2em;margin-top:4px}
+  .lect-conv .retour.alerte{color:#B00020}
+  .lect-conv .retour.ok{color:#1F7A4D}
   .pieces li button.lire{border:1px solid var(--trait,#d1d5db);background:#fff;border-radius:6px;padding:2px 8px;font:inherit;font-size:12px;cursor:pointer}
   .pieces li button.lire:hover{background:#f3f4f6}
 </style>
@@ -1582,13 +1588,111 @@ async function lecturePasse2(blob, totalPages, contexte, progres){
   lecture.pagesLues = totalPages; lecture.pagesTotal = totalPages;
   return lecture;
 }
-function panneauPasse2(conteneur, totalPages, motifTexte, lancer){
+/* ---------- VOIE GRATUITE (13/11/2026) : lecture par Claude EN CONVERSATION ----------
+   Même consigne que la passe payante (servie par api/lecture.js, action « consigne »,
+   sans clé), complétée du contexte du groupe. L'opérateur colle la consigne et joint
+   l'état dans une conversation avec Claude, puis recolle la réponse ici : elle est
+   remise au contrat de la passe 1 et arrive sur le même écran de contrôle. */
+const MOTEUR_CONVERSATION = "Claude, conversation";
+function consigneConversation(consigne, contexte, totalPages){
+  const parcelles = (contexte.parcelles || []).slice(0, 200).map(p => [p.commune, p.section, p.numero].filter(Boolean).join(" ")).join(" ; ");
+  return consigne
+    + "\n\nDocument : " + (contexte.nom || "état hypothécaire") + (contexte.groupe ? ", groupe " + contexte.groupe : "") + "."
+    + (parcelles ? " Parcelles du groupe attendues (à titre indicatif, pour aider à lire les références) : " + parcelles + "." : "")
+    + "\nLe document joint compte " + totalPages + " page" + (totalPages > 1 ? "s" : "") + "."
+    + " RÈGLE PROPRE À CETTE LECTURE : « page » est le RANG DE LA PAGE DANS LE PDF JOINT (1 pour la première page du fichier), jamais un numéro imprimé sur la fiche.";
+}
+function nettoyerReponseJSON(texte){
+  let t = String(texte || "").trim();
+  t = t.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
+  const a = t.indexOf("{"), b = t.lastIndexOf("}");
+  if(a < 0 || b <= a) throw new Error("aucun objet JSON dans la réponse collée");
+  return JSON.parse(t.slice(a, b + 1));
+}
+// Portage dans le navigateur de normaliser() d'api/lecture.js, moteur « Claude, conversation ».
+function normaliserConversation(brut, totalPages){
+  if(!brut || typeof brut !== "object") throw new Error("réponse vide");
+  if(!Array.isArray(brut.mentions)) throw new Error("la réponse ne porte pas de liste « mentions »");
+  const pageSure = (n, defaut = 1) => Number.isInteger(n) && n >= 1 && n <= totalPages ? n : defaut;
+  const champ = (c, pageDefaut) => {
+    if(!c) return null;
+    const v = typeof c === "object" ? c.valeur : c;
+    if(v == null || v === "" || v === "null") return null;
+    const pg = typeof c === "object" ? pageSure(c.page, pageDefaut) : pageDefaut;
+    return {valeur: String(v).trim(), page: pg, moteur: MOTEUR_CONVERSATION};
+  };
+  const e = brut.entete || {};
+  const entete = {};
+  ["service","delivreLe","dossierANF","demandeNumero","deposeeLe","periodeReleve"].forEach(k => { const c = champ(e[k], 1); if(c) entete[k] = c; });
+  const liste = (x) => (Array.isArray(x) ? x : []).map(p => (typeof p === "string" ? {nom: p} : {nom: String((p && p.nom) || "").trim()})).filter(p => p.nom);
+  const mentions = brut.mentions.map((m, i) => {
+    m = m || {};
+    const page = pageSure(m.page, 1);
+    const immeubles = (Array.isArray(m.immeubles) ? m.immeubles : []).map(im => ({
+      commune: im && im.commune ? String(im.commune).trim() : null,
+      section: im && im.section ? String(im.section).trim().toUpperCase() : null,
+      numero: im && im.numero != null ? String(im.numero).trim() : null,
+      droit: im && im.droit ? String(im.droit) : null
+    })).filter(im => im.section && im.numero);
+    return {
+      index: i + 1, rubrique: m.rubrique || null, pages: {debut: page, fin: page},
+      natures: champ(m.natures, page), redacteur: champ(m.redacteur, page), commune: champ(m.commune, page),
+      dateActe: champ(m.dateActe, page), dateDepot: champ(m.dateDepot, page), volume: champ(m.volume, page),
+      numero: champ(m.numero, page), service: champ(m.service, page), rang: champ(m.rang, page),
+      montant: champ(m.montant, page), complement: champ(m.complement, page),
+      disposants: liste(m.disposants), beneficiaires: liste(m.beneficiaires), immeubles,
+      valide: false
+    };
+  });
+  return {entete, mentions};
+}
+function encartConversation(conteneur, totalPages, contexte, blob, importer){
+  const div = document.createElement("div");
+  div.className = "lect-conv";
+  div.innerHTML = '<b class="titre">Lecture gratuite — par Claude en conversation</b>'
+    + '<p class="motif">Aucune dépense : 1) copiez la consigne et téléchargez l\'état ; 2) ouvrez une conversation avec Claude, collez la consigne et joignez l\'état ; 3) collez ici sa réponse et importez-la. La lecture arrive sur le même écran de contrôle.</p>'
+    + '<div class="actions"><button class="btn" type="button" data-act="conv-consigne">Copier la consigne</button>'
+    + '<button class="btn" type="button" data-act="conv-etat">Télécharger l\'état</button></div>'
+    + '<textarea data-act="conv-reponse" placeholder="Collez la réponse de Claude"></textarea>'
+    + '<div class="actions"><button class="btn plein" type="button" data-act="conv-importer">Importer la réponse</button></div>'
+    + '<p class="retour" data-role="conv-retour"></p>';
+  conteneur.appendChild(div);
+  const retour = div.querySelector('[data-role="conv-retour"]');
+  const dire = (t, cls) => { retour.textContent = t; retour.className = "retour" + (cls ? " " + cls : ""); };
+  div.querySelector('[data-act="conv-consigne"]').addEventListener("click", async () => {
+    dire("Préparation de la consigne…");
+    try{
+      const r = await fetch("/api/lecture", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({action:"consigne"})});
+      const j = await r.json().catch(() => ({}));
+      if(!r.ok || !j.consigne) throw new Error(j.erreur || ("HTTP " + r.status));
+      await navigator.clipboard.writeText(consigneConversation(j.consigne, contexte, totalPages));
+      dire("Consigne copiée. Collez-la dans une conversation avec Claude, avec l'état joint.", "ok");
+    }catch(e){ dire("Consigne non copiée — " + (e.message || String(e)), "alerte"); }
+  });
+  div.querySelector('[data-act="conv-etat"]').addEventListener("click", () => {
+    const nom = String(contexte.nom || "etat_hypothecaire").replace(/\.pdf$/i, "") + ".pdf";
+    telechargerBlob(blob, nom);
+  });
+  div.querySelector('[data-act="conv-importer"]').addEventListener("click", async () => {
+    const texte = div.querySelector('[data-act="conv-reponse"]').value;
+    if(!texte.trim()){ dire("Collez d'abord la réponse de Claude.", "alerte"); return; }
+    let lecture;
+    try{ lecture = normaliserConversation(nettoyerReponseJSON(texte), totalPages); }
+    catch(e){ dire("Import refusé — " + (e.message || String(e)) + ". Vérifiez que la réponse est complète.", "alerte"); return; }
+    if(!lecture.mentions.length){ dire("Import refusé — la réponse ne contient aucune formalité.", "alerte"); return; }
+    try{ await importer(lecture); }
+    catch(e){ dire("Import refusé — " + (e.message || String(e)), "alerte"); }
+  });
+}
+
+function panneauPasse2(conteneur, totalPages, motifTexte, lancer, conversation){
   conteneur.innerHTML = '<div class="lect-p2"><b class="titre">Passe 2 — lecture d\'image</b>'
     + '<p class="motif">' + echap(motifTexte) + '</p>'
     + '<div class="chiffres"><span>Pages à traiter<b>' + totalPages + '</b></span><span>Coût global estimé<b data-role="cout">…</b></span><span>Modèle<b data-role="modele" style="font-size:13px">…</b></span></div>'
     + '<p class="motif" data-role="droit">Vérification du compte connecté…</p>'
     + '<button class="btn plein" type="button" data-act="passe2" disabled>Lancer la lecture d\'image</button>'
     + '<p class="avance" data-role="avance"></p></div>';
+  if(conversation) encartConversation(conteneur.querySelector(".lect-p2"), totalPages, conversation.contexte, conversation.blob, conversation.importer);
   const bouton = conteneur.querySelector('[data-act="passe2"]');
   const droit = conteneur.querySelector('[data-role="droit"]');
   const avance = conteneur.querySelector('[data-role="avance"]');
@@ -1884,7 +1988,9 @@ async function ouvrirLectureEHF(doc, g){
     if(!retenues.length){
       h += '<p class="lect-vide">Aucune formalité ne cite les parcelles du groupe. À vérifier à l\'œil avant de conclure.</p>';
     }
-    if(lecture.passe2){
+    if(lecture.passe2 && lecture.passe2.voie === "conversation"){
+      h += '<p class="lect-note">Lecture gratuite par Claude en conversation : ' + lecture.passe2.pages + ' page' + (lecture.passe2.pages > 1 ? 's' : '') + ', importée par ' + echap(lecture.passe2.importePar || "—") + '. Chaque champ porte son moteur ; validez ligne par ligne en regard de l\'image.</p>';
+    }else if(lecture.passe2){
       h += '<p class="lect-note">Lecture d\'image (passe 2) : ' + lecture.passe2.pages + ' page' + (lecture.passe2.pages > 1 ? 's' : '') + ', modèle ' + echap(lecture.passe2.modele || "") + '. Chaque champ porte son moteur ; validez ligne par ligne en regard de l\'image.</p>';
     }else if(motifPasse2){
       h += '<div data-role="p2"></div>';
@@ -2008,9 +2114,23 @@ async function ouvrirLectureEHF(doc, g){
     }catch(e){ /* le journal ne doit pas faire échouer la lecture */ }
     rendreLecture();
   };
+  const importerConversation = async (lu) => {
+    const importePar = (etat.drive && etat.drive.courriel) || null;
+    lecture = {entete: lu.entete, mentions: lu.mentions, luLe: new Date().toISOString(),
+      pagesLues: totalPages, pagesTotal: totalPages,
+      passe2: {voie: "conversation", pages: totalPages, lots: 0, usage: null, modele: MOTEUR_CONVERSATION, importePar}};
+    motifPasse2 = null;
+    retenues = ehfMentionsDuGroupe(lecture, parcelles);
+    try{
+      await appelDossier({action:"journal", siren: etat.dossier.siren, quoi:"lecture-ehf-conversation",
+        detail:{document: doc.drive_id, groupe: g.num, pages: totalPages, importe_par: importePar, formalites: lecture.mentions.length}});
+    }catch(e){ /* le journal ne doit pas faire échouer l'import */ }
+    rendreLecture();
+  };
   const brancherPasse2 = () => {
     const cible = gauche.querySelector('[data-role="p2"]');
-    if(cible) panneauPasse2(cible, totalPages, motifPasse2, lancerPasse2);
+    if(cible) panneauPasse2(cible, totalPages, motifPasse2, lancerPasse2,
+      {contexte: {nom: doc.nom, groupe: numeroGroupe4(g.num), parcelles}, blob, importer: importerConversation});
   };
 
   if(lecture){ rendreLecture(); brancherPasse2(); }
