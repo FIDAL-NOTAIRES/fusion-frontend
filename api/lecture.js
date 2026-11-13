@@ -28,6 +28,10 @@
 //   { action:"lire", jeton, pages:[{numero, image}], contexte:{nom, groupe, parcelles} }
 //                                                → { entete, mentions, usage, modele }
 //   Les pages arrivent par LOTS (le navigateur enchaîne), en JPEG base64.
+//   { action:"consigne" }                        → { consigne }
+//   VOIE GRATUITE (13/11/2026) : la même consigne, servie SANS clé et sans
+//   contrôle de compte, pour une lecture faite par Claude en conversation
+//   (comprise dans l'abonnement) puis importée dans FUSION. Aucune dépense.
 
 const MODELE_DEFAUT = 'claude-sonnet-5';
 const COUT_PAGE_DEFAUT = 0.03;
@@ -199,6 +203,9 @@ export default async function handler(req, res) {
     const autorise = Boolean(courriel) && liste.includes(courriel);
     const { modele, coutPageEur } = reglages();
 
+    if (corps.action === 'consigne') {
+      return res.status(200).json({ consigne: CONSIGNE });
+    }
     if (corps.action === 'estimer') {
       return res.status(200).json({
         autorise, courriel, modele, coutPageEur,
@@ -211,7 +218,7 @@ export default async function handler(req, res) {
       if (!autorise) return res.status(403).json({ erreur: 'Passe 2 réservée aux comptes autorisés', courriel: courriel || null });
       return await lire(res, corps, courriel);
     }
-    return res.status(400).json({ erreur: 'action inconnue', actions: ['estimer', 'lire'] });
+    return res.status(400).json({ erreur: 'action inconnue', actions: ['consigne', 'estimer', 'lire'] });
   } catch (e) {
     return res.status(500).json({ erreur: e.message || String(e) });
   }
