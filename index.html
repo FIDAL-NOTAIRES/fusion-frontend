@@ -414,6 +414,17 @@
   }
   textarea.coller.visible{display:block}
   /* ---- écran de contrôle de la lecture d'état hypothécaire ---- */
+  /* fiche « Données de l'acte » et bandeau de mise à jour (16/11/2026) */
+  .acte{background:#fff;border-radius:10px;width:min(760px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 18px 48px rgba(0,0,0,.28)}
+  .acte-corps{overflow:auto;padding:6px 18px 12px}
+  .acte-corps h4{margin:14px 0 6px;font-size:13px;color:var(--canard);text-transform:uppercase;letter-spacing:.5px}
+  .acte-champ{display:grid;grid-template-columns:220px 1fr;gap:8px;align-items:center;margin:4px 0;font-size:13px}
+  .acte-champ em{display:block;font-size:11px;color:var(--gris);font-style:normal}
+  .acte-champ input,.acte-val input{font:inherit;font-size:13px;padding:4px 7px;border:1px solid #D9CFBF;border-radius:2px;width:100%;box-sizing:border-box}
+  .acte-aide{font-size:12.5px;color:var(--gris);margin:2px 0 6px}
+  .acte-val{width:100%;border-collapse:collapse;font-size:13px}.acte-val th,.acte-val td{border-bottom:1px solid #eee;padding:4px 6px;text-align:left}.acte-val td:last-child{width:160px}
+  .acte-pied{padding:10px 18px;border-top:1px solid #eee;text-align:right}
+  .acte-maj{display:flex;gap:10px;align-items:center;justify-content:space-between;margin:6px 0 10px;padding:8px 12px;background:#FFF6D6;border-left:4px solid var(--orange);font-size:13px}
   .lect-fond{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:1100;display:flex;align-items:center;justify-content:center;padding:18px}
   .lect{background:#fff;border-radius:10px;width:min(1500px,98vw);height:min(920px,94vh);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 18px 48px rgba(0,0,0,.28)}
   .lect-tete{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--trait,#e5e7eb)}
@@ -523,6 +534,7 @@
         <button class="btn" id="btn-recalculer" disabled>Recalculer</button>
         <button class="btn" id="btn-export" disabled>Exporter les groupes</button>
         <button class="btn" id="btn-compil-docx" disabled title="Compilation de toutes les fiches de groupe, sommaire cliquable en tête — Word, à coller dans l'acte">Compiler (Word)</button>
+        <button class="btn plein" id="btn-acte" disabled title="Dépôt de pièces consécutif à une fusion, en Word, daté « version au … » ; ce qui manque est surligné en jaune dans l'acte">Acte de fusion (Word)</button>
         <button class="btn" id="btn-compil-pdf" disabled title="Même compilation en PDF, mentions colorées conservées — trace datée du dossier">Compiler (PDF)</button>
         <button class="btn" id="btn-annexe" disabled title="Recueil unique des servitudes et charges de tous les groupes, texte intégral en annexe">Annexe servitudes</button>
         <button class="btn" id="btn-tableau-reprises" disabled title="Word paysage, un seul tableau triable : une ligne par groupe ayant reçu de la matière reprise">Tableau des reprises</button>
@@ -4749,7 +4761,253 @@ async function piecesCourrielDest(lignes, dest){
   signaler("Brouillon téléchargé : ouvrez-le d'un double clic, Outlook l'affiche prêt à envoyer.");
   setTimeout(() => { if(confirm("Courriel préparé " + PIECES_DEST_NOM[dest] + " (" + aFaire.length + " pièce" + (aFaire.length > 1 ? "s" : "") + ").\nLes marquer « demandées » à la date d'aujourd'hui ?")) piecesPoser(aFaire.map(l => l.id), "demandee", "pieces-" + dest + "-demandees"); }, 600);
 }
+
+/* =====================================================================
+   16/11/2026 — ACTE DE FUSION (scénario du 18/11, temps 2 ; trame : acte ZENIC / TRANSEURO du 30/04/2024)
+   « Dépôt de pièces consécutif à une fusion » produit en Word, daté « version au … ».
+   Cœur de l'acte = les blocs déjà rédigés par groupe (désignation, effet relatif, origine, inscriptions).
+   Ce que FUSION ne peut pas deviner vient de la fiche « Données de l'acte ».
+   Toute donnée absente et toute pièce encore à réclamer est SIGNALÉE DANS L'ACTE, surlignée en jaune.
+   ===================================================================== */
+const ACTE_DEFAUT = {absorbante: "", absorbante_forme: "", absorbante_siege: "", absorbante_immat: "", representants: "", clerc: "",
+  absorbee_forme: "", absorbee_siege: "", absorbee_immat: "", lien_capital: "La SOCIETE ABSORBANTE détient la totalité des titres composant le capital social de la SOCIETE ABSORBEE.",
+  date_traite: "", date_realisation: "", date_signature: "", valeurs: {}};
+function acteDonnees(){ const a = (etat.piecesOpt || {}).acte || {}; return Object.assign({}, ACTE_DEFAUT, a, {valeurs: Object.assign({}, a.valeurs || {})}); }
+
+const UNITES = ["zéro","un","deux","trois","quatre","cinq","six","sept","huit","neuf","dix","onze","douze","treize","quatorze","quinze","seize","dix-sept","dix-huit","dix-neuf"];
+const DIZAINES = ["","","vingt","trente","quarante","cinquante","soixante","soixante","quatre-vingt","quatre-vingt"];
+function lettres99(n){
+  if(n < 20) return UNITES[n];
+  const d = Math.floor(n / 10), u = n % 10;
+  if(d === 7 || d === 9) return DIZAINES[d] + (d === 7 && u === 1 ? " et " : "-") + UNITES[10 + u];
+  if(u === 0) return DIZAINES[d] + (d === 8 ? "s" : "");
+  return DIZAINES[d] + (u === 1 && d < 8 ? " et " : "-") + UNITES[u];
+}
+function lettres999(n, final){
+  const c = Math.floor(n / 100), r = n % 100; let t = "";
+  if(c) t = (c > 1 ? UNITES[c] + " " : "") + "cent" + (c > 1 && !r && final ? "s" : "");
+  if(r){ let s = lettres99(r); if(!final && s === "quatre-vingts") s = "quatre-vingt"; t += (t ? " " : "") + s; }
+  return t;
+}
+function nombreEnLettres(n){
+  n = Math.round(Number(n) || 0); if(n === 0) return "zéro";
+  const parts = []; const groupes = [[1e9, "milliard"], [1e6, "million"], [1e3, "mille"]];
+  for(const [v, nom] of groupes){
+    const q = Math.floor(n / v); n %= v; if(!q) continue;
+    if(nom === "mille") parts.push(q === 1 ? "mille" : lettres999(q, false) + " mille");
+    else parts.push(lettres999(q, true) + " " + nom + (q > 1 ? "s" : ""));
+  }
+  if(n) parts.push(lettres999(n, true));
+  return parts.join(" ");   // orthographe traditionnelle des actes : traits d'union sous cent seulement
+}
+const MOIS_LETTRES = ["janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"];
+function dateEnLettresActe(d){
+  return "L'AN " + nombreEnLettres(d.getFullYear()).toUpperCase() + ",\nLE " + (d.getDate() === 1 ? "PREMIER" : nombreEnLettres(d.getDate()).toUpperCase()) + " " + MOIS_LETTRES[d.getMonth()].toUpperCase();
+}
+const montantActe = (v) => nombreEnLettres(v).toUpperCase() + " EUROS (" + Number(v).toLocaleString("fr-FR", {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " EUR)";
+const valeurNombre = (t) => { const n = parseFloat(String(t || "").replace(/[\s\u202f€]/g, "").replace(",", ".")); return isFinite(n) && n > 0 ? n : null; };
+
+function acteNotaire(){
+  const c = etat.charge && etat.charge.associe; const p = typeof personneCarnet === "function" ? personneCarnet(c) : null;
+  return p ? [p.prenom, p.nom].filter(Boolean).join(" ") : (c ? c.nom : "");
+}
+function actePiecesManquantes(){
+  const {lignes} = piecesAReclamer();
+  return lignes.filter(l => l.etat === "a_reclamer" || l.etat === "demandee");
+}
+
+/* ---- fiche « Données de l'acte » ---- */
+function ouvrirDonneesActe(){
+  if(!piecesExigerAssocie()) return;
+  const a = acteDonnees(), soc = etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "";
+  const groupes = [...etat.groupes].sort((x, y) => x.num - y.num);
+  const champ = (cle, lib, aide) => '<label class="acte-champ"><span>' + lib + (aide ? ' <em>' + aide + '</em>' : '') + '</span><input data-c="' + cle + '" value="' + echap(a[cle]) + '"></label>';
+  const fond = document.createElement("div"); fond.className = "lect-fond";
+  fond.innerHTML = '<div class="acte"><div class="lect-tete"><b>Données de l\'acte de fusion</b><span class="lect-sous">Société absorbée : ' + echap(soc) + ' — un champ laissé vide est signalé dans l\'acte, surligné en jaune.</span><button class="btn" data-x="fermer" type="button">Fermer</button></div>'
+    + '<div class="acte-corps"><h4>Société absorbante (requérante)</h4>'
+    + champ("absorbante", "Dénomination") + champ("absorbante_forme", "Forme", "ex. société par actions simplifiée") + champ("absorbante_siege", "Siège") + champ("absorbante_immat", "Immatriculation", "SIREN, RCS ou registre étranger")
+    + champ("representants", "Représentée par", "noms et qualités") + champ("clerc", "Elle-même représentée par", "clerc de l'étude, facultatif")
+    + '<h4>Société absorbée</h4><p class="acte-aide">Dénomination et SIREN repris du dossier : ' + echap(soc) + (etat.dossier && etat.dossier.siren ? ' (' + echap(etat.dossier.siren) + ')' : '') + '.</p>'
+    + champ("absorbee_forme", "Forme") + champ("absorbee_siege", "Siège") + champ("absorbee_immat", "Immatriculation", "laisser vide pour reprendre le SIREN")
+    + '<h4>Opération</h4>' + champ("lien_capital", "Lien en capital") + champ("date_traite", "Date du traité de fusion", "ex. 31 juillet 2023") + champ("date_realisation", "Date de réalisation définitive") + champ("date_signature", "Date de signature de l'acte", "facultatif")
+    + '<h4>Valorisation des immeubles</h4><table class="acte-val"><thead><tr><th>Groupe</th><th>Commune</th><th>Valeur (€)</th></tr></thead><tbody>'
+    + groupes.map(g => '<tr><td>' + numeroGroupe4(g.num) + '</td><td>' + echap(piecesCommunesGroupe(g.num)) + '</td><td><input data-v="' + g.num + '" inputmode="decimal" value="' + echap(a.valeurs[g.num] || "") + '"></td></tr>').join("")
+    + '</tbody></table></div><div class="acte-pied"><button class="btn plein" data-x="generer" type="button">Enregistrer et générer l\'acte (Word)</button></div></div>';
+  document.body.appendChild(fond);
+  const lire = () => { const n = acteDonnees(); fond.querySelectorAll("input[data-c]").forEach(i => { n[i.dataset.c] = i.value.trim(); });
+    fond.querySelectorAll("input[data-v]").forEach(i => { if(i.value.trim()) n.valeurs[i.dataset.v] = i.value.trim(); else delete n.valeurs[i.dataset.v]; }); return n; };
+  fond.addEventListener("click", async e => {
+    const x = e.target.dataset && e.target.dataset.x; if(e.target === fond) x === undefined && fond.remove();
+    if(x === "fermer"){ piecesOptMaj({acte: Object.assign(lire(), {genere_le: a.genere_le, docs_au: a.docs_au})}, "acte-donnees", {}); fond.remove(); }
+    if(x === "generer"){ e.target.disabled = true; const n = lire(); fond.remove();
+      try{ await sortirActe(n); }catch(err){ signaler("Acte non produit — " + (err.message || err), true); } }
+  });
+}
+
+/* ---- production de l'acte ---- */
+async function sortirActe(a){
+  const D = await chargerDocx();
+  // le notaire instrumentaire est nommé comme dans la signature commune (CARNET), relu au besoin
+  if(!personneCarnet(etat.charge && etat.charge.associe) && driveConnecte()) await carnetCharger(true);
+  const soc = etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "", siren = etat.dossier && etat.dossier.siren || "";
+  const groupes = [...etat.groupes].sort((x, y) => x.num - y.num);
+  const manquantes = actePiecesManquantes(); let nbManques = 0;
+  const M = (lib) => { nbManques++; return {t: "[À COMPLÉTER — " + lib + "]", manque: true}; };
+  const v = (val, lib) => val ? val : M(lib);
+  const B = [];   // blocs : {k, s:[segments], centre, gras}
+  const p = (...s) => B.push({k: "p", s}); const h = (t) => B.push({k: "h", s: [t]}); const h2 = (t) => B.push({k: "h2", s: [t]});
+  const annexe = (t) => B.push({k: "annexe", s: [t]}); const puce = (...s) => B.push({k: "puce", s});
+  const gras = (t) => ({t, gras: true});
+  const absorbanteDesc = () => [gras(a.absorbante || ""), a.absorbante ? ", " : "", v(a.absorbante_forme, "forme de la société absorbante"), ", dont le siège est à ", v(a.absorbante_siege, "siège de la société absorbante"), ", identifiée sous le numéro ", v(a.absorbante_immat, "immatriculation de la société absorbante"), "."];
+  const absorbeeDesc = () => [gras(soc), ", ", v(a.absorbee_forme, "forme de la société absorbée"), ", dont le siège est à ", v(a.absorbee_siege, "siège de la société absorbée"), ", identifiée sous le numéro ", a.absorbee_immat || (siren ? "SIREN " + siren : M("immatriculation de la société absorbée")), "."];
+  const aujourdhui = new Date(), dSign = a.date_signature ? blocDate(a.date_signature) : null;
+
+  B.push({k: "version", s: ["Projet — version au " + blocDateFr(aujourdhui) + (nbManques || manquantes.length ? " — les passages surlignés en jaune sont à compléter" : "")]});
+  B.push({k: "titre", s: ["DEPOT DE PIECES CONSECUTIF A UNE FUSION"]});
+  p("A la requête de la société ", a.absorbante ? gras(a.absorbante) : M("dénomination de la société absorbante"));
+  B.push({k: "date", s: [dSign ? dateEnLettresActe(dSign) : M("date de signature de l'acte")]});
+  p(gras("A PARIS (8ème), 3 place de la Madeleine, au siège de l'Office Notarial de Paris, ci-après nommé,"));
+  p("Maître ", v(acteNotaire(), "notaire instrumentaire"), ", Notaire associé de la Société d'Exercice Libéral par Actions Simplifiée « Office notarial de la Madeleine - PARIS », titulaire d'un Office Notarial à PARIS 8ème, 3 place de la Madeleine, identifié sous le numéro CRPCEN 75007,");
+  p(gras("A reçu à la requête du requérant susnommé le présent acte contenant DEPOT DE PIECES CONSECUTIF A UNE FUSION."));
+  h("REQUERANT");
+  p("La société dénommée ", ...absorbanteDesc());
+  p("Représentée par ", v(a.representants, "représentants de la société absorbante et leurs qualités"), ", ayant tous pouvoirs à l'effet des présentes en vertu des statuts, dont une copie demeure annexée.");
+  annexe("Annexe n°1");
+  if(a.clerc){ p("Lesquels, à ce non présents, sont représentés par ", a.clerc, ", clerc du notaire soussigné, demeurant professionnellement en l'office notarial susvisé et y élisant domicile, agissant en vertu de délégations de pouvoirs sous seing privé demeurées annexées."); annexe("Annexe n°2"); }
+  h("TERMINOLOGIE");
+  p("Dans le corps du présent acte, les termes ci-après écrits en majuscule, qu'ils soient utilisés indifféremment au singulier ou au pluriel, ont la signification suivante :");
+  p(gras("« ANNEXE »"), " désigne tous documents annexés aux présentes après mention. L'ensemble des ANNEXES forme un tout indissociable avec le présent acte et acquiert le même caractère d'authenticité que si elles avaient intégralement figuré dans le corps de l'acte ;");
+  p(gras("« BIENS »"), " ou ", gras("« IMMEUBLE »"), " désigne l'ensemble des immeubles appartenant à la SOCIETE ABSORBEE dont la propriété est transmise à la SOCIETE ABSORBANTE ;");
+  p(gras("« REQUERANT »"), " désigne le représentant à l'acte de la SOCIETE ABSORBANTE ;");
+  p(gras("« SOCIETE ABSORBANTE »"), " désigne la société dénommée ", ...absorbanteDesc());
+  p(gras("« SOCIETE ABSORBEE »"), " désigne la société dénommée ", ...absorbeeDesc());
+  p(gras("« SOCIETES »"), " désigne ensemble la SOCIETE ABSORBANTE et la SOCIETE ABSORBEE.");
+  h("EXPOSE PREALABLE");
+  p("Préalablement au dépôt de pièces objet des présentes, le REQUERANT a exposé ce qui suit :");
+  h2("1. Société absorbante"); p("Il existe une société dénommée ", ...absorbanteDesc());
+  h2("2. Société absorbée"); p("Il existait une société dénommée ", ...absorbeeDesc());
+  h2("3. Lien en capital"); p(v(a.lien_capital, "lien en capital entre les sociétés"));
+  h2("4. Projet de fusion"); p("Aux termes d'un acte sous seing privé en date du ", v(a.date_traite, "date du traité de fusion"), ", les sociétés ci-dessus dénommées ont établi le traité de fusion aux termes duquel la SOCIETE ABSORBEE devait transmettre son patrimoine à la SOCIETE ABSORBANTE."); annexe("Annexe n°3");
+  h2("5. Formalités préalables"); p("L'avis du projet de fusion a fait l'objet de publicités respectant le formalisme prévu par la Loi et aucune opposition à l'opération de fusion n'a été formulée dans les délais légaux, ainsi que le REQUERANT le déclare. L'ensemble des formalités de publicité prescrites par la Loi ont été accomplies, ainsi qu'il résulte des justificatifs demeurés annexés."); annexe("Annexe n°4");
+  h2("6. Réalisation définitive de la fusion"); p("La fusion a été définitivement réalisée le ", v(a.date_realisation, "date de réalisation définitive de la fusion"), ", ainsi qu'il résulte des pièces demeurées annexées."); annexe("Annexe n°5");
+  p("Ceci exposé, il est passé à la constatation du transfert des biens ci-après désignés résultant de cette fusion-absorption.");
+  h("DEPOT DE PIECES");
+  p("Le REQUERANT a, par ces présentes, déposé au notaire soussigné et l'a requis de mettre au rang des minutes de l'Office Notarial dont il est titulaire, en vue de l'accomplissement des formalités de publicité foncière, les pièces ci-après. Pour les besoins de la publicité foncière, le REQUERANT déclare et reconnaît formellement que l'ensemble des signatures figurant sur ces pièces émanent bien des représentants des sociétés concernées, et certifie sincère et véritable l'ensemble des documents faisant l'objet du présent dépôt :");
+  puce(gras("I — "), "la copie du traité de fusion ;"); puce(gras("II — "), "les documents justifiant de la réalisation de l'ensemble des formalités de publicité prescrites par la Loi ;");
+  puce(gras("III — "), "les documents justifiant de la réalisation définitive de la fusion ;"); puce(gras("IV — "), "un extrait justifiant de la radiation de la SOCIETE ABSORBEE.");
+  h("IMMEUBLES TRANSMIS");
+  p("Pour se conformer aux prescriptions en matière de publicité foncière, le REQUERANT a établi ainsi qu'il suit la désignation complète et l'origine de propriété des immeubles transmis à la SOCIETE ABSORBANTE :");
+  const duDossier = manquantes.filter(l => l.g == null);
+  if(duDossier.length) p(M("pièces du dossier encore à réclamer : " + duDossier.map(l => l.texte).join(" ; ")));
+  let total = 0, valManque = false, annexeN = 6;
+  groupes.forEach((g, k) => {
+    const s = redigerGroupe(g, {});
+    B.push({k: "immeuble", s: ["IMMEUBLE N° " + (k + 1) + (s.matiere.communes.length ? " — " + s.matiere.communes.join(" / ") : "")]});
+    s.paragraphes.forEach(x => {
+      if(x.tableau){ B.push({k: "table", tableau: x.tableau}); return; }
+      if(x.style === "titre" || x.style === "alerte" || x.style === "lien") return;
+      if(x.style === "sous") return h2(x.t.charAt(0) + x.t.slice(1).toLowerCase());
+      if(x.style === "sous2") return B.push({k: "h3", s: [x.t.charAt(0) + x.t.slice(1).toLowerCase()]});
+      if(x.style === "note") return p(M(x.t.replace(/\.$/, "")));
+      if(x.style === "puce") return puce(x.t);
+      p(x.gras ? gras(x.t) : x.t);
+    });
+    p("Un extrait de plan cadastral de l'IMMEUBLE est annexé."); annexe("Annexe n°" + (annexeN++));
+    h2("Valorisation");
+    const val = valeurNombre(a.valeurs[g.num]);
+    if(val){ total += val; p("Pour les besoins de la publicité foncière, le REQUERANT déclare que l'IMMEUBLE est évalué à ", gras(montantActe(val)), "."); }
+    else { valManque = true; p("Pour les besoins de la publicité foncière, le REQUERANT déclare que l'IMMEUBLE est évalué à ", M("valeur de l'immeuble du groupe " + numeroGroupe4(g.num)), "."); }
+    const duGroupe = manquantes.filter(l => l.g === g.num);
+    if(duGroupe.length) p(M("pièces encore à réclamer pour cet immeuble : " + duGroupe.map(l => l.texte).join(" ; ")));
+  });
+  p("La SOCIETE ABSORBANTE est informée des dispositions fiscales relatives à l'imposition des plus-values professionnelles dont le montant est déterminé, dans l'hypothèse d'une cession ultérieure de l'un des BIENS et si cette cession devait être imposable, en prenant en compte le prix de revient de cet immeuble, c'est-à-dire la valeur déclarée aux présentes.");
+  h("PROPRIETE – JOUISSANCE");
+  p("La SOCIETE ABSORBANTE est propriétaire et a la jouissance des BIENS transmis par la SOCIETE ABSORBEE depuis la date reprise au paragraphe « 6. Réalisation définitive de la fusion ».");
+  h("INFORMATION SUR L'AUTHENTICITE"); p("Le dépôt des procès-verbaux au rang des minutes de l'office notarial ne leur confère pas valeur authentique.");
+  h("INFORMATION SUR LA PUBLICITE FONCIERE"); p("L'article 710-1, deuxième alinéa, du Code civil autorise la publicité foncière des procès-verbaux de délibérations de sociétés dans le cadre d'apports d'immeubles.");
+  h("DECLARATIONS");
+  p("Le REQUERANT déclare :"); puce("que la société n'a jamais fait l'objet d'une action en nullité et n'est pas en état de dissolution anticipée ;"); puce("qu'aucun des dirigeants sociaux de la société n'est frappé d'une interdiction d'exercer son mandat social ;"); puce("que la société n'est pas en état de cessation des paiements, liquidation des biens, règlement ou redressement judiciaire.");
+  h("PUBLICITE");
+  const spfs = [...new Set(groupes.map(g => spfDuGroupe(g)).filter(Boolean))];
+  p("Le présent acte sera soumis à la formalité de publicité foncière au", spfs.length > 1 ? "x services" : " service", " de la publicité foncière de ", spfs.length ? spfs.join(", ") : M("service de la publicité foncière compétent"), groupes.some(g => !spfDuGroupe(g)) && spfs.length ? M("service de la publicité foncière non déterminé pour certains groupes") : "", ".");
+  h("POUVOIRS");
+  p("Pour l'accomplissement des formalités de publicité foncière ou réparer une erreur matérielle telle que l'omission d'une pièce annexe dont le contenu est relaté aux présentes, les Parties agissant dans un intérêt commun donnent tous pouvoirs nécessaires à tout notaire ou à tout clerc de l'office notarial dénommé en tête des présentes, à l'effet de faire dresser et signer tous actes complémentaires ou rectificatifs pour mettre le présent acte en concordance avec tous les documents hypothécaires, cadastraux ou d'état civil.");
+  h("FISCALITE");
+  h2("Droit d'enregistrement — enregistrement gratuit");
+  p("Article 816 du Code général des impôts : « Les actes qui constatent des opérations de fusion auxquelles participent exclusivement des personnes morales ou organismes passibles de l'impôt sur les sociétés, ainsi que la prise en charge du passif dont sont grevés les apports mentionnés dans ces actes, sont enregistrés gratuitement. »");
+  h2("Contribution de sécurité immobilière");
+  const csi = Math.round(total * 0.001 * 100) / 100;
+  p("En fonction des dispositions de l'acte à publier au fichier immobilier, la contribution de sécurité immobilière représentant la taxe au profit de l'État telle que fixée par l'article 879 du Code général des impôts s'élève à la somme de ",
+    valManque ? M("montant à calculer une fois toutes les valeurs connues (0,10 % de la valeur totale" + (total ? ", soit " + csi.toLocaleString("fr-FR", {minimumFractionDigits: 2}) + " euros sur les valeurs déjà connues" : "") + ")") : gras(csi.toLocaleString("fr-FR", {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " euros"), ".");
+  h("ELECTION DE DOMICILE"); p("Pour l'exécution des présentes et de leurs suites, il est fait élection de domicile au siège de la SOCIETE ABSORBANTE.");
+  h("MENTION"); p("Mention des présentes est consentie partout où besoin sera.");
+  h("FRAIS"); p("Tous les frais, droits, émoluments et honoraires des présentes seront supportés par la SOCIETE ABSORBANTE.");
+  h("MENTION SUR LA PROTECTION DES DONNEES PERSONNELLES");
+  ACTE_RGPD.forEach(t => t.startsWith("- ") ? puce(t.slice(2)) : p(t));
+  h("CERTIFICATION D'IDENTITE"); p("Le notaire soussigné certifie que l'identité complète des parties dénommées dans le présent document telle qu'elle est indiquée en tête des présentes à la suite de leur nom ou dénomination lui a été régulièrement justifiée.");
+  h("FORMALISME LIE AUX ANNEXES");
+  p("Les annexes, s'il en existe, font partie intégrante de la minute."); p("Lorsque l'acte est établi sur support papier, les pièces annexées à l'acte sont revêtues d'une mention constatant cette annexe et signée du notaire, sauf si les feuilles de l'acte et des annexes sont réunies par un procédé empêchant toute substitution ou addition."); p("Si l'acte est établi sur support électronique, la signature du notaire en fin d'acte vaut également pour ses annexes.");
+  p(gras("DONT ACTE sans renvoi"));
+  p("Généré en l'office notarial et visualisé sur support électronique aux lieu, jour, mois et an indiqués en en-tête du présent acte.");
+  p("Et lecture faite, les parties ont certifié exactes les déclarations les concernant, avant d'apposer leur signature manuscrite sur tablette numérique.");
+  p("Le notaire, qui a recueilli l'image de leur signature, a lui-même apposé sa signature manuscrite, puis signé l'acte au moyen d'un procédé de signature électronique qualifié.");
+
+  // rendu Word : Segoe UI, justifié ; signalements surlignés en jaune
+  const run = (sg, base) => typeof sg === "string" ? new D.TextRun(Object.assign({text: sg, font: "Segoe UI", size: 22}, base || {}))
+    : new D.TextRun(Object.assign({text: sg.t, font: "Segoe UI", size: 22, bold: Boolean(sg.gras) || Boolean(sg.manque), highlight: sg.manque ? "yellow" : undefined}, base || {}));
+  const enfants = [];
+  B.forEach(b => {
+    if(b.k === "table"){
+      const ligne = (cells, tete) => new D.TableRow({tableHeader: tete, children: cells.map(c => new D.TableCell({children: [new D.Paragraph({children: [new D.TextRun({text: String(c), font: "Segoe UI", size: 20, bold: tete})]})]}))});
+      enfants.push(new D.Table({width: {size: 100, type: D.WidthType.PERCENTAGE}, rows: [ligne(b.tableau.entete, true), ...b.tableau.lignes.map(l => ligne(l, false))]}));
+      enfants.push(new D.Paragraph({children: [], spacing: {after: 80}})); return;
+    }
+    if(b.k === "version") return enfants.push(new D.Paragraph({children: [run(b.s[0], {italics: true, color: "666666", size: 18})], spacing: {after: 240}}));
+    if(b.k === "titre") return enfants.push(new D.Paragraph({alignment: D.AlignmentType.CENTER, children: [run(b.s[0], {bold: true, size: 28})], spacing: {after: 240}}));
+    if(b.k === "date") return enfants.push(...String(typeof b.s[0] === "string" ? b.s[0] : "").split("\n").filter(Boolean).map(t => new D.Paragraph({children: [run(t, {bold: true})], spacing: {after: 60}})), ...(typeof b.s[0] === "string" ? [] : [new D.Paragraph({children: [run(b.s[0])], spacing: {after: 120}})]));
+    if(b.k === "h") return enfants.push(new D.Paragraph({alignment: D.AlignmentType.CENTER, children: [run(b.s[0], {bold: true, size: 24})], spacing: {before: 300, after: 140}}));
+    if(b.k === "immeuble") return enfants.push(new D.Paragraph({children: [run(b.s[0], {bold: true, size: 24, underline: {}})], spacing: {before: 300, after: 140}}));
+    if(b.k === "h2") return enfants.push(new D.Paragraph({children: [run(b.s[0], {bold: true})], spacing: {before: 200, after: 80}}));
+    if(b.k === "h3") return enfants.push(new D.Paragraph({children: [run(b.s[0], {bold: true, italics: true})], spacing: {before: 140, after: 60}}));
+    if(b.k === "annexe") return enfants.push(new D.Paragraph({alignment: D.AlignmentType.RIGHT, children: [run(b.s[0], {bold: true, italics: true})], spacing: {after: 120}}));
+    if(b.k === "puce") return enfants.push(new D.Paragraph({bullet: {level: 0}, alignment: D.AlignmentType.JUSTIFIED, children: b.s.map(sg => run(sg)), spacing: {after: 80}}));
+    enfants.push(new D.Paragraph({alignment: D.AlignmentType.JUSTIFIED, children: b.s.filter(sg => sg !== "").map(sg => run(sg)), spacing: {after: 120}}));
+  });
+  const doc = new D.Document({creator: "FUSION — FIDAL Notaires", title: "Dépôt de pièces consécutif à une fusion — " + soc, sections: [{properties: {page: {margin: {top: 1250, bottom: 1250, left: 1300, right: 1100}}}, children: enfants}]});
+  telechargerBlob(await D.Packer.toBlob(doc), nomSortie("acte_fusion_version_" + isoDe(aujourdhui), "docx"));
+  const signalements = nbManques;
+  piecesOptMaj({acte: Object.assign({}, a, {genere_le: new Date().toISOString(), docs_au: (etat.documents || []).length})}, "acte-genere", {groupes: groupes.length, signalements});
+  signaler("Acte produit : " + groupes.length + " immeuble" + (groupes.length > 1 ? "s" : "") + ", " + signalements + " passage" + (signalements > 1 ? "s" : "") + " à compléter, surligné" + (signalements > 1 ? "s" : "") + " en jaune.");
+  rendre();
+}
+const ACTE_RGPD = [
+  "L'Office notarial traite des données personnelles concernant les personnes mentionnées aux présentes, pour l'accomplissement des activités notariales, notamment de formalités d'actes.",
+  "Ce traitement est fondé sur le respect d'une obligation légale et l'exécution d'une mission relevant de l'exercice de l'autorité publique déléguée par l'Etat dont sont investis les notaires, officiers publics, conformément à l'ordonnance n° 45-2590 du 2 novembre 1945.",
+  "Ces données seront susceptibles d'être transférées aux destinataires suivants :",
+  "- les administrations ou partenaires légalement habilités tels que la Direction Générale des Finances Publiques, ou, le cas échéant, le livre foncier, les instances notariales, les organismes du notariat, les fichiers centraux de la profession notariale (Fichier Central Des Dernières Volontés, Minutier Central Électronique des Notaires, registre du PACS, etc.),",
+  "- les offices notariaux participant ou concourant à l'acte,",
+  "- les établissements financiers concernés,",
+  "- les organismes de conseils spécialisés pour la gestion des activités notariales,",
+  "- le Conseil supérieur du notariat ou son délégataire, pour la production des statistiques permettant l'évaluation des biens immobiliers, en application du décret n° 2013-803 du 3 septembre 2013,",
+  "- les organismes publics ou privés pour des opérations de vérification dans le cadre de la recherche de personnalités politiquement exposées ou ayant fait l'objet de gel des avoirs ou sanctions, de la lutte contre le blanchiment des capitaux et le financement du terrorisme. Ces vérifications font l'objet d'un transfert de données dans un pays situé hors de l'Union Européenne et encadré par la signature de clauses contractuelles types de la Commission européenne, visant à assurer un niveau de protection des données substantiellement équivalent à celui garanti dans l'Union Européenne.",
+  "La communication de ces données à ces destinataires peut être indispensable pour l'accomplissement des activités notariales.",
+  "Les documents permettant d'établir, d'enregistrer et de publier les actes sont conservés 30 ans à compter de la réalisation de l'ensemble des formalités. L'acte authentique et ses annexes sont conservés 75 ans et 100 ans lorsque l'acte porte sur des personnes mineures ou majeures protégées. Les vérifications liées aux personnalités politiquement exposées, au blanchiment des capitaux et au financement du terrorisme sont conservées 5 ans après la fin de la relation d'affaires.",
+  "Conformément à la réglementation en vigueur relative à la protection des données personnelles, les personnes peuvent demander l'accès aux données les concernant. Le cas échéant, elles peuvent demander la rectification ou l'effacement de celles-ci, obtenir la limitation du traitement de ces données ou s'y opposer pour des raisons tenant à leur situation particulière. Elles peuvent également définir des directives relatives à la conservation, à l'effacement et à la communication de leurs données personnelles après leur décès.",
+  "L'Office notarial a désigné un Délégué à la protection des données que les personnes peuvent contacter à l'adresse suivante : cil@notaires.fr.",
+  "Si les personnes estiment, après avoir contacté l'Office notarial, que leurs droits ne sont pas respectés, elles peuvent introduire une réclamation auprès d'une autorité européenne de contrôle, la Commission Nationale de l'Informatique et des Libertés pour la France."
+];
+/* mise à jour proposée : dès qu'une pièce arrive après la dernière génération de l'acte */
+function acteBandeau(liste){
+  const a = (etat.piecesOpt || {}).acte; if(!a || !a.genere_le) return;
+  const n = (etat.documents || []).length; if(!(n > (a.docs_au || 0))) return;
+  const d = document.createElement("div"); d.className = "acte-maj";
+  d.innerHTML = '<span><b>' + (n - (a.docs_au || 0)) + ' nouvelle' + (n - a.docs_au > 1 ? 's pièces' : ' pièce') + '</b> depuis l\'acte du ' + echap(blocDateFr(new Date(a.genere_le))) + '.</span><button class="btn plein" type="button">Mettre l\'acte à jour</button>';
+  d.querySelector("button").addEventListener("click", async e => { e.target.disabled = true; try{ await sortirActe(acteDonnees()); }catch(err){ signaler("Acte non produit — " + (err.message || err), true); } });
+  liste.appendChild(d);
+}
+
 function rendrePieces(liste){
+  acteBandeau(liste);
   const {lignes, sansEhf} = piecesAReclamer();
   const client = lignes.filter(l => l.circuit === "client"), collab = lignes.filter(l => l.circuit === "collab");
   const nb = (l, e) => l.filter(x => x.etat === e).length;
@@ -5006,7 +5264,7 @@ function majBoutons(){
   const lu = charge && (etat.documents || []).some(d => d.lecture && d.lecture.ehf);
   const repris = charge && (etat.documents || []).some(d => d.lecture && d.lecture.reprise && d.lecture.reprise.texte);
   document.getElementById("btn-tableau-reprises").disabled = !repris;
-  ["btn-compil-docx", "btn-compil-pdf", "btn-annexe"].forEach(id => { const el = document.getElementById(id); el.disabled = !lu; if(!lu && charge) el.title = "Lisez d'abord au moins un état hypothécaire : les blocs 2 à 5 s'établissent à partir des mentions lues."; });
+  ["btn-compil-docx", "btn-compil-pdf", "btn-annexe", "btn-acte"].forEach(id => { const el = document.getElementById(id); el.disabled = !lu; if(!lu && charge) el.title = "Lisez d'abord au moins un état hypothécaire : les blocs 2 à 5 s'établissent à partir des mentions lues."; });
   document.getElementById("btn-fusionner").disabled =
     etat.groupes.filter(g => g.coche).length < 2;
   document.getElementById("btn-arbo").disabled = !(charge && etat.dossier && etat.persist.actif);
@@ -5548,6 +5806,7 @@ function brancher(){
   const brancherSortie = (id, fn) => document.getElementById(id).addEventListener("click", async (e) => { e.target.disabled = true; try{ await fn(); }catch(err){ signaler(err.message || String(err), true); } finally{ e.target.disabled = false; } });
   brancherSortie("btn-compil-docx", () => sortirCompilation("docx"));
   brancherSortie("btn-compil-pdf", () => sortirCompilation("pdf"));
+  brancherSortie("btn-acte", async () => ouvrirDonneesActe());
   brancherSortie("btn-annexe", () => sortirAnnexeServitudes("docx"));
   brancherSortie("btn-tableau-reprises", () => sortirTableauReprises());
   document.getElementById("btn-arbo").addEventListener("click", creerArborescenceDrive);
