@@ -5264,7 +5264,9 @@ function majBoutons(){
   const lu = charge && (etat.documents || []).some(d => d.lecture && d.lecture.ehf);
   const repris = charge && (etat.documents || []).some(d => d.lecture && d.lecture.reprise && d.lecture.reprise.texte);
   document.getElementById("btn-tableau-reprises").disabled = !repris;
-  ["btn-compil-docx", "btn-compil-pdf", "btn-annexe", "btn-acte"].forEach(id => { const el = document.getElementById(id); el.disabled = !lu; if(!lu && charge) el.title = "Lisez d'abord au moins un état hypothécaire : les blocs 2 à 5 s'établissent à partir des mentions lues."; });
+  // 16/11/2026 : l'acte s'ouvre dès que les parcelles sont chargées — ce qui n'est pas encore lu est signalé DANS l'acte
+  document.getElementById("btn-acte").disabled = !(charge && etat.groupes.length);
+  ["btn-compil-docx", "btn-compil-pdf", "btn-annexe"].forEach(id => { const el = document.getElementById(id); el.disabled = !lu; if(!lu && charge) el.title = "Lisez d'abord au moins un état hypothécaire : les blocs 2 à 5 s'établissent à partir des mentions lues."; });
   document.getElementById("btn-fusionner").disabled =
     etat.groupes.filter(g => g.coche).length < 2;
   document.getElementById("btn-arbo").disabled = !(charge && etat.dossier && etat.persist.actif);
