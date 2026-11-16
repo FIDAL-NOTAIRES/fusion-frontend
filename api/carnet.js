@@ -15,7 +15,7 @@
 //   CARNET_CLE      obligatoire — clé de lecture créée dans CARNET pour l'outil FUSION
 //   CARNET_DOMAINE  facultatif  — domaine des comptes admis (défaut : fidal.notaires.fr)
 //
-//   { jeton } → { personnes: [{ id, nom, prenom, initiales, categorie, courriel, site }] }
+//   { jeton } → { personnes: [{ id, nom, prenom, initiales, categorie, courriel, site, sig }] }
 //   Seuls les actifs, et seuls les champs utiles à FUSION, sont rendus.
 
 async function courrielDuJeton(jeton) {
@@ -49,6 +49,12 @@ export default async function handler(req, res) {
       id: p.id, nom: p.nom || '', prenom: p.prenom || '', initiales: p.initiales || '',
       categorie: p.categorie === 'associe' ? 'associe' : 'collaborateur',
       courriel: p.courriel || '', site: p.site && p.site.nom ? p.site.nom : '',
+      // 16/11/2026 : champs de la signature commune des courriels (même rendu que CARNET et ARGOSAdmin)
+      sig: {
+        sans_signature: !!p.sans_signature, fonction: p.fonction || '', ligne2: p.ligne2 || '', couleur: p.couleur || '',
+        telephone: p.telephone || '', site_tel: p.site && p.site.telephone ? p.site.telephone : '',
+        site_adresse: p.site && p.site.adresse ? p.site.adresse : '', site_cp: p.site && p.site.code_postal ? p.site.code_postal : '',
+      },
     }));
     return res.status(200).json({ personnes });
   } catch (e) {
