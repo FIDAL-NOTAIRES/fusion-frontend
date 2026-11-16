@@ -4653,20 +4653,66 @@ async function piecesCourrielCollab(lignes){
   const aFaire = lignes.filter(l => l.circuit === "collab" && l.etat === "a_reclamer" && pieceCochee(l));
   if(!aFaire.length){ signaler("Aucune demande cochée à adresser à la collaboratrice."); return; }
   const soc = etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "", dest = destinataireCollab();
-  let corps = "Bonjour,\n\nDans le dossier " + soc + " (associé en charge : " + chargeLibelle(etat.charge.associe) + "), merci de bien vouloir traiter les demandes suivantes :\n";
-  piecesParGroupe(aFaire).forEach(b => { corps += "\n" + b.titre + "\n"; b.liste.forEach(l => { corps += "- " + l.texte + "\n"; }); });
-  corps += "\nMerci d'avance.\n";
+  const html = piecesCorpsHtml(["Bonjour,", "Dans le dossier " + soc + ", merci de bien vouloir traiter les demandes suivantes :"], piecesParGroupe(aFaire), ["Merci d'avance."]);
   const objet = "FUSION — " + soc + " — demandes de pièces (" + aFaire.length + ")";
-  let copie = false; try{ await navigator.clipboard.writeText(corps); copie = true; }catch(e){}
-  const court = corps.length <= 1500;   // au-delà, les messageries tronquent le lien : le texte est collé depuis le presse-papiers
-  location.href = "mailto:" + encodeURIComponent(dest.courriel) + "?subject=" + encodeURIComponent(objet) + "&body=" + encodeURIComponent(court ? corps : "(Coller ici la liste des demandes : elle est dans le presse-papiers.)");
-  signaler("Courriel préparé pour " + dest.libelle + (copie ? " — la liste est aussi dans le presse-papiers." : "."));
+  piecesBrouillon(dest.courriel, "", objet, html, "FUSION - " + soc + " - demandes collaboratrice");
+  signaler("Brouillon pour " + dest.libelle + " téléchargé : ouvrez-le d'un double clic dans Outlook.");
   setTimeout(() => { if(confirm("Courriel préparé pour " + dest.libelle + " (" + aFaire.length + " demande" + (aFaire.length > 1 ? "s" : "") + ").\nLes marquer « demandées » à la date d'aujourd'hui ?")) piecesPoser(aFaire.map(l => l.id), "demandee", "pieces-collab-demandees"); }, 600);
 }
-function piecesOuvrirCourriel(a, cc, objet, corps){
-  const court = corps.length <= 1500;   // au-delà, les messageries tronquent le lien : le texte est collé depuis le presse-papiers
-  const q = [cc ? "cc=" + encodeURIComponent(cc) : "", "subject=" + encodeURIComponent(objet), "body=" + encodeURIComponent(court ? corps : "(Coller ici la liste des pièces : elle est dans le presse-papiers.)")].filter(Boolean).join("&");
-  location.href = "mailto:" + encodeURIComponent(a || "") + "?" + q;
+/* ---- signature commune des courriels (16/11/2026) : reprise À L'IDENTIQUE de CARNET et d'ARGOSAdmin
+   (modèle du dépôt connexion, signature/signature-modele.html ; logos servis par connexion-omega) ---- */
+const COULEURS_SIG = ["#33838B", "#0F2238", "#657D96", "#E3CC7A", "#82AA98", "#FF982D", "#6DD5DC"];
+function personneCarnet(c){
+  if(!c || !carnet.personnes) return null;
+  return carnet.personnes.find(p => (c.id != null && p.id === c.id) || (c.id == null && c.initiales && p.initiales === c.initiales)) || null;
+}
+function qualiteSig(p, s){ if(p.categorie === "associe") return "Notaire Associé"; if(s.fonction === "Notaire salarié") return "Notaire"; return s.fonction && s.fonction !== "Autre" ? s.fonction : ""; }
+function telSig(v){
+  const t = String(v || "").trim(), d = t.replace(/\D/g, "");
+  if(/^\+33/.test(t.replace(/\s/g, "")) && d.length === 11) return "+33 " + d.charAt(2) + " " + d.slice(3).replace(/(\d{2})(?=\d)/g, "$1 ");
+  if(d.length === 10 && d.charAt(0) === "0") return d.replace(/(\d{2})(?=\d)/g, "$1 ");
+  return t;
+}
+const casseSig = (t) => String(t || "").toLowerCase().replace(/(^|[\s\-'’])([a-zà-ÿ])/g, (m, a, b) => a + b.toUpperCase());
+function signatureHtml(c){
+  const p = personneCarnet(c) || {categorie: "associe", prenom: "", nom: c ? c.nom : "", courriel: c ? c.courriel : "", sig: {}};
+  const s = p.sig || {};
+  if(s.sans_signature) return "";
+  const seg = "font-family:'Segoe UI',sans-serif;color:#0F2238";
+  const couleur = COULEURS_SIG.includes(s.couleur) ? s.couleur : COULEURS_SIG[0];
+  const q = qualiteSig(p, s), tel = telSig(s.telephone || s.site_tel);
+  const adresse = s.site_adresse ? echap(s.site_adresse) + " –&nbsp;" + echap([s.site_cp, casseSig(p.site)].filter(Boolean).join(" ")) : "";
+  const lig = (contenu, taille) => '<p style="margin:0 0 0 15px;font-size:' + taille + ';line-height:115%;' + seg + '">' + contenu + '</p>';
+  return '<table border="0" cellspacing="0" cellpadding="0" width="715" style="width:715px;border-collapse:collapse"><tr>'
+    + '<td width="176" valign="middle" style="width:176px;border-right:1px solid #0F2238;padding:0 7px;vertical-align:middle">'
+    + '<p style="margin:0"><img src="https://connexion-omega.vercel.app/signature/logo-fidal-notaires.png" width="145" height="72" alt="FIDAL Notaires" style="display:block;width:145px;height:72px;border:0"></p></td>'
+    + '<td width="325" valign="middle" style="width:325px;border-right:1px solid #0F2238;padding:0 7px;vertical-align:middle"><p style="margin:0;font-size:8pt;' + seg + '">&nbsp;</p>'
+    + '<p style="margin:0 0 4px 15px;font-size:16pt;font-family:Georgia,serif;color:' + couleur + '">' + echap([p.prenom, p.nom].filter(Boolean).join(" ")) + '</p>'
+    + (q ? lig(echap(q), "10pt") : "") + (s.ligne2 ? lig(echap(s.ligne2), "10pt") : "") + lig("&nbsp;", "9pt")
+    + (tel ? lig(echap(tel), "9pt") : "")
+    + (p.courriel ? '<p style="margin:0 0 0 15px;font-size:9pt;font-family:\'Segoe UI\',sans-serif"><a href="mailto:' + echap(p.courriel) + '" style="color:#33838B;text-decoration:underline">' + echap(p.courriel) + '</a></p>' : "")
+    + (adresse ? lig(adresse, "9pt") : "")
+    + '<p style="margin:0;font-size:8pt;' + seg + '">&nbsp;</p></td>'
+    + '<td width="213" valign="middle" style="width:213px;padding:0 7px;vertical-align:middle">'
+    + '<p style="margin:0"><img src="https://connexion-omega.vercel.app/signature/logo-notaires-de-france.png" width="78" height="74" alt="Notaires de France" style="display:block;width:78px;height:74px;border:0"></p></td></tr></table>'
+    + '<p style="margin:0;font-size:7pt;' + seg + '">&nbsp;</p><p style="margin:0;font-size:7pt;' + seg + '">&nbsp;</p>'
+    + '<p style="margin:0;text-align:justify;font-size:8pt;font-family:\'Segoe UI\',sans-serif;color:#1A1A1A"><b>Confidentiel&nbsp;: </b>Cet e-mail et ses pièces jointes contiennent des informations confidentielles protégées par le secret professionnel. S\'il ne vous est pas destiné, nous vous remercions de le détruire immédiatement, sans le copier ni révéler ou transmettre son contenu à quiconque.</p>';
+}
+/* corps HTML : paragraphes, puis les pièces par groupe, puis la fin, puis la signature de l'associé en charge */
+function piecesCorpsHtml(debut, groupes, fin){
+  const P = (t) => '<p style="margin:0 0 10pt">' + echap(t) + '</p>';
+  let h = debut.map(P).join("");
+  groupes.forEach(b => { h += '<p style="margin:0 0 4pt"><b>' + echap(b.titre) + '</b></p><ul style="margin:0 0 10pt;padding-left:22px">' + b.liste.map(l => '<li style="margin:0 0 3pt">' + echap(l.texte) + '</li>').join("") + '</ul>'; });
+  h += fin.map(P).join("") + signatureHtml(etat.charge && etat.charge.associe);
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:\'Segoe UI\',sans-serif;font-size:10pt;color:#0F2238">' + h + '</body></html>';
+}
+/* brouillon .eml marqué « non envoyé » : Outlook l'ouvre comme un message prêt à partir (même mécanisme qu'ARGOSAdmin) */
+function base64Utf8(t){ const o = new TextEncoder().encode(t); let b = ""; for(let i = 0; i < o.length; i += 0x8000) b += String.fromCharCode.apply(null, o.subarray(i, i + 0x8000)); return btoa(b); }
+function piecesBrouillon(a, cc, objet, html, nomFichier){
+  const eml = ["X-Unsent: 1", "To: " + (a || ""), cc ? "Cc: " + cc : null, "Subject: =?UTF-8?B?" + base64Utf8(objet) + "?=", "MIME-Version: 1.0",
+    "Content-Type: text/html; charset=UTF-8", "Content-Transfer-Encoding: base64", "", base64Utf8(html).replace(/.{1,76}/g, "$&\r\n")].filter(x => x !== null).join("\r\n");
+  const lien = document.createElement("a"); lien.href = URL.createObjectURL(new Blob([eml], {type: "message/rfc822"})); lien.download = nomFichier.replace(/[\\/:*?"<>|]/g, "") + ".eml";
+  document.body.appendChild(lien); lien.click(); setTimeout(() => { URL.revokeObjectURL(lien.href); lien.remove(); }, 1000);
 }
 async function piecesCourrielDest(lignes, dest){
   if(!piecesExigerAssocie()) return;
@@ -4675,15 +4721,13 @@ async function piecesCourrielDest(lignes, dest){
   const adresse = (piecesContacts()[dest] || "").trim();
   if(dest === "libre" && !adresse){ signaler("Saisissez d'abord l'adresse du destinataire libre.", true); return; }
   const soc = etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "";
-  const assoc = etat.charge.associe, collab = etat.charge.collaborateur;
+  const collab = etat.charge.collaborateur;
   const appel = dest === "avocat" ? "Cher Maître," : dest === "client" ? "Madame, Monsieur," : "Bonjour,";
-  let corps = appel + "\n\nDans le cadre de l'opération concernant la société " + soc + ", et afin de nous permettre d'établir l'acte, nous vous remercions de bien vouloir nous adresser les pièces suivantes :\n";
-  piecesParGroupe(aFaire).forEach(b => { corps += "\n" + b.titre + "\n"; b.liste.forEach(l => { corps += "- " + l.texte + "\n"; }); });
-  corps += "\nNous restons à votre disposition pour tout renseignement.\n\n" + (assoc.nom || chargeLibelle(assoc)) + "\nNotaire associé\nFIDAL Notaires\n";
+  const html = piecesCorpsHtml([appel, "Dans le cadre de l'opération concernant la société " + soc + ", et afin de nous permettre d'établir l'acte, nous vous remercions de bien vouloir nous adresser les pièces suivantes :"],
+    piecesParGroupe(aFaire), ["Nous restons à votre disposition pour tout renseignement."]);
   const objet = soc + " — pièces à nous adresser (" + aFaire.length + ")";
-  let copie = false; try{ await navigator.clipboard.writeText(corps); copie = true; }catch(e){}
-  piecesOuvrirCourriel(adresse, collab && collab.courriel ? collab.courriel : "", objet, corps);
-  signaler("Courriel préparé " + PIECES_DEST_NOM[dest] + (copie ? " — la liste est aussi dans le presse-papiers." : "."));
+  piecesBrouillon(adresse, collab && collab.courriel ? collab.courriel : "", objet, html, "FUSION - " + soc + " - pieces " + dest);
+  signaler("Brouillon téléchargé : ouvrez-le d'un double clic, Outlook l'affiche prêt à envoyer.");
   setTimeout(() => { if(confirm("Courriel préparé " + PIECES_DEST_NOM[dest] + " (" + aFaire.length + " pièce" + (aFaire.length > 1 ? "s" : "") + ").\nLes marquer « demandées » à la date d'aujourd'hui ?")) piecesPoser(aFaire.map(l => l.id), "demandee", "pieces-" + dest + "-demandees"); }, 600);
 }
 function rendrePieces(liste){
