@@ -216,6 +216,18 @@
   .pieces-liste li{display:grid;grid-template-columns:1fr auto;gap:4px 10px;padding:6px 14px;border-top:1px solid #F1E9DC;font-size:12.5px;align-items:start}
   .pieces-liste .txt{color:var(--nuit)}
   .pieces-liste em{display:block;font-size:11px;color:var(--gris)}
+  /* encart d'envoi à cases (16/11/2026) */
+  .pieces-liste .gauche{display:flex;gap:7px;align-items:flex-start}
+  .pieces-liste .gauche input{margin-top:2px;flex:none}
+  .pieces-liste .ctl{display:flex;gap:6px;align-items:center}
+  .pieces-liste li.decoche .txt{opacity:.45;text-decoration:line-through}
+  .pieces .pieces-envoi{padding:2px 14px 8px}
+  .pieces .pieces-contacts{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:11.5px;color:var(--gris)}
+  .pieces .pieces-contacts label{display:flex;gap:5px;align-items:center}
+  .pieces .pieces-contacts input{font:inherit;font-size:12px;padding:3px 6px;border:1px solid #D9CFBF;border-radius:2px;width:210px;color:var(--nuit)}
+  .pieces .pieces-courriels{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:7px 0 2px}
+  .pieces .pieces-courriels .pieces-btn{margin-left:0}
+  .pieces .pieces-envoi .pieces-opt{padding:6px 0 0}
   .pieces-liste select{font:inherit;font-size:12px;padding:3px 5px;border:1px solid var(--trait);border-radius:4px}
   .pieces-liste li.e-recue .txt,.pieces-liste li.e-sans_objet .txt{color:var(--gris)}
   .pieces-liste li.e-demandee{background:#FFFBEA}
@@ -4521,6 +4533,13 @@ function rendreCharge(){
 
 /* ---------- pièces à réclamer ---------- */
 const PIECES_ETATS = [["a_reclamer", "à réclamer"], ["demandee", "demandée"], ["recue", "reçue"], ["sans_objet", "sans objet"]];
+// encart d'envoi à cases (arbitrages du 12/11/2026) : destinataires client (par défaut), avocat, libre ; un courriel par destinataire
+const PIECES_DEST = [["client", "Client"], ["avocat", "Avocat"], ["libre", "Libre"]];
+const PIECES_DEST_NOM = {client: "au client", avocat: "à l'avocat", libre: "au destinataire libre"};
+function piecesOptMaj(maj, quoi, detail){ etat.piecesOpt = Object.assign({}, etat.piecesOpt || {}, maj); marquerModifie(quoi, detail || {}); }
+function pieceCochee(l){ return !(((etat.piecesOpt || {}).sans || {})[l.id]); }
+function pieceDest(l){ return (((etat.piecesOpt || {}).dest || {})[l.id]) || "client"; }
+function piecesContacts(){ return Object.assign({client: "", avocat: "", libre: ""}, (etat.piecesOpt || {}).contacts || {}); }
 const RE_ORGANISATION = /ASSOCIATION\s+(?:FONCIERE|SYNDICALE)|\bA\.?S\.?L\b|\bA\.?F\.?U\.?L\b|LOTISSEMENT|\bZ\.?A\.?C\b|AMENAGEMENT\s+CONCERTE|EN\s+VOLUMES|CAHIER\s+DES\s+CHARGES/;
 const RE_ASSOCIATION = /ASSOCIATION\s+(?:FONCIERE|SYNDICALE)|\bA\.?S\.?L\b|\bA\.?F\.?U\.?L\b/;
 const RE_COPRO = /COPROPRIETE|ETAT\s+DESCRIPTIF\s+DE\s+DIVISION|\bE\.?D\.?D\b|\bR\.?C\.?P\b/;
@@ -4619,8 +4638,8 @@ function piecesExigerAssocie(){
 }
 async function piecesSortirClient(lignes){
   if(!piecesExigerAssocie()) return;
-  const aFaire = lignes.filter(l => l.circuit === "client" && l.etat === "a_reclamer");
-  if(!aFaire.length){ signaler("Aucune pièce à réclamer au client."); return; }
+  const aFaire = lignes.filter(l => l.circuit === "client" && l.etat === "a_reclamer" && pieceCochee(l));
+  if(!aFaire.length){ signaler("Aucune pièce cochée à réclamer au client."); return; }
   const soc = etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "";
   const P = [{style: "note", t: "Associé en charge : " + chargeLibelle(etat.charge.associe) + (etat.charge.collaborateur ? " — collaborateur : " + chargeLibelle(etat.charge.collaborateur) : "") + "."},
              {style: "p", t: "Pour l'établissement de l'acte, nous vous remercions de bien vouloir nous adresser les pièces suivantes :"}];
@@ -4631,8 +4650,8 @@ async function piecesSortirClient(lignes){
 }
 async function piecesCourrielCollab(lignes){
   if(!piecesExigerAssocie()) return;
-  const aFaire = lignes.filter(l => l.circuit === "collab" && l.etat === "a_reclamer");
-  if(!aFaire.length){ signaler("Aucune demande à adresser à la collaboratrice."); return; }
+  const aFaire = lignes.filter(l => l.circuit === "collab" && l.etat === "a_reclamer" && pieceCochee(l));
+  if(!aFaire.length){ signaler("Aucune demande cochée à adresser à la collaboratrice."); return; }
   const soc = etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "", dest = destinataireCollab();
   let corps = "Bonjour,\n\nDans le dossier " + soc + " (associé en charge : " + chargeLibelle(etat.charge.associe) + "), merci de bien vouloir traiter les demandes suivantes :\n";
   piecesParGroupe(aFaire).forEach(b => { corps += "\n" + b.titre + "\n"; b.liste.forEach(l => { corps += "- " + l.texte + "\n"; }); });
@@ -4643,6 +4662,29 @@ async function piecesCourrielCollab(lignes){
   location.href = "mailto:" + encodeURIComponent(dest.courriel) + "?subject=" + encodeURIComponent(objet) + "&body=" + encodeURIComponent(court ? corps : "(Coller ici la liste des demandes : elle est dans le presse-papiers.)");
   signaler("Courriel préparé pour " + dest.libelle + (copie ? " — la liste est aussi dans le presse-papiers." : "."));
   setTimeout(() => { if(confirm("Courriel préparé pour " + dest.libelle + " (" + aFaire.length + " demande" + (aFaire.length > 1 ? "s" : "") + ").\nLes marquer « demandées » à la date d'aujourd'hui ?")) piecesPoser(aFaire.map(l => l.id), "demandee", "pieces-collab-demandees"); }, 600);
+}
+function piecesOuvrirCourriel(a, cc, objet, corps){
+  const court = corps.length <= 1500;   // au-delà, les messageries tronquent le lien : le texte est collé depuis le presse-papiers
+  const q = [cc ? "cc=" + encodeURIComponent(cc) : "", "subject=" + encodeURIComponent(objet), "body=" + encodeURIComponent(court ? corps : "(Coller ici la liste des pièces : elle est dans le presse-papiers.)")].filter(Boolean).join("&");
+  location.href = "mailto:" + encodeURIComponent(a || "") + "?" + q;
+}
+async function piecesCourrielDest(lignes, dest){
+  if(!piecesExigerAssocie()) return;
+  const aFaire = lignes.filter(l => l.circuit === "client" && l.etat === "a_reclamer" && pieceCochee(l) && pieceDest(l) === dest);
+  if(!aFaire.length){ signaler("Aucune pièce cochée pour ce destinataire."); return; }
+  const adresse = (piecesContacts()[dest] || "").trim();
+  if(dest === "libre" && !adresse){ signaler("Saisissez d'abord l'adresse du destinataire libre.", true); return; }
+  const soc = etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "";
+  const assoc = etat.charge.associe, collab = etat.charge.collaborateur;
+  const appel = dest === "avocat" ? "Cher Maître," : dest === "client" ? "Madame, Monsieur," : "Bonjour,";
+  let corps = appel + "\n\nDans le cadre de l'opération concernant la société " + soc + ", et afin de nous permettre d'établir l'acte, nous vous remercions de bien vouloir nous adresser les pièces suivantes :\n";
+  piecesParGroupe(aFaire).forEach(b => { corps += "\n" + b.titre + "\n"; b.liste.forEach(l => { corps += "- " + l.texte + "\n"; }); });
+  corps += "\nNous restons à votre disposition pour tout renseignement.\n\n" + (assoc.nom || chargeLibelle(assoc)) + "\nNotaire associé\nFIDAL Notaires\n";
+  const objet = soc + " — pièces à nous adresser (" + aFaire.length + ")";
+  let copie = false; try{ await navigator.clipboard.writeText(corps); copie = true; }catch(e){}
+  piecesOuvrirCourriel(adresse, collab && collab.courriel ? collab.courriel : "", objet, corps);
+  signaler("Courriel préparé " + PIECES_DEST_NOM[dest] + (copie ? " — la liste est aussi dans le presse-papiers." : "."));
+  setTimeout(() => { if(confirm("Courriel préparé " + PIECES_DEST_NOM[dest] + " (" + aFaire.length + " pièce" + (aFaire.length > 1 ? "s" : "") + ").\nLes marquer « demandées » à la date d'aujourd'hui ?")) piecesPoser(aFaire.map(l => l.id), "demandee", "pieces-" + dest + "-demandees"); }, 600);
 }
 function rendrePieces(liste){
   const {lignes, sansEhf} = piecesAReclamer();
@@ -4666,10 +4708,17 @@ function rendrePieces(liste){
       det.insertAdjacentHTML("beforeend", '<p class="pieces-groupe">' + echap(b.titre) + '</p>');
       const ul = document.createElement("ul"); ul.className = "pieces-liste";
       b.liste.forEach(x => {
-        const li = document.createElement("li"); li.className = "e-" + x.etat;
-        li.innerHTML = '<span class="txt">' + echap(x.texte) + (x.auto ? ' <em>pièce déposée au Drive</em>' : '') + (x.etat === "demandee" && x.le ? ' <em>demandée le ' + dateFr(x.le) + '</em>' : '') + '</span>'
-          + '<select>' + PIECES_ETATS.map(([v, t]) => '<option value="' + v + '"' + (v === x.etat ? " selected" : "") + '>' + t + '</option>').join("") + '</select>';
-        li.querySelector("select").addEventListener("change", e => piecesPoser([x.id], e.target.value, "piece-etat"));
+        const reclamable = x.etat === "a_reclamer", coche = pieceCochee(x);
+        const li = document.createElement("li"); li.className = "e-" + x.etat + (reclamable && !coche ? " decoche" : "");
+        li.innerHTML = '<div class="gauche">' + (reclamable ? '<input type="checkbox" class="pc"' + (coche ? " checked" : "") + ' title="Décocher : la pièce n\'est pas demandée dans le courriel">' : '')
+          + '<span class="txt">' + echap(x.texte) + (x.auto ? ' <em>pièce déposée au Drive</em>' : '') + (x.etat === "demandee" && x.le ? ' <em>demandée le ' + dateFr(x.le) + '</em>' : '') + '</span></div>'
+          + '<span class="ctl">' + (reclamable && x.circuit === "client" ? '<select class="pd" title="À qui la demander">' + PIECES_DEST.map(([v, t]) => '<option value="' + v + '"' + (v === pieceDest(x) ? " selected" : "") + '>' + t + '</option>').join("") + '</select>' : '')
+          + '<select class="pe">' + PIECES_ETATS.map(([v, t]) => '<option value="' + v + '"' + (v === x.etat ? " selected" : "") + '>' + t + '</option>').join("") + '</select></span>';
+        li.querySelector(".pe").addEventListener("change", e => piecesPoser([x.id], e.target.value, "piece-etat"));
+        const cb = li.querySelector(".pc");
+        if(cb) cb.addEventListener("change", e => { const sans = Object.assign({}, (etat.piecesOpt || {}).sans || {}); if(e.target.checked) delete sans[x.id]; else sans[x.id] = true; piecesOptMaj({sans}, "piece-coche", {piece: x.id, cochee: e.target.checked}); rendre(); });
+        const pd = li.querySelector(".pd");
+        if(pd) pd.addEventListener("change", e => { const d = Object.assign({}, (etat.piecesOpt || {}).dest || {}); if(e.target.value === "client") delete d[x.id]; else d[x.id] = e.target.value; piecesOptMaj({dest: d}, "piece-destinataire", {piece: x.id, destinataire: e.target.value}); rendre(); });
         ul.appendChild(li);
       });
       det.appendChild(ul);
@@ -4678,7 +4727,19 @@ function rendrePieces(liste){
   const trav = document.createElement("label"); trav.className = "pieces-opt";
   trav.innerHTML = '<input type="checkbox"' + (etat.piecesOpt && etat.piecesOpt.travaux ? " checked" : "") + '> Le client signale des travaux de moins de dix ans (ajoute les demandes aux mairies)';
   trav.querySelector("input").addEventListener("change", e => { etat.piecesOpt = Object.assign({}, etat.piecesOpt || {}, {travaux: e.target.checked}); marquerModifie("pieces-travaux", {travaux: e.target.checked}); rendre(); });
-  bloc("pièce" + (nb(client, "a_reclamer") > 1 ? "s" : "") + " à réclamer au client", client, "Liste pour le client (Word)", piecesSortirClient, trav);
+  const envoi = document.createElement("div"); envoi.className = "pieces-envoi";
+  const ct = piecesContacts(), ch = etat.charge || {};
+  const autres = [...new Set([ct.client, ct.avocat, ch.associe && ch.associe.courriel, ch.collaborateur && ch.collaborateur.courriel].filter(Boolean))];
+  envoi.innerHTML = '<div class="pieces-contacts">' + PIECES_DEST.map(([v, t]) => '<label>' + t + '<input type="email" data-d="' + v + '" value="' + echap(ct[v]) + '" placeholder="' + (v === "libre" ? "adresse au choix" : "adresse électronique") + '"' + (v === "libre" ? ' list="pieces-autres"' : '') + '></label>').join("")
+    + '<datalist id="pieces-autres">' + autres.map(a => '<option value="' + echap(a) + '">').join("") + '</datalist></div><div class="pieces-courriels"></div>';
+  envoi.querySelectorAll("input[data-d]").forEach(inp => inp.addEventListener("change", e => { const c = piecesContacts(); c[inp.dataset.d] = e.target.value.trim(); piecesOptMaj({contacts: c}, "pieces-contacts", {[inp.dataset.d]: c[inp.dataset.d] ? "renseignée" : "vide"}); }));
+  const zc = envoi.querySelector(".pieces-courriels"), cochees = client.filter(l => l.etat === "a_reclamer" && pieceCochee(l));
+  PIECES_DEST.forEach(([v]) => { const n = cochees.filter(l => pieceDest(l) === v).length; if(!n) return;
+    const b = document.createElement("button"); b.type = "button"; b.className = "btn pieces-btn"; b.textContent = "Courriel " + PIECES_DEST_NOM[v] + " (" + n + " pièce" + (n > 1 ? "s" : "") + ")";
+    b.addEventListener("click", () => piecesCourrielDest(lignes, v)); zc.appendChild(b); });
+  if(!zc.children.length) zc.innerHTML = '<span class="rien" style="padding:0">Aucune pièce cochée à demander.</span>';
+  envoi.appendChild(trav);
+  bloc("pièce" + (nb(client, "a_reclamer") > 1 ? "s" : "") + " à réclamer au client", client, "Liste Word", piecesSortirClient, envoi);
   const dest = destinataireCollab(); const info = document.createElement("p"); info.className = "rien"; info.textContent = "Destinataire : " + dest.libelle + " — " + dest.courriel;
   bloc("demande" + (nb(collab, "a_reclamer") > 1 ? "s" : "") + " à la collaboratrice", collab, "Préparer le courriel", piecesCourrielCollab, info);
   if(sansEhf.length) det.insertAdjacentHTML("beforeend", '<p class="rien">' + sansEhf.length + ' groupe' + (sansEhf.length > 1 ? 's' : '') + ' sans état hypothécaire lu : leurs pièces seront déterminées à la lecture.</p>');
