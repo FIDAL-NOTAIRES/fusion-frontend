@@ -4653,6 +4653,7 @@ async function piecesCourrielCollab(lignes){
   const aFaire = lignes.filter(l => l.circuit === "collab" && l.etat === "a_reclamer" && pieceCochee(l));
   if(!aFaire.length){ signaler("Aucune demande cochée à adresser à la collaboratrice."); return; }
   const soc = etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "", dest = destinataireCollab();
+  if(!(await signatureAssurer())) return;
   const html = piecesCorpsHtml(["Bonjour,", "Dans le dossier " + soc + ", merci de bien vouloir traiter les demandes suivantes :"], piecesParGroupe(aFaire), ["Merci d'avance."]);
   const objet = "FUSION — " + soc + " — demandes de pièces (" + aFaire.length + ")";
   piecesBrouillon(dest.courriel, "", objet, html, "FUSION - " + soc + " - demandes collaboratrice");
@@ -4664,7 +4665,24 @@ async function piecesCourrielCollab(lignes){
 const COULEURS_SIG = ["#33838B", "#0F2238", "#657D96", "#E3CC7A", "#82AA98", "#FF982D", "#6DD5DC"];
 function personneCarnet(c){
   if(!c || !carnet.personnes) return null;
-  return carnet.personnes.find(p => (c.id != null && p.id === c.id) || (c.id == null && c.initiales && p.initiales === c.initiales)) || null;
+  const cr = String(c.courriel || "").toLowerCase();
+  return carnet.personnes.find(p => c.id != null && p.id === c.id)
+    || carnet.personnes.find(p => c.initiales && p.initiales === c.initiales && p.categorie === "associe")
+    || carnet.personnes.find(p => cr && String(p.courriel || "").toLowerCase() === cr) || null;
+}
+/* la signature doit être celle de CARNET, complète : sinon aucun brouillon (16/11/2026, signature jugée non conforme) */
+async function signatureAssurer(){
+  const c = etat.charge && etat.charge.associe;
+  const pret = () => { const p = personneCarnet(c); return p && p.sig ? p : null; };
+  if(!pret() && driveConnecte()) await carnetCharger(true);
+  const p = pret();
+  if(p) return true;
+  const motif = !driveConnecte() ? "connectez le Drive pour lire CARNET"
+    : carnet.statut === "echec" ? "CARNET n'a pas répondu (" + (carnet.erreur || "erreur") + ")"
+    : !personneCarnet(c) ? "l'associé en charge n'est pas trouvé dans CARNET"
+    : "FUSION ne reçoit pas encore les champs de signature : chargez api/carnet.js";
+  signaler("Brouillon non produit — signature non conforme : " + motif + ".", true);
+  return false;
 }
 function qualiteSig(p, s){ if(p.categorie === "associe") return "Notaire Associé"; if(s.fonction === "Notaire salarié") return "Notaire"; return s.fonction && s.fonction !== "Autre" ? s.fonction : ""; }
 function telSig(v){
@@ -4675,7 +4693,7 @@ function telSig(v){
 }
 const casseSig = (t) => String(t || "").toLowerCase().replace(/(^|[\s\-'’])([a-zà-ÿ])/g, (m, a, b) => a + b.toUpperCase());
 function signatureHtml(c){
-  const p = personneCarnet(c) || {categorie: "associe", prenom: "", nom: c ? c.nom : "", courriel: c ? c.courriel : "", sig: {}};
+  const p = personneCarnet(c); if(!p) return "";
   const s = p.sig || {};
   if(s.sans_signature) return "";
   const seg = "font-family:'Segoe UI',sans-serif;color:#0F2238";
@@ -4721,6 +4739,7 @@ async function piecesCourrielDest(lignes, dest){
   const adresse = (piecesContacts()[dest] || "").trim();
   if(dest === "libre" && !adresse){ signaler("Saisissez d'abord l'adresse du destinataire libre.", true); return; }
   const soc = etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "";
+  if(!(await signatureAssurer())) return;
   const collab = etat.charge.collaborateur;
   const appel = dest === "avocat" ? "Cher Maître," : dest === "client" ? "Madame, Monsieur," : "Bonjour,";
   const html = piecesCorpsHtml([appel, "Dans le cadre de l'opération concernant la société " + soc + ", et afin de nous permettre d'établir l'acte, nous vous remercions de bien vouloir nous adresser les pièces suivantes :"],
