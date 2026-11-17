@@ -72,13 +72,18 @@
   /* colonne de gauche en RUBRIQUES (17/11/2026, soir) : Dossier / Groupes / Pièces / Documents ; le nom du dossier reste en tête */
   .p-tete{padding:9px 14px 7px;font-family:Georgia,"Times New Roman",serif;font-size:15.5px;color:var(--nuit);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .p-tete small{font-family:"Segoe UI",system-ui,sans-serif;font-size:12px;color:var(--gris);margin-left:8px}
-  .onglets{display:flex;border-bottom:1px solid var(--trait);padding:0 8px;gap:2px;flex:none}
-  .onglets button{flex:1;border:0;border-bottom:3px solid transparent;background:none;padding:8px 6px 7px;font-size:13.5px;color:var(--gris);display:flex;gap:6px;align-items:center;justify-content:center}
-  .onglets button:hover{color:var(--nuit)}
-  .onglets button[aria-selected="true"]{color:var(--nuit);font-weight:600;border-bottom-color:var(--orange)}
-  .onglets .o-n{font-size:11px;font-weight:600;background:var(--trait);color:var(--nuit);border-radius:9px;padding:0 6px;line-height:17px}
+  /* une couleur de la charte par rubrique : Dossier nuit, Groupes canard, Pièces orange, Documents carmin ; la rubrique ouverte est pleine */
+  .onglets{display:flex;padding:0 8px;gap:4px;flex:none;border-bottom:3px solid var(--oc,var(--nuit))}
+  .panneau[data-onglet="dossier"] .onglets{--oc:var(--nuit)} .panneau[data-onglet="groupes"] .onglets{--oc:var(--canard)}
+  .panneau[data-onglet="pieces"] .onglets{--oc:#E07A0C} .panneau[data-onglet="documents"] .onglets{--oc:var(--carmin)}
+  .onglets button{flex:1;border:0;border-top:3px solid var(--c);border-radius:5px 5px 0 0;background:color-mix(in srgb,var(--c) 11%,#fff);padding:7px 6px 7px;font-size:13.5px;font-weight:600;color:var(--c);display:flex;gap:6px;align-items:center;justify-content:center}
+  .onglets button[data-onglet="dossier"]{--c:var(--nuit)} .onglets button[data-onglet="groupes"]{--c:var(--canard)}
+  .onglets button[data-onglet="pieces"]{--c:#E07A0C} .onglets button[data-onglet="documents"]{--c:var(--carmin)}
+  .onglets button:hover{background:color-mix(in srgb,var(--c) 22%,#fff)}
+  .onglets button[aria-selected="true"]{background:var(--c);color:#fff}
+  .onglets .o-n{font-size:11px;font-weight:600;background:#fff;color:var(--c);border:1px solid var(--c);border-radius:9px;padding:0 6px;line-height:16px}
   .onglets .o-n:empty{display:none}
-  .onglets .o-n.vif{background:var(--orange);color:#fff}
+  .onglets button[aria-selected="true"] .o-n{border-color:#fff}
   .volet{flex:1;overflow:auto;min-height:0}
   .panneau[data-onglet="dossier"]>[data-v]:not([data-v~="dossier"]),.panneau[data-onglet="groupes"]>[data-v]:not([data-v~="groupes"]),
   .panneau[data-onglet="pieces"]>[data-v]:not([data-v~="pieces"]),.panneau[data-onglet="documents"]>[data-v]:not([data-v~="documents"]){display:none}
@@ -5389,6 +5394,13 @@ function ongletsMaj(){
   if(cle !== ongletsMaj.cle){ ongletsMaj.cle = cle; ongletPoser(charge ? "groupes" : "dossier"); }
   const t = document.getElementById("p-tete");
   if(t) t.innerHTML = charge ? echap(soc || "Jeu local") + (etat.dossier && etat.dossier.siren && soc !== etat.dossier.siren ? '<small>SIREN ' + echap(etat.dossier.siren) + '</small>' : '') : "Aucun dossier ouvert";
+  // liste des dossiers de la base : le dossier ouvert n'y figure pas, les autres sont annoncés comme tels
+  const zd = document.getElementById("dossiers"), sm = zd && zd.querySelector("summary");
+  if(sm){
+    const siren = etat.dossier && etat.dossier.siren; let nb = 0;
+    zd.querySelectorAll("li").forEach(li => { const b = li.querySelector("button[data-siren]"), courant = Boolean(siren && b && b.dataset.siren === String(siren)); li.hidden = courant; if(!courant) nb++; });
+    sm.innerHTML = (siren ? "Autres dossiers" : "Dossiers enregistrés") + ' <span class="n">(' + nb + ')</span>';
+  }
   const og = document.getElementById("o-groupes"); if(og) og.textContent = charge ? String(etat.groupes.length) : "";
   const op = document.getElementById("o-pieces"), n = document.querySelector("#liste > .pieces > summary .n");
   if(op){ op.textContent = charge && n ? n.textContent : ""; op.classList.toggle("vif", Boolean(n && !n.classList.contains("zero"))); }
@@ -5834,6 +5846,7 @@ async function listerDossiers(){
         + " · " + quand + '</span></button></li>';
     });
     zone.innerHTML = html + "</ul>";
+    ongletsMaj();
     zone.querySelectorAll("button[data-siren]").forEach(b => b.addEventListener("click", () => {
       zone.open = false;
       document.getElementById("societe-saisie").value = b.querySelector(".d-nom").textContent;
