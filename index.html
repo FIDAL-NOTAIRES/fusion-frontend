@@ -69,6 +69,33 @@
     border-right:1px solid var(--trait);display:flex;flex-direction:column;min-height:0
   }
   .carte-zone{flex:1;position:relative;min-width:0}
+  /* colonne de gauche en RUBRIQUES (17/11/2026, soir) : Dossier / Groupes / Pièces / Documents ; le nom du dossier reste en tête */
+  .p-tete{padding:9px 14px 7px;font-family:Georgia,"Times New Roman",serif;font-size:15.5px;color:var(--nuit);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .p-tete small{font-family:"Segoe UI",system-ui,sans-serif;font-size:12px;color:var(--gris);margin-left:8px}
+  .onglets{display:flex;border-bottom:1px solid var(--trait);padding:0 8px;gap:2px;flex:none}
+  .onglets button{flex:1;border:0;border-bottom:3px solid transparent;background:none;padding:8px 6px 7px;font-size:13.5px;color:var(--gris);display:flex;gap:6px;align-items:center;justify-content:center}
+  .onglets button:hover{color:var(--nuit)}
+  .onglets button[aria-selected="true"]{color:var(--nuit);font-weight:600;border-bottom-color:var(--orange)}
+  .onglets .o-n{font-size:11px;font-weight:600;background:var(--trait);color:var(--nuit);border-radius:9px;padding:0 6px;line-height:17px}
+  .onglets .o-n:empty{display:none}
+  .onglets .o-n.vif{background:var(--orange);color:#fff}
+  .volet{flex:1;overflow:auto;min-height:0}
+  .panneau[data-onglet="dossier"]>[data-v]:not([data-v~="dossier"]),.panneau[data-onglet="groupes"]>[data-v]:not([data-v~="groupes"]),
+  .panneau[data-onglet="pieces"]>[data-v]:not([data-v~="pieces"]),.panneau[data-onglet="documents"]>[data-v]:not([data-v~="documents"]){display:none}
+  .panneau[data-onglet="groupes"] #liste>.pieces{display:none}
+  .panneau[data-onglet="pieces"] #liste>:not(.pieces):not(.acte-maj):not(.vide){display:none}
+  .panneau[data-onglet="pieces"] #liste>.acte-maj{margin:10px 14px}
+  .famille{font-family:"Segoe UI",system-ui,sans-serif;font-size:11px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:var(--canard)}
+  .pied .famille{flex-basis:100%}
+  .docs{padding:6px 14px 16px}
+  .docs h4.famille{margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--trait)}
+  .doc-ligne{display:flex;gap:12px;align-items:center;margin:8px 0}
+  .doc-ligne .btn{flex:none;width:205px;padding:7px 10px;text-align:center}
+  .doc-ligne span{font-size:12.5px;color:var(--gris);line-height:1.4}
+  .options-titre{margin:12px 14px 6px;font-size:12.5px;color:var(--gris)}
+  .reglages .depose{margin:0 14px 12px}
+  .source{border-bottom:0}
+  .charge-note{display:none}
   /* colonne de gauche repliable (17/11/2026) : languette sur le bord de la carte, triangle dessiné */
   main.replie .panneau{display:none}
   .languette{position:absolute;left:0;top:50%;transform:translateY(-50%);z-index:1100;width:22px;height:64px;padding:0;border:0;
@@ -500,8 +527,17 @@
   </header>
 
   <main>
-    <section class="panneau">
+    <section class="panneau" id="panneau" data-onglet="dossier">
 
+      <div class="p-tete" id="p-tete">Aucun dossier ouvert</div>
+      <div class="onglets" role="tablist" aria-label="Rubriques du dossier">
+        <button type="button" role="tab" data-onglet="dossier" aria-selected="true">Dossier</button>
+        <button type="button" role="tab" data-onglet="groupes" aria-selected="false">Groupes<span class="o-n" id="o-groupes"></span></button>
+        <button type="button" role="tab" data-onglet="pieces" aria-selected="false">Pièces<span class="o-n" id="o-pieces"></span></button>
+        <button type="button" role="tab" data-onglet="documents" aria-selected="false">Documents</button>
+      </div>
+
+      <div class="volet" data-v="dossier">
       <div class="source">
         <div class="societe">
           <label for="societe-saisie">Société</label>
@@ -514,15 +550,6 @@
           <ul class="candidats" id="candidats"></ul>
           <details class="dossiers" id="dossiers" hidden></details>
         </div>
-        <div class="depose" id="depose">
-          <p>ou déposez un GeoJSON de parcelles</p>
-          <div class="ligne-boutons">
-            <button class="btn" id="btn-fichier">Choisir un fichier</button>
-            <button class="btn" id="btn-coller">Coller du texte</button>
-            <button class="btn" id="btn-essai">Jeu d'essai</button>
-          </div>
-          <textarea class="coller" id="zone-coller" placeholder="Collez ici le contenu GeoJSON, puis Ctrl+Entrée"></textarea>
-        </div>
         <input type="file" id="fichier" accept=".geojson,.json,application/geo+json,application/json" hidden>
         <div class="reprise" id="reprise" hidden tabindex="0" title="Document déjà rédigé sur la société (désignation, origine, note) couvrant plusieurs groupes : FUSION le découpe par numéro de groupe, sinon par parcelles citées, et range chaque section en note de travail du groupe concerné">
           <span class="lib">Reprendre un document déjà rédigé <small>Word ou PDF, plusieurs groupes — glisser ici ou</small></span>
@@ -532,23 +559,9 @@
         </div>
       </div>
 
-      <div class="liste" id="liste">
-        <p class="vide">Aucune parcelle chargée. Déposez un GeoJSON, ou ouvrez le jeu d'essai pour voir le regroupement à l'œuvre.</p>
-      </div>
-
-      <div class="pied">
-        <button class="btn plein" id="btn-fusionner" disabled>Fusionner les groupes cochés</button>
-        <button class="btn" id="btn-recalculer" disabled>Recalculer</button>
-        <button class="btn" id="btn-export" disabled>Exporter les groupes</button>
-        <button class="btn" id="btn-compil-docx" disabled title="Compilation de toutes les fiches de groupe, sommaire cliquable en tête — Word, à coller dans l'acte">Compiler (Word)</button>
-        <button class="btn plein" id="btn-acte" disabled title="Dépôt de pièces consécutif à une fusion, en Word, daté « version au … » ; ce qui manque est surligné en jaune dans l'acte">Acte de fusion (Word)</button>
-        <button class="btn" id="btn-compil-pdf" disabled title="Même compilation en PDF, mentions colorées conservées — trace datée du dossier">Compiler (PDF)</button>
-        <button class="btn" id="btn-annexe" disabled title="Recueil unique des servitudes et charges de tous les groupes, texte intégral en annexe">Annexe servitudes</button>
-        <button class="btn" id="btn-tableau-reprises" disabled title="Word paysage, un seul tableau triable : une ligne par groupe ayant reçu de la matière reprise">Tableau des reprises</button>
-        <button class="btn plein" id="btn-arbo" disabled title="Pose la numérotation définitive (SPF, commune, section) puis crée le dossier Drive de la société, un dossier par groupe et ses six sous-dossiers (cinq de data room, plus les notes de travail internes)">Numéroter et créer le Drive</button>
-      </div>
 
       <details class="dossiers concordance" id="concordance" hidden></details>
+
 
       <details class="reglages" id="reglages">
         <summary>Options</summary>
@@ -572,7 +585,41 @@
           <input type="number" id="tolerance" min="0" max="3" step="0.1" value="0.5">
           <span class="val">m</span>
         </div>
+        <p class="options-titre">Charger des parcelles sans passer par la société</p>
+        <div class="depose" id="depose">
+          <p>ou déposez un GeoJSON de parcelles</p>
+          <div class="ligne-boutons">
+            <button class="btn" id="btn-fichier">Choisir un fichier</button>
+            <button class="btn" id="btn-coller">Coller du texte</button>
+            <button class="btn" id="btn-essai">Jeu d'essai</button>
+          </div>
+          <textarea class="coller" id="zone-coller" placeholder="Collez ici le contenu GeoJSON, puis Ctrl+Entrée"></textarea>
+        </div>
       </details>
+      </div>
+
+      <div class="liste" id="liste" data-v="groupes pieces">
+        <p class="vide">Aucune parcelle chargée. Cherchez une société dans la rubrique Dossier.</p>
+      </div>
+
+      <div class="pied" data-v="groupes">
+        <span class="famille">Périmètre</span>
+        <button class="btn plein" id="btn-fusionner" disabled>Fusionner les groupes cochés</button>
+        <button class="btn" id="btn-recalculer" disabled>Recalculer</button>
+        <button class="btn" id="btn-export" disabled>Exporter les groupes</button>
+      </div>
+
+      <div class="volet docs" data-v="documents">
+        <h4 class="famille">Acte</h4>
+        <div class="doc-ligne"><button class="btn plein" id="btn-acte" disabled title="Dépôt de pièces consécutif à une fusion, en Word, daté « version au … » ; ce qui manque est surligné en jaune dans l'acte">Acte de fusion (Word)</button><span>Dépôt de pièces consécutif à la fusion, annexes à la suite. Ce qui manque est surligné en jaune.</span></div>
+        <h4 class="famille">Fiches des groupes</h4>
+        <div class="doc-ligne"><button class="btn" id="btn-compil-docx" disabled title="Compilation de toutes les fiches de groupe, sommaire cliquable en tête — Word, à coller dans l'acte">Compiler (Word)</button><span>Toutes les fiches de groupe, sommaire en tête.</span></div>
+        <div class="doc-ligne"><button class="btn" id="btn-compil-pdf" disabled title="Même compilation en PDF, mentions colorées conservées — trace datée du dossier">Compiler (PDF)</button><span>La même compilation, mentions colorées conservées.</span></div>
+        <div class="doc-ligne"><button class="btn" id="btn-annexe" disabled title="Recueil unique des servitudes et charges de tous les groupes, texte intégral en annexe">Annexe servitudes</button><span>Recueil des servitudes et charges de tous les groupes.</span></div>
+        <button class="btn" id="btn-tableau-reprises" disabled title="Word paysage, un seul tableau triable : une ligne par groupe ayant reçu de la matière reprise">Tableau des reprises</button>
+        <h4 class="famille">Drive</h4>
+        <div class="doc-ligne"><button class="btn plein" id="btn-arbo" disabled title="Pose la numérotation définitive (SPF, commune, section) puis crée le dossier Drive de la société, un dossier par groupe et ses six sous-dossiers (cinq de data room, plus les notes de travail internes)">Numéroter et créer le Drive</button><span>Numérotation définitive, dossier de la société, un dossier par groupe.</span></div>
+      </div>
 
     </section>
 
@@ -5329,7 +5376,25 @@ function rendrePieces(liste){
   liste.appendChild(det);
 }
 
+/* RUBRIQUES de la colonne (17/11/2026, soir) : la rubrique Groupes s'ouvre seule dès qu'un dossier est chargé, Dossier quand il n'y en a pas */
+function ongletPoser(nom){
+  const p = document.getElementById("panneau"); if(!p || p.dataset.onglet === nom) return false;
+  p.dataset.onglet = nom;
+  p.querySelectorAll(".onglets button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.onglet === nom)));
+  return true;
+}
+function ongletsMaj(){
+  const charge = etat.parcelles.length > 0, soc = etat.dossier ? (etat.dossier.denomination || etat.dossier.siren || "") : "";
+  const cle = (etat.dossier && etat.dossier.siren || "") + "|" + charge;
+  if(cle !== ongletsMaj.cle){ ongletsMaj.cle = cle; ongletPoser(charge ? "groupes" : "dossier"); }
+  const t = document.getElementById("p-tete");
+  if(t) t.innerHTML = charge ? echap(soc || "Jeu local") + (etat.dossier && etat.dossier.siren && soc !== etat.dossier.siren ? '<small>SIREN ' + echap(etat.dossier.siren) + '</small>' : '') : "Aucun dossier ouvert";
+  const og = document.getElementById("o-groupes"); if(og) og.textContent = charge ? String(etat.groupes.length) : "";
+  const op = document.getElementById("o-pieces"), n = document.querySelector("#liste > .pieces > summary .n");
+  if(op){ op.textContent = charge && n ? n.textContent : ""; op.classList.toggle("vif", Boolean(n && !n.classList.contains("zero"))); }
+}
 function rendre(){
+  if(document.getElementById("panneau").dataset.onglet === "pieces") etat.piecesOuvert = true;   // dans sa rubrique, la liste des pièces est toujours dépliée
   memoriserReprise();
   rendreCharge();
   const liste = document.getElementById("liste");
@@ -5509,6 +5574,7 @@ function rendre(){
     formatSurface(etat.parcelles.reduce((s,p) => s + p.surface, 0));
 
   majBoutons();
+  ongletsMaj();
   rendreConcordance();
   dessiner();
 }
@@ -6141,6 +6207,10 @@ initCarte();
 brancher();
 rendre();
 listerDossiers();
+document.querySelector(".onglets").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-onglet]"); if(!b) return;
+  if(ongletPoser(b.dataset.onglet) && b.dataset.onglet === "pieces" && !etat.piecesOuvert){ etat.piecesOuvert = true; rendre(); }
+});
 // colonne de gauche : repli et retour par la languette ; la carte reprend toute la largeur
 document.getElementById("btn-panneau").addEventListener("click", (e) => {
   const m = document.querySelector("main"), replie = m.classList.toggle("replie"), lib = replie ? "Afficher la colonne" : "Réduire la colonne";
