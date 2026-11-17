@@ -82,6 +82,9 @@
   .soc h4.famille small{font-weight:400;letter-spacing:0;text-transform:none;color:var(--gris);font-size:12px}
   .soc .acte-champ{grid-template-columns:150px 1fr}
   .soc .acte-champ.manque input{border-color:#D4A800;background:#FFFBE6}
+  .soc h4.famille{font-size:13px;padding:8px 10px;margin:20px -4px 12px;background:#E4F3EA;border:0;border-left:5px solid var(--vert);color:var(--nuit);border-radius:0 4px 4px 0}
+  .soc h4.famille:first-child{margin-top:10px}
+  .soc .soc-liens{font-size:12px;color:var(--gris);margin:4px 0 0 158px} .soc .soc-liens a{color:var(--canard)}
   .soc .soc-nom{font-family:Georgia,"Times New Roman",serif;font-size:15px;margin:2px 0 6px}
   .soc .soc-nom small{font-family:"Segoe UI",system-ui,sans-serif;font-size:12px;color:var(--gris);margin-left:8px}
   .soc .soc-etat{font-size:12.5px;color:var(--gris);margin:6px 0;min-height:1em}
@@ -5584,8 +5587,49 @@ async function societesAnnuaire(q){
   if(!r.ok) throw new Error(d.erreur || ("HTTP " + r.status));
   return d.societes || [];
 }
+/* 18/11/2026 (nuit) — REPRÉSENTANT LÉGAL (demandé par JFD) : l'annuaire officiel des entreprises (recherche-entreprises.api.gouv.fr, gratuit, sans clé,
+   alimenté par l'INSEE et le registre national des entreprises — la source de Pappers) donne les dirigeants AVEC LEUR QUALITÉ, la forme et le siège.
+   FUSION l'interroge directement par le SIREN ; s'il ne répond pas, on garde ce que REDPAR a donné. Liens Pappers et annuaire pour contrôler d'un clic. */
+function formeJuridiqueDe(code){
+  const c = String(code || ""), T = {"5710": "société par actions simplifiée", "5720": "société par actions simplifiée à associé unique", "5498": "société à responsabilité limitée à associé unique",
+    "5202": "société en nom collectif", "5306": "société en commandite simple", "5308": "société en commandite par actions", "5800": "société européenne", "6220": "groupement d'intérêt économique",
+    "6540": "société civile immobilière", "6541": "société civile immobilière de construction-vente", "5485": "société d'exercice libéral à responsabilité limitée", "5785": "société d'exercice libéral par actions simplifiée"};
+  if(T[c]) return T[c];
+  if(/^57/.test(c)) return "société par actions simplifiée"; if(/^54/.test(c)) return "société à responsabilité limitée";
+  if(/^55/.test(c)) return "société anonyme à conseil d'administration"; if(/^56/.test(c)) return "société anonyme à directoire et conseil de surveillance";
+  if(/^65/.test(c)) return "société civile"; return "";
+}
+function dirigeantLibelle(d){
+  const cap = (t) => String(t || "").toLowerCase().replace(/(^|[\s-])([a-zà-ÿ])/g, (m, a, b) => a + b.toUpperCase());
+  if(d.denomination) return "la société " + String(d.denomination).trim() + (d.siren ? " (SIREN " + d.siren + ")" : "");
+  const prenom = cap(String(d.prenoms || "").split(/[\s,]+/)[0]);
+  return (prenom + " " + String(d.nom || "").toUpperCase()).trim();
+}
+function representantsLegaux(dirigeants, code){
+  // le représentant légal selon la forme ; à défaut, le premier dirigeant qui n'est ni commissaire aux comptes ni simple administrateur
+  const q = (d) => sansAccent(String(d.qualite || "")).toLowerCase();
+  const utiles = dirigeants.filter(d => !/commissaire|administrateur|membre du conseil|conseil de surveillance|suppleant/.test(q(d)) || /president/.test(q(d)) && !/surveillance/.test(q(d)));
+  const essais = [(d) => /president[- ]directeur general/.test(q(d)), (d) => /president du directoire/.test(q(d)),
+    ...(/^5[56]/.test(String(code || "")) ? [(d) => /^directeur general$/.test(q(d))] : []),
+    (d) => /^president/.test(q(d)) && !/conseil|directoire/.test(q(d)), (d) => /^gerant|co-?gerant/.test(q(d)), (d) => /^directeur general$/.test(q(d)), (d) => /president du conseil d'administration/.test(q(d)), (d) => /liquidateur/.test(q(d))];
+  for(const t of essais){ const l = utiles.filter(t); if(l.length) return l; }
+  return [];
+}
+async function societeOfficielle(siren){
+  const r = await fetch("https://recherche-entreprises.api.gouv.fr/search?q=" + encodeURIComponent(siren) + "&page=1&per_page=5", {headers: {Accept: "application/json"}});
+  if(!r.ok) throw new Error("annuaire officiel : HTTP " + r.status);
+  const d = await r.json(), x = (d.results || []).find(e => String(e.siren) === String(siren)); if(!x) throw new Error("société introuvable à l'annuaire officiel");
+  const dirigeants = (x.dirigeants || []).filter(e => e && (e.nom || e.denomination)), legaux = representantsLegaux(dirigeants, x.nature_juridique);
+  const avecQualite = (e) => dirigeantLibelle(e) + (e.qualite ? ", " + String(e.qualite).charAt(0).toLowerCase() + String(e.qualite).slice(1) : "");
+  return {nom: x.nom_raison_sociale || x.nom_complet || "", forme: formeJuridiqueDe(x.nature_juridique), siege: (x.siege && x.siege.adresse) || "", cesse: x.etat_administratif && x.etat_administratif !== "A",
+    representant: legaux.map(avecQualite).join(" et "), dirigeants: dirigeants.map(avecQualite).join(" ; ")};
+}
+function societeLiens(siren){
+  const n = String(siren || "").replace(/\D/g, ""); if(n.length !== 9) return "";
+  return '<p class="soc-liens">Contrôler : <a href="https://www.pappers.fr/entreprise/' + n + '" target="_blank" rel="noopener">Pappers</a> · <a href="https://annuaire-entreprises.data.gouv.fr/entreprise/' + n + '" target="_blank" rel="noopener">annuaire officiel</a></p>';
+}
 function societeFiche(c){
-  const siren = String(c.siren || "").replace(/\D/g, ""), f = String(c.formeJuridique || "").trim();
+  const siren = String(c.siren || "").replace(/\D/g, ""), f = /^n\/?c$/i.test(String(c.formeJuridique || "").trim()) ? "" : String(c.formeJuridique || "").trim();
   return {nom: c.nom || "", forme: /^[A-ZÀ-Ý][a-zà-ÿ]/.test(f) ? f.charAt(0).toLowerCase() + f.slice(1) : f, siege: c.adresse || "",
     immat: siren.length === 9 ? "SIREN " + siren.slice(0, 3) + " " + siren.slice(3, 6) + " " + siren.slice(6) : "", dirigeants: (c.dirigeants || []).join(", ")};
 }
@@ -5600,12 +5644,15 @@ function rendreSocietes(force){
     + '<p class="soc-nom">' + echap(soc) + (siren && soc !== siren ? '<small>SIREN ' + echap(siren) + '</small>' : '') + '</p>'
     + '<div class="societe-ligne"><button class="btn" type="button" data-x="absorbee">Compléter depuis l\'annuaire</button></div><p class="soc-etat" data-etat="absorbee"></p>'
     + champ("absorbee_forme", "Forme", "et capital") + champ("absorbee_siege", "Siège") + champ("absorbee_immat", "Immatriculation", "vide = SIREN du dossier")
+    + (a.absorbee_representant ? '<p class="soc-indice">Représentant légal à l\'annuaire : ' + echap(a.absorbee_representant) + '</p>' : '') + societeLiens(siren)
     + '<h4 class="famille">Société absorbante <small>requérante à l\'acte</small></h4>'
     + '<div class="societe-ligne"><input type="text" id="soc-q" placeholder="Nom ou SIREN de la société absorbante" autocomplete="off" style="flex:1;min-width:0;font:inherit;padding:6px 9px;border:1px solid var(--trait);border-radius:3px"><button class="btn plein" type="button" data-x="absorbante">Chercher</button></div>'
     + '<p class="soc-etat" data-etat="absorbante"></p><ul class="candidats" id="soc-candidats"></ul>'
     + champ("absorbante", "Dénomination") + champ("absorbante_forme", "Forme", "et capital") + champ("absorbante_siege", "Siège") + champ("absorbante_immat", "Immatriculation", "SIREN et registre")
     + champ("representants", "Représentée par", "noms et qualités")
-    + (a.absorbante_dirigeants ? '<p class="soc-indice">Dirigeants à l\'annuaire : ' + echap(a.absorbante_dirigeants) + ' — <button class="lien-btn" type="button" data-x="dirigeants">reprendre</button></p>' : '')
+    + (a.absorbante_representant ? '<p class="soc-indice">Représentant légal à l\'annuaire : <b>' + echap(a.absorbante_representant) + '</b> — <button class="lien-btn" type="button" data-x="representant">reprendre</button></p>' : '')
+    + (a.absorbante_dirigeants ? '<p class="soc-indice">Tous les dirigeants : ' + echap(a.absorbante_dirigeants) + (a.absorbante_representant ? '' : ' — <button class="lien-btn" type="button" data-x="dirigeants">reprendre</button>') + '</p>' : '')
+    + societeLiens(a.absorbante_siren || (/\d{3}\s?\d{3}\s?\d{3}/.exec(a.absorbante_immat || "") || [""])[0])
     + champ("clerc", "Elle-même représentée par", "clerc de l'étude, facultatif", true)
     + '<h4 class="famille">Opération</h4>'
     + champ("lien_capital", "Lien en capital", "", true) + champ("date_traite", "Date du traité", "ex. 31 juillet 2023") + champ("date_realisation", "Réalisation définitive", "date");
@@ -5616,6 +5663,7 @@ function rendreSocietes(force){
   z.onkeydown = (e) => { if(e.key === "Enter" && e.target.id === "soc-q"){ e.preventDefault(); z.querySelector('[data-x="absorbante"]').click(); } };
   z.onclick = async (e) => {
     const b = e.target.closest("[data-x]"); if(!b || !z.contains(b)) return;
+    if(b.dataset.x === "representant"){ societePoser({representants: acteDonnees().absorbante_representant || ""}, "annuaire"); rendreSocietes(true); return; }
     if(b.dataset.x === "dirigeants"){ societePoser({representants: acteDonnees().absorbante_dirigeants || ""}, "annuaire"); rendreSocietes(true); return; }
     if(b.dataset.x === "absorbee"){
       if(!/^\d{9}$/.test(String(siren))){ etatMsg("absorbee", "Le dossier ne porte pas de SIREN : renseignez les champs à la main.", true); return; }
@@ -5623,8 +5671,8 @@ function rendreSocietes(force){
       try{
         const liste = await societesAnnuaire(siren), c = liste.find(x => String(x.siren || "").replace(/\D/g, "") === String(siren));
         if(!c){ etatMsg("absorbee", "Société introuvable à l'annuaire sous le SIREN " + siren + ".", true); return; }
-        const f = societeFiche(c);
-        societePoser({absorbee_forme: f.forme, absorbee_siege: f.siege, absorbee_immat: f.immat}, "annuaire"); rendreSocietes(true);
+        const f = societeFiche(c); let o = null; try{ o = await societeOfficielle(siren); }catch(e2){}
+        societePoser({absorbee_forme: (o && o.forme) || f.forme, absorbee_siege: (o && o.siege) || f.siege, absorbee_immat: f.immat, absorbee_representant: (o && o.representant) || ""}, "annuaire"); rendreSocietes(true);
         const p = document.querySelector('#societes [data-etat="absorbee"]'); if(p) p.textContent = "Repris de l'annuaire officiel" + (c.statut && c.statut !== "Active" ? " — société « " + c.statut + " »" : "") + ". Le capital et la ville du registre restent à ajouter.";
       }catch(err){ etatMsg("absorbee", err.message || "Annuaire inaccessible", true); }
       finally{ b.disabled = false; }
@@ -5644,9 +5692,15 @@ function rendreSocietes(force){
           bt.innerHTML = '<span class="nom">' + echap(c.nom) + '</span><span class="badge">' + echap(c.formeJuridique) + '</span><span class="badge ' + (c.statut === "Active" ? "actif" : "cesse") + '">' + echap(c.statut) + '</span>'
             + '<span class="det">SIREN <b>' + echap(c.siren) + '</b></span><span class="det">' + echap(c.adresse) + '</span>'
             + (c.dirigeants && c.dirigeants.length ? '<span class="det">Dirigeants : ' + echap(c.dirigeants.join(", ")) + '</span>' : "");
-          bt.addEventListener("click", (ev) => { ev.stopPropagation(); const f = societeFiche(c);
-            societePoser({absorbante: f.nom, absorbante_forme: f.forme, absorbante_siege: f.siege, absorbante_immat: f.immat, absorbante_dirigeants: f.dirigeants}, "annuaire"); rendreSocietes(true);
-            const p = document.querySelector('#societes [data-etat="absorbante"]'); if(p) p.textContent = "Repris de l'annuaire officiel. Le capital, la ville du registre et les qualités des représentants restent à ajouter."; });
+          bt.addEventListener("click", async (ev) => { ev.stopPropagation(); bt.disabled = true; const f = societeFiche(c), sr = String(c.siren || "").replace(/\D/g, "");
+            let o = null; try{ o = await societeOfficielle(sr); }catch(e2){}
+            const deja = String(acteDonnees().representants || "").trim(), ancien = acteDonnees().absorbante_representant || "";
+            societePoser({absorbante: f.nom, absorbante_forme: (o && o.forme) || f.forme, absorbante_siege: (o && o.siege) || f.siege, absorbante_immat: f.immat, absorbante_siren: sr,
+              absorbante_dirigeants: (o && o.dirigeants) || f.dirigeants, absorbante_representant: (o && o.representant) || "",
+              representants: !deja || deja === ancien ? ((o && o.representant) || "") : deja}, "annuaire"); rendreSocietes(true);
+            const p = document.querySelector('#societes [data-etat="absorbante"]');
+            if(p) p.textContent = o ? (o.representant ? "Repris de l'annuaire officiel, représentant légal compris. Le capital et la ville du registre restent à ajouter." : "Repris de l'annuaire officiel, qui ne donne pas de représentant légal pour cette société : à saisir. Le capital et la ville du registre restent à ajouter.")
+                                    : "Repris de l'annuaire, sans le détail des dirigeants (annuaire officiel injoignable) : représentant légal à saisir. Le capital et la ville du registre restent à ajouter."; });
           li.appendChild(bt); ul.appendChild(li);
         });
       }catch(err){ etatMsg("absorbante", err.message || "Annuaire inaccessible", true); }
