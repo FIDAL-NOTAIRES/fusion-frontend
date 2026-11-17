@@ -266,6 +266,9 @@
   .pieces .pieces-btn{margin-left:auto;font-size:11.5px;padding:3px 9px;text-transform:none;letter-spacing:0}
   .pieces .pieces-opt{display:flex;gap:6px;align-items:center;padding:2px 14px 6px;font-size:12px;color:var(--gris)}
   .pieces .pieces-groupe{margin:0;padding:6px 14px 2px;font-family:Georgia,serif;font-size:12.5px;color:var(--carmin)}
+  .pieces-cat{margin-top:10px;padding-top:8px;border-top:1px solid var(--trait);font-size:13.5px}
+  .pieces-site{margin:6px 14px 2px 22px;font-size:11px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--canard)}
+  .pieces-site + .pieces-liste{margin-left:8px}
   .pieces-liste{list-style:none;margin:0;padding:0 0 4px}
   .pieces-liste li{display:grid;grid-template-columns:1fr auto;gap:4px 10px;padding:6px 14px;border-top:1px solid #F1E9DC;font-size:12.5px;align-items:start}
   .pieces-liste .txt{color:var(--nuit)}
@@ -4718,6 +4721,33 @@ function piecesCommunesGroupe(num){
   const g = etat.groupes.find(x => x.num === num); if(!g) return "";
   return [...new Set([...g.membres].map(i => etat.parcelles[i] && etat.parcelles[i].props.nom_commune).filter(Boolean))].join(" / ");
 }
+/* 17/11/2026 (nuit) — demandes organisées PAR CATÉGORIE PUIS PAR SITE (demandé par JFD), à l'écran, dans les courriels et dans la liste Word.
+   La catégorie se lit dans l'identifiant de la ligne ; le site est la commune (taxe foncière, mairies), le groupe nommé par sa commune, ou l'ensemble du dossier. */
+const PIECES_CATEGORIES = [["titre", "Titres de propriété"], ["bail", "Baux et avenants (société preneuse)"], ["anterieur", "Titres antérieurs"], ["verif", "Vérification des références cadastrales"],
+  ["servitude", "Servitudes"], ["copro", "Copropriété"], ["orga", "Organisation de l'ensemble immobilier"], ["pret", "Inscriptions et prêts"], ["icpe", "Installations classées"],
+  ["taxe", "Taxe foncière"], ["baux", "Baux en cours et état locatif"], ["aot", "Occupation du domaine public"], ["travaux", "Travaux et autorisations d'urbanisme"], ["autre", "Autres demandes"]];
+function pieceCategorie(l){
+  const id = String(l.id);
+  if(/^d\|taxe/.test(id)) return "taxe"; if(id === "d|baux") return "baux"; if(id === "d|aot") return "aot"; if(/^d\|(travaux|mairie)/.test(id)) return "travaux";
+  const m = /\|(titre|anterieur|sans-titre|orga|association|copro|servitude|pret|icpe)(\||$)/.exec(id); if(!m) return "autre";
+  return m[1] === "titre" ? (/^Bail/.test(l.texte) ? "bail" : "titre") : m[1] === "sans-titre" ? "verif" : m[1] === "association" ? "orga" : m[1];
+}
+function pieceSite(l){
+  const m = /^d\|(?:taxe|mairie)\|(.+)$/.exec(String(l.id)); if(m) return {cle: "1" + m[1], titre: m[1]};
+  if(l.g == null) return {cle: "0", titre: "Ensemble du dossier", dossier: true};
+  const c = piecesCommunesGroupe(l.g); return {cle: "2" + (c || "~") + String(l.g).padStart(6, "0"), titre: (c ? c + " — " : "") + "groupe " + numeroGroupe4(l.g)};
+}
+function pieceLibelle(l){
+  const id = String(l.id);
+  if(/^d\|taxe\|/.test(id)) return "Dernier avis de taxe foncière";
+  if(/^d\|mairie\|/.test(id)) return "Travaux signalés par le client — demander à la mairie la copie des autorisations, de la déclaration d'achèvement et de la conformité";
+  return l.texte;
+}
+function piecesParCategorie(lignes){
+  const cats = new Map();
+  lignes.forEach(l => { const c = pieceCategorie(l), st = pieceSite(l); if(!cats.has(c)) cats.set(c, new Map()); const sites = cats.get(c); if(!sites.has(st.cle)) sites.set(st.cle, {titre: st.titre, dossier: Boolean(st.dossier), liste: []}); sites.get(st.cle).liste.push(l); });
+  return PIECES_CATEGORIES.filter(([c]) => cats.has(c)).map(([c, titre]) => ({titre, sites: [...cats.get(c).entries()].sort((a, b) => a[0].localeCompare(b[0], "fr", {numeric: true})).map(x => x[1])}));
+}
 function piecesParGroupe(lignes){
   const m = new Map(); lignes.forEach(l => { const k = l.g == null ? -1 : l.g; if(!m.has(k)) m.set(k, []); m.get(k).push(l); });
   return [...m.entries()].sort((a, b) => a[0] - b[0]).map(([k, liste]) => ({titre: k < 0 ? "Ensemble du dossier" : "Groupe " + numeroGroupe4(k) + (piecesCommunesGroupe(k) ? " — " + piecesCommunesGroupe(k) : ""), liste}));
@@ -4733,7 +4763,8 @@ async function piecesSortirClient(lignes){
   const soc = etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "";
   const P = [{style: "note", t: "Associé en charge : " + chargeLibelle(etat.charge.associe) + (etat.charge.collaborateur ? " — collaborateur : " + chargeLibelle(etat.charge.collaborateur) : "") + "."},
              {style: "p", t: "Pour l'établissement de l'acte, nous vous remercions de bien vouloir nous adresser les pièces suivantes :"}];
-  piecesParGroupe(aFaire).forEach(b => { P.push({style: "sous2", t: b.titre}); b.liste.forEach(l => P.push({style: "puce", t: l.texte})); });
+  piecesParCategorie(aFaire).forEach(cat => { P.push({style: "sous2", t: cat.titre});
+    cat.sites.forEach(b => { if(!(cat.sites.length === 1 && b.dossier)) P.push({style: "p", gras: true, t: b.titre}); b.liste.forEach(l => P.push({style: "puce", t: pieceLibelle(l)})); }); });
   try{ telechargerBlob(await blocsDocx([{paragraphes: P}], "Pièces à réclamer au client — " + soc, {}), nomSortie("pieces_client", "docx")); }
   catch(e){ signaler("Liste non produite — " + (e.message || "erreur"), true); return; }
   if(confirm("Liste produite (" + aFaire.length + " pièce" + (aFaire.length > 1 ? "s" : "") + ").\nLes marquer « demandées » à la date d'aujourd'hui ?")) piecesPoser(aFaire.map(l => l.id), "demandee", "pieces-client-demandees");
@@ -4744,7 +4775,7 @@ async function piecesCourrielCollab(lignes){
   if(!aFaire.length){ signaler("Aucune demande cochée à adresser à la collaboratrice."); return; }
   const soc = etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "", dest = destinataireCollab();
   if(!(await signatureAssurer())) return;
-  const html = piecesCorpsHtml(["Bonjour,", "Dans le dossier " + soc + ", merci de bien vouloir traiter les demandes suivantes :"], piecesParGroupe(aFaire), ["Merci d'avance."]);
+  const html = piecesCorpsHtml(["Bonjour,", "Dans le dossier " + soc + ", merci de bien vouloir traiter les demandes suivantes :"], piecesParCategorie(aFaire), ["Merci d'avance."]);
   const objet = "FUSION — " + soc + " — demandes de pièces (" + aFaire.length + ")";
   piecesBrouillon(dest.courriel, "", objet, html, "FUSION - " + soc + " - demandes collaboratrice");
   signaler("Brouillon pour " + dest.libelle + " téléchargé : ouvrez-le d'un double clic dans Outlook.");
@@ -4810,7 +4841,9 @@ function signatureHtml(c){
 function piecesCorpsHtml(debut, groupes, fin){
   const P = (t) => '<p style="margin:0 0 10pt">' + echap(t) + '</p>';
   let h = debut.map(P).join("");
-  groupes.forEach(b => { h += '<p style="margin:0 0 4pt"><b>' + echap(b.titre) + '</b></p><ul style="margin:0 0 10pt;padding-left:22px">' + b.liste.map(l => '<li style="margin:0 0 3pt">' + echap(l.texte) + '</li>').join("") + '</ul>'; });
+  groupes.forEach(cat => { h += '<p style="margin:8pt 0 4pt"><b>' + echap(cat.titre) + '</b></p>';
+    cat.sites.forEach(b => { h += (cat.sites.length === 1 && b.dossier ? '' : '<p style="margin:0 0 2pt 12px"><i>' + echap(b.titre) + '</i></p>')
+      + '<ul style="margin:0 0 8pt;padding-left:34px">' + b.liste.map(l => '<li style="margin:0 0 3pt">' + echap(pieceLibelle(l)) + '</li>').join("") + '</ul>'; }); });
   h += fin.map(P).join("") + signatureHtml(etat.charge && etat.charge.associe);
   return '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:\'Segoe UI\',sans-serif;font-size:10pt;color:#0F2238">' + h + '</body></html>';
 }
@@ -4833,7 +4866,7 @@ async function piecesCourrielDest(lignes, dest){
   const collab = etat.charge.collaborateur;
   const appel = dest === "avocat" ? "Cher Maître," : dest === "client" ? "Madame, Monsieur," : "Bonjour,";
   const html = piecesCorpsHtml([appel, "Dans le cadre de l'opération concernant la société " + soc + ", et afin de nous permettre d'établir l'acte, nous vous remercions de bien vouloir nous adresser les pièces suivantes :"],
-    piecesParGroupe(aFaire), ["Nous restons à votre disposition pour tout renseignement."]);
+    piecesParCategorie(aFaire), ["Nous restons à votre disposition pour tout renseignement."]);
   const objet = soc + " — pièces à nous adresser (" + aFaire.length + ")";
   piecesBrouillon(adresse, collab && collab.courriel ? collab.courriel : "", objet, html, "FUSION - " + soc + " - pieces " + dest);
   signaler("Brouillon téléchargé : ouvrez-le d'un double clic, Outlook l'affiche prêt à envoyer.");
@@ -5356,14 +5389,14 @@ function rendrePieces(liste){
     det.appendChild(tete);
     if(extra) det.appendChild(extra);
     if(!l.length){ det.insertAdjacentHTML("beforeend", '<p class="rien">Rien à ce stade.</p>'); return; }
-    piecesParGroupe(l).forEach(b => {
-      det.insertAdjacentHTML("beforeend", '<p class="pieces-groupe">' + echap(b.titre) + '</p>');
+    piecesParCategorie(l).forEach(cat => { det.insertAdjacentHTML("beforeend", '<p class="pieces-groupe pieces-cat">' + echap(cat.titre) + '</p>'); cat.sites.forEach(b => {
+      if(!(cat.sites.length === 1 && b.dossier)) det.insertAdjacentHTML("beforeend", '<p class="pieces-site">' + echap(b.titre) + '</p>');
       const ul = document.createElement("ul"); ul.className = "pieces-liste";
       b.liste.forEach(x => {
         const reclamable = x.etat === "a_reclamer", coche = pieceCochee(x);
         const li = document.createElement("li"); li.className = "e-" + x.etat + (reclamable && !coche ? " decoche" : "");
         li.innerHTML = '<div class="gauche">' + (reclamable ? '<input type="checkbox" class="pc"' + (coche ? " checked" : "") + ' title="Décocher : la pièce n\'est pas demandée dans le courriel">' : '')
-          + '<span class="txt">' + echap(x.texte) + (x.auto ? ' <em>pièce déposée au Drive</em>' : '') + (x.etat === "demandee" && x.le ? ' <em>demandée le ' + dateFr(x.le) + '</em>' : '') + '</span></div>'
+          + '<span class="txt">' + echap(pieceLibelle(x)) + (x.auto ? ' <em>pièce déposée au Drive</em>' : '') + (x.etat === "demandee" && x.le ? ' <em>demandée le ' + dateFr(x.le) + '</em>' : '') + '</span></div>'
           + '<span class="ctl">' + (reclamable && x.circuit === "client" ? '<select class="pd" title="À qui la demander">' + PIECES_DEST.map(([v, t]) => '<option value="' + v + '"' + (v === pieceDest(x) ? " selected" : "") + '>' + t + '</option>').join("") + '</select>' : '')
           + '<select class="pe">' + PIECES_ETATS.map(([v, t]) => '<option value="' + v + '"' + (v === x.etat ? " selected" : "") + '>' + t + '</option>').join("") + '</select></span>';
         li.querySelector(".pe").addEventListener("change", e => piecesPoser([x.id], e.target.value, "piece-etat"));
@@ -5374,7 +5407,7 @@ function rendrePieces(liste){
         ul.appendChild(li);
       });
       det.appendChild(ul);
-    });
+    }); });
   };
   const trav = document.createElement("label"); trav.className = "pieces-opt";
   trav.innerHTML = '<input type="checkbox"' + (etat.piecesOpt && etat.piecesOpt.travaux ? " checked" : "") + '> Le client signale des travaux de moins de dix ans (ajoute les demandes aux mairies)';
