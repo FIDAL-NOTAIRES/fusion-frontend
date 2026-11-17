@@ -582,6 +582,22 @@
   .voyant{font-size:11.5px;border-radius:10px;padding:1px 9px;line-height:18px;border:1px solid var(--trait);color:#6B7480;background:#fff;white-space:nowrap}
   .voyant.ok{background:#E4F3EA;border-color:#B9DEC8;color:var(--vert);font-weight:600}
   .voyant.cours{background:#FFE6C7;border-color:#FFCF94;color:#8A4B00;font-weight:600}
+  /* 18/11/2026 — communes nettement distinguées des groupes : bandeau bleu nuit qui reste en haut au défilement, groupes en retrait sous un filet */
+  #liste>.arbre.a1{border-top:0;margin-top:12px}
+  #liste>.arbre.a1>summary{position:sticky;top:0;z-index:3;background:var(--nuit);color:#fff;font-family:"Segoe UI",system-ui,sans-serif;font-size:15px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;padding:11px 16px}
+  #liste>.arbre.a1>summary:hover{background:#1B3552}
+  #liste>.arbre.a1>summary::before{border-left-color:var(--jaune-texte)}
+  #liste>.arbre.a1>summary .a-spf{color:#C9D3DE;text-transform:none;letter-spacing:0;font-weight:400;font-size:12px}
+  #liste>.arbre.a1>summary .a-n.gris{background:rgba(255,255,255,.18);color:#fff;text-transform:none;letter-spacing:0}
+  #liste>.arbre.a1>.groupe{margin-left:22px;border-left:3px solid #C9D3DE}
+  #liste>.arbre.a1>.groupe.ouvert{border-left-color:var(--carmin)}
+  #liste>.arbre.a1 .groupe-tete{border-left-width:0}
+  #liste>.arbre.a1 .groupe-tete .num{font-family:"Segoe UI",system-ui,sans-serif;font-weight:600;font-size:14.5px;color:var(--canard)}
+  /* verrou des blocs de la rubrique Sociétés */
+  .soc h4.famille .verrou{margin-left:auto;flex:none;text-transform:none;letter-spacing:0;font-weight:600;font-size:12.5px;padding:5px 12px;background:#fff}
+  .soc h4.famille .verrou.pose{background:var(--nuit);border-color:var(--nuit);color:#fff}
+  .soc .acte-champ.verrouille input{background:#EEF1F4;border-color:transparent;color:var(--nuit);-webkit-text-fill-color:var(--nuit);opacity:1;cursor:not-allowed}
+  .soc .acte-champ.verrouille span{color:var(--gris)}
 </style>
   <script src="https://connexion-omega.vercel.app/bandeau.js" defer></script>
 </head>
@@ -5640,12 +5656,14 @@ function rendreSocietes(force){
   if(!etat.dossier){ z.innerHTML = '<p class="vide">Ouvrez d\'abord un dossier dans la rubrique Dossier : les sociétés concernées par la fusion se renseignent ici.</p>'; return; }
   const a = acteDonnees(), soc = etat.dossier.denomination || etat.dossier.siren || "", siren = etat.dossier.siren || "";
   const champ = (cle, lib, aide, facultatif) => '<label class="acte-champ' + (!facultatif && SOC_REQUIS.includes(cle) && !String(a[cle] || "").trim() ? " manque" : "") + '"><span>' + lib + (aide ? ' <em>' + aide + '</em>' : '') + '</span><input data-c="' + cle + '" value="' + echap(a[cle]) + '"></label>';
-  z.innerHTML = '<h4 class="famille">Société absorbée <small>celle du dossier</small></h4>'
+  const V = a.verrous || {};
+  const verrou = (bloc) => '<button class="btn verrou' + (V[bloc] ? " pose" : "") + '" type="button" data-x="verrou" data-bloc="' + bloc + '" title="' + (V[bloc] ? "Bloc verrouillé : cliquer pour le rouvrir à la saisie" : "Verrouiller ce bloc une fois ses informations vérifiées") + '">' + (V[bloc] ? "🔒 Verrouillé — déverrouiller" : "🔓 Verrouiller") + '</button>';
+  z.innerHTML = '<h4 class="famille">Société absorbée <small>celle du dossier</small>' + verrou("absorbee") + '</h4>'
     + '<p class="soc-nom">' + echap(soc) + (siren && soc !== siren ? '<small>SIREN ' + echap(siren) + '</small>' : '') + '</p>'
     + '<div class="societe-ligne"><button class="btn" type="button" data-x="absorbee">Compléter depuis l\'annuaire</button></div><p class="soc-etat" data-etat="absorbee"></p>'
     + champ("absorbee_forme", "Forme", "et capital") + champ("absorbee_siege", "Siège") + champ("absorbee_immat", "Immatriculation", "vide = SIREN du dossier")
     + (a.absorbee_representant ? '<p class="soc-indice">Représentant légal à l\'annuaire : ' + echap(a.absorbee_representant) + '</p>' : '') + societeLiens(siren)
-    + '<h4 class="famille">Société absorbante <small>requérante à l\'acte</small></h4>'
+    + '<h4 class="famille">Société absorbante <small>requérante à l\'acte</small>' + verrou("absorbante") + '</h4>'
     + '<div class="societe-ligne"><input type="text" id="soc-q" placeholder="Nom ou SIREN de la société absorbante" autocomplete="off" style="flex:1;min-width:0;font:inherit;padding:6px 9px;border:1px solid var(--trait);border-radius:3px"><button class="btn plein" type="button" data-x="absorbante">Chercher</button></div>'
     + '<p class="soc-etat" data-etat="absorbante"></p><ul class="candidats" id="soc-candidats"></ul>'
     + champ("absorbante", "Dénomination") + champ("absorbante_forme", "Forme", "et capital") + champ("absorbante_siege", "Siège") + champ("absorbante_immat", "Immatriculation", "SIREN et registre")
@@ -5654,8 +5672,16 @@ function rendreSocietes(force){
     + (a.absorbante_dirigeants ? '<p class="soc-indice">Tous les dirigeants : ' + echap(a.absorbante_dirigeants) + (a.absorbante_representant ? '' : ' — <button class="lien-btn" type="button" data-x="dirigeants">reprendre</button>') + '</p>' : '')
     + societeLiens(a.absorbante_siren || (/\d{3}\s?\d{3}\s?\d{3}/.exec(a.absorbante_immat || "") || [""])[0])
     + champ("clerc", "Elle-même représentée par", "clerc de l'étude, facultatif", true)
-    + '<h4 class="famille">Opération</h4>'
+    + '<h4 class="famille">Opération' + verrou("operation") + '</h4>'
     + champ("lien_capital", "Lien en capital", "", true) + champ("date_traite", "Date du traité", "ex. 31 juillet 2023") + champ("date_realisation", "Réalisation définitive", "date");
+  // VERROU PAR BLOC (18/11/2026, demandé par JFD) : un bloc vérifié se verrouille ; ses champs, sa recherche et ses reprises sont alors inertes, jusqu'au déverrouillage
+  const SOC_BLOCS = {absorbee: {champs: ["absorbee_forme", "absorbee_siege", "absorbee_immat"], actions: ["absorbee"]},
+    absorbante: {champs: ["absorbante", "absorbante_forme", "absorbante_siege", "absorbante_immat", "representants", "clerc"], actions: ["absorbante", "representant", "dirigeants"], recherche: true},
+    operation: {champs: ["lien_capital", "date_traite", "date_realisation"], actions: []}};
+  Object.keys(SOC_BLOCS).forEach(bloc => { if(!V[bloc]) return; const B = SOC_BLOCS[bloc];
+    B.champs.forEach(c => { const i = z.querySelector('input[data-c="' + c + '"]'); if(i){ i.disabled = true; i.closest(".acte-champ").classList.add("verrouille"); i.closest(".acte-champ").classList.remove("manque"); } });
+    B.actions.forEach(x => z.querySelectorAll('[data-x="' + x + '"]').forEach(b => { b.disabled = true; if(b.classList.contains("lien-btn") || x === "absorbee") b.style.display = "none"; }));
+    if(B.recherche){ const q = z.querySelector("#soc-q"); if(q) q.closest(".societe-ligne").style.display = "none"; } });
   const etatMsg = (role, t, alerte) => { const p = z.querySelector('[data-etat="' + role + '"]'); if(p){ p.textContent = t || ""; p.classList.toggle("alerte", Boolean(alerte)); } };
   z.onchange = (e) => { const i = e.target; if(!i.dataset || !i.dataset.c) return;
     societePoser({[i.dataset.c]: i.value.trim()});
@@ -5663,6 +5689,9 @@ function rendreSocietes(force){
   z.onkeydown = (e) => { if(e.key === "Enter" && e.target.id === "soc-q"){ e.preventDefault(); z.querySelector('[data-x="absorbante"]').click(); } };
   z.onclick = async (e) => {
     const b = e.target.closest("[data-x]"); if(!b || !z.contains(b)) return;
+    if(b.dataset.x === "verrou"){ const bloc = b.dataset.bloc, nv = Object.assign({}, acteDonnees().verrous || {}); if(nv[bloc]) delete nv[bloc]; else nv[bloc] = true;
+      societePoser({verrous: nv}, nv[bloc] ? "verrouillage" : "déverrouillage"); rendreSocietes(true); return; }
+    if(b.disabled) return;
     if(b.dataset.x === "representant"){ societePoser({representants: acteDonnees().absorbante_representant || ""}, "annuaire"); rendreSocietes(true); return; }
     if(b.dataset.x === "dirigeants"){ societePoser({representants: acteDonnees().absorbante_dirigeants || ""}, "annuaire"); rendreSocietes(true); return; }
     if(b.dataset.x === "absorbee"){
