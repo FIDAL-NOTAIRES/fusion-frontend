@@ -65,10 +65,17 @@
 
   main{flex:1;display:flex;min-height:0}
   .panneau{
-    width:390px;min-width:320px;background:var(--papier);
+    width:clamp(440px,32vw,580px);min-width:320px;background:var(--papier);
     border-right:1px solid var(--trait);display:flex;flex-direction:column;min-height:0
   }
   .carte-zone{flex:1;position:relative;min-width:0}
+  /* colonne de gauche repliable (17/11/2026) : languette sur le bord de la carte, triangle dessiné */
+  main.replie .panneau{display:none}
+  .languette{position:absolute;left:0;top:50%;transform:translateY(-50%);z-index:1100;width:22px;height:64px;padding:0;border:0;
+    border-radius:0 6px 6px 0;background:var(--nuit);cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:1px 1px 4px rgba(0,0,0,.3)}
+  .languette:hover{background:var(--canard)}
+  .languette::before{content:"";border-style:solid;border-width:8px 10px 8px 0;border-color:transparent #fff transparent transparent}
+  main.replie .languette::before{border-width:8px 0 8px 10px;border-color:transparent transparent transparent #fff}
   #carte{position:absolute;inset:0}
 
   /* ---- source ---- */
@@ -570,6 +577,7 @@
     </section>
 
     <section class="carte-zone">
+      <button type="button" class="languette" id="btn-panneau" title="Réduire la colonne" aria-label="Réduire la colonne" aria-expanded="true"></button>
       <div id="carte"></div>
       <div class="legende">
         <div><i style="background:#A01040"></i>Unité foncière retenue</div>
@@ -6133,6 +6141,12 @@ initCarte();
 brancher();
 rendre();
 listerDossiers();
+// colonne de gauche : repli et retour par la languette ; la carte reprend toute la largeur
+document.getElementById("btn-panneau").addEventListener("click", (e) => {
+  const m = document.querySelector("main"), replie = m.classList.toggle("replie"), lib = replie ? "Afficher la colonne" : "Réduire la colonne";
+  e.currentTarget.title = lib; e.currentTarget.setAttribute("aria-label", lib); e.currentTarget.setAttribute("aria-expanded", String(!replie));
+  setTimeout(() => { if(carte) carte.invalidateSize(); }, 50);
+});
 </script>
 </body>
 </html>
