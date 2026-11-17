@@ -4771,7 +4771,7 @@ async function piecesCourrielDest(lignes, dest){
    ===================================================================== */
 const ACTE_DEFAUT = {absorbante: "", absorbante_forme: "", absorbante_siege: "", absorbante_immat: "", representants: "", clerc: "",
   absorbee_forme: "", absorbee_siege: "", absorbee_immat: "", lien_capital: "La SOCIETE ABSORBANTE détient la totalité des titres composant le capital social de la SOCIETE ABSORBEE.",
-  date_traite: "", date_realisation: "", date_signature: "", valeurs: {}};
+  date_traite: "", date_realisation: "", date_signature: "", annexes: true, valeurs: {}};
 function acteDonnees(){ const a = (etat.piecesOpt || {}).acte || {}; return Object.assign({}, ACTE_DEFAUT, a, {valeurs: Object.assign({}, a.valeurs || {})}); }
 
 const UNITES = ["zéro","un","deux","trois","quatre","cinq","six","sept","huit","neuf","dix","onze","douze","treize","quatorze","quinze","seize","dix-sept","dix-huit","dix-neuf"];
@@ -4834,16 +4834,196 @@ function ouvrirDonneesActe(){
     + '<h4>Opération</h4>' + champ("lien_capital", "Lien en capital") + champ("date_traite", "Date du traité de fusion", "ex. 31 juillet 2023") + champ("date_realisation", "Date de réalisation définitive") + champ("date_signature", "Date de signature de l'acte", "facultatif")
     + '<h4>Valorisation des immeubles</h4><table class="acte-val"><thead><tr><th>Groupe</th><th>Commune</th><th>Valeur (€)</th></tr></thead><tbody>'
     + groupes.map(g => '<tr><td>' + numeroGroupe4(g.num) + '</td><td>' + echap(piecesCommunesGroupe(g.num)) + '</td><td><input data-v="' + g.num + '" inputmode="decimal" value="' + echap(a.valeurs[g.num] || "") + '"></td></tr>').join("")
-    + '</tbody></table></div><div class="acte-pied"><button class="btn plein" data-x="generer" type="button">Enregistrer et générer l\'acte (Word)</button></div></div>';
+    + '</tbody></table><h4>Annexes</h4><label class="acte-aide" style="display:flex;gap:8px;align-items:flex-start;color:inherit;cursor:pointer"><input type="checkbox" data-k="annexes"' + (a.annexes !== false ? ' checked' : '') + ' style="margin-top:2px"><span>Joindre les annexes à la suite de l\'acte, dans le même fichier : bordereau, extraits de plan cadastral, états des risques levés, descriptif des servitudes, tableau de l\'origine de propriété. Ce qui manque est signalé en jaune au bordereau.</span></label>'
+    + '</div><div class="acte-pied"><button class="btn plein" data-x="generer" type="button">Enregistrer et générer l\'acte (Word)</button></div></div>';
   document.body.appendChild(fond);
   const lire = () => { const n = acteDonnees(); fond.querySelectorAll("input[data-c]").forEach(i => { n[i.dataset.c] = i.value.trim(); });
-    fond.querySelectorAll("input[data-v]").forEach(i => { if(i.value.trim()) n.valeurs[i.dataset.v] = i.value.trim(); else delete n.valeurs[i.dataset.v]; }); return n; };
+    fond.querySelectorAll("input[data-v]").forEach(i => { if(i.value.trim()) n.valeurs[i.dataset.v] = i.value.trim(); else delete n.valeurs[i.dataset.v]; });
+    const ck = fond.querySelector('input[data-k="annexes"]'); if(ck) n.annexes = ck.checked; return n; };
   fond.addEventListener("click", async e => {
     const x = e.target.dataset && e.target.dataset.x; if(e.target === fond) x === undefined && fond.remove();
     if(x === "fermer"){ piecesOptMaj({acte: Object.assign(lire(), {genere_le: a.genere_le, docs_au: a.docs_au})}, "acte-donnees", {}); fond.remove(); }
     if(x === "generer"){ e.target.disabled = true; const n = lire(); fond.remove();
       try{ await sortirActe(n); }catch(err){ signaler("Acte non produit — " + (err.message || err), true); } }
   });
+}
+
+/* ---- ANNEXES DE L'ACTE (17/11/2026) — voulues par JFD les 12 et 16/11 : par groupe, plan cadastral, état des risques, servitudes,
+   origine de propriété, EN UN SEUL FICHIER À LA SUITE DE L'ACTE. Chaque annexe citée dans l'acte reçoit son numéro ; un BORDEREAU ouvre la
+   partie des annexes et dit, pour chacune, si elle est jointe ci-après ou encore à joindre (surligné jaune, comme dans l'acte).
+   - plan : dessiné par FUSION d'après les contours cadastraux du dossier (parcelles de l'immeuble en couleur, autres parcelles de la société en gris) ;
+   - état des risques : les pages du document levé par RISQUES (Drive d'abord, sinon le lien de RISQUES), reproduites en image ;
+   - servitudes : acte de référence, qualification, texte de la pièce SER quand elle est déposée et lisible, sinon la mention de l'état hypothécaire ;
+   - origine : tableau des mutations publiées citant les parcelles, de la plus récente à la plus ancienne.
+   Les pages d'annexe débordent dans la marge de gauche de l'acte (16 cm de large) pour rester lisibles. */
+const AX_RETRAIT = -1984, AX_LARGEUR = 9071, AX_L_CM = 16, AX_H_CM = 21.6, AX_PAGES_MAX = 60;
+function axRPr(o){ return (TRAME_ACTE.ex.p.rPr || "<w:rPr></w:rPr>").replace("</w:rPr>", (o && o.taille ? '<w:sz w:val="' + o.taille + '"/><w:szCs w:val="' + o.taille + '"/>' : "") + "</w:rPr>"); }
+function axPPr(o){ o = o || {};
+  return '<w:pPr><w:pStyle w:val="Normal"/>' + (o.suivant ? "<w:keepNext/>" : "") + (o.saut ? "<w:pageBreakBefore/>" : "")
+    + '<w:spacing w:before="' + (o.avant == null ? 120 : o.avant) + '" w:after="' + (o.apres || 0) + '"/><w:ind w:start="' + (o.cellule ? 0 : AX_RETRAIT) + '" w:hanging="0" w:end="0"/>'
+    + '<w:jc w:val="' + (o.centre ? "center" : o.gauche ? "start" : "both") + '"/></w:pPr>'; }
+function axP(segments, o){ return "<w:p>" + axPPr(o) + runsDe(axRPr(o), segments) + "</w:p>"; }
+function axTableau(largeurs, lignes, taille){
+  // lignes[0] = en-tête (répétée en haut de chaque page) ; cellules = segments
+  const bord = ["top", "start", "bottom", "end"].map(c => '<w:' + c + ' w:val="single" w:sz="4" w:space="0" w:color="7F7F7F"/>').join("");
+  const tr = (cells, tete) => "<w:tr><w:trPr><w:cantSplit/>" + (tete ? "<w:tblHeader/>" : "") + "</w:trPr>" + cells.map((c, k) =>
+    '<w:tc><w:tcPr><w:tcW w:w="' + largeurs[k] + '" w:type="dxa"/><w:tcBorders>' + bord + "</w:tcBorders>" + (tete ? '<w:shd w:val="clear" w:color="auto" w:fill="E7E6E6"/>' : "") + "</w:tcPr>"
+    + axP(tete ? (Array.isArray(c) ? c : [c]).map(x => typeof x === "string" ? {t: x, gras: true} : x) : c, {cellule: true, avant: 40, apres: 40, gauche: true, taille: taille || 17}) + "</w:tc>").join("") + "</w:tr>";
+  return '<w:tbl><w:tblPr><w:tblW w:w="' + largeurs.reduce((x, y) => x + y, 0) + '" w:type="dxa"/><w:tblInd w:w="' + AX_RETRAIT + '" w:type="dxa"/><w:tblLayout w:type="fixed"/>'
+    + '<w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:start w:w="85" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:end w:w="85" w:type="dxa"/></w:tblCellMar></w:tblPr>'
+    + "<w:tblGrid>" + largeurs.map(l => '<w:gridCol w:w="' + l + '"/>').join("") + "</w:tblGrid>" + lignes.map((l, i) => tr(l, i === 0)).join("") + "</w:tbl>";
+}
+function axImage(rid, id, lcm, hcm, o){
+  const cx = Math.round(lcm * 360000), cy = Math.round(hcm * 360000), nom = "Annexe " + id;
+  return "<w:p>" + axPPr(Object.assign({centre: true, avant: 0}, o || {})) + '<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="' + cx + '" cy="' + cy + '"/><wp:effectExtent l="0" t="0" r="0" b="0"/>'
+    + '<wp:docPr id="' + id + '" name="' + nom + '"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr>'
+    + '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+    + '<pic:nvPicPr><pic:cNvPr id="' + id + '" name="' + nom + '"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="' + rid + '"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
+    + '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + cx + '" cy="' + cy + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
+}
+// Extrait de plan : parcelles de l'immeuble en couleur, autres parcelles de la société en gris, références, échelle graphique, nord en haut.
+function axPlan(g){
+  const membres = [...g.membres].map(i => etat.parcelles[i]).filter(p => p && p.anneaux && p.anneaux.length && p.bbox);
+  if(!membres.length) return null;
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  membres.forEach(p => { x1 = Math.min(x1, p.bbox.x1); y1 = Math.min(y1, p.bbox.y1); x2 = Math.max(x2, p.bbox.x2); y2 = Math.max(y2, p.bbox.y2); });
+  if(!isFinite(x1 + y1 + x2 + y2)) return null;
+  const marge = Math.max(x2 - x1, y2 - y1) * 0.22 + 12;
+  x1 -= marge; x2 += marge; y1 -= marge; y2 += marge;
+  const L = 1600, H = Math.round(L * Math.max(0.55, Math.min(1.15, (y2 - y1) / (x2 - x1))));
+  const ech = Math.min(L / (x2 - x1), H / (y2 - y1)), cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;   // pixels par mètre
+  const px = (pt) => [L / 2 + (pt[0] - cx) * ech, H / 2 - (pt[1] - cy) * ech];
+  const c = document.createElement("canvas"); c.width = L; c.height = H; const ctx = c.getContext("2d");
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, L, H); ctx.lineJoin = "round";
+  const tracer = (p) => { ctx.beginPath(); p.anneaux.forEach(pts => { pts.forEach((pt, i) => { const q = px(pt); if(i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); }); ctx.closePath(); }); };
+  const dans = new Set(membres.map(p => p.i)), vx = L / 2 / ech, vy = H / 2 / ech;
+  etat.parcelles.forEach(p => {
+    if(dans.has(p.i) || !p.bbox || !p.anneaux) return;
+    if(p.bbox.x2 < cx - vx || p.bbox.x1 > cx + vx || p.bbox.y2 < cy - vy || p.bbox.y1 > cy + vy) return;
+    tracer(p); ctx.fillStyle = "#F1F3F5"; ctx.fill("evenodd"); ctx.strokeStyle = "#8C97A3"; ctx.lineWidth = 1.5; ctx.stroke();
+  });
+  membres.forEach(p => { tracer(p); ctx.fillStyle = "rgba(160,16,64,0.16)"; ctx.fill("evenodd"); ctx.strokeStyle = "#A01040"; ctx.lineWidth = 4; ctx.stroke(); });
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  membres.forEach(p => {
+    const q = px([p.centre.x, p.centre.y]), num = p.props && p.props.numero != null && p.props.numero !== "" ? String(+p.props.numero || p.props.numero) : "";
+    const lib = (((p.props && p.props.section) || "") + " " + num).trim() || p.ref;
+    const taille = Math.round(Math.max(15, Math.min(34, (p.bbox.x2 - p.bbox.x1) * ech / Math.max(3, lib.length) * 1.3)));
+    ctx.font = "600 " + taille + "px 'Segoe UI', Arial, sans-serif"; ctx.lineWidth = 5; ctx.strokeStyle = "#fff"; ctx.strokeText(lib, q[0], q[1]); ctx.fillStyle = "#5A0A26"; ctx.fillText(lib, q[0], q[1]);
+  });
+  // échelle graphique : une longueur ronde, proche du cinquième de la largeur
+  const cible = L * 0.2 / ech, p10 = Math.pow(10, Math.floor(Math.log10(cible))), pas = [1, 2, 5, 10].map(k => k * p10).filter(v => v <= cible).pop() || p10;
+  const lb = pas * ech, bx = 44, by = H - 40;
+  ctx.fillStyle = "#fff"; ctx.fillRect(bx - 14, by - 46, Math.max(lb, 90) + 28, 62);
+  ctx.strokeStyle = "#222"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(bx, by - 9); ctx.lineTo(bx, by); ctx.lineTo(bx + lb, by); ctx.lineTo(bx + lb, by - 9); ctx.stroke();
+  ctx.fillStyle = "#222"; ctx.font = "22px 'Segoe UI', Arial, sans-serif"; ctx.fillText(pas >= 1000 ? String(pas / 1000).replace(".", ",") + " km" : String(pas).replace(".", ",") + " m", bx + Math.max(lb, 90) / 2, by - 26);
+  const nx = L - 58, ny = 66;
+  ctx.fillStyle = "#fff"; ctx.fillRect(nx - 30, ny - 46, 60, 104);
+  ctx.beginPath(); ctx.moveTo(nx, ny - 36); ctx.lineTo(nx - 15, ny + 14); ctx.lineTo(nx, ny + 3); ctx.lineTo(nx + 15, ny + 14); ctx.closePath(); ctx.fillStyle = "#222"; ctx.fill();
+  ctx.font = "600 24px 'Segoe UI', Arial, sans-serif"; ctx.fillText("N", nx, ny + 38);
+  ctx.strokeStyle = "#444"; ctx.lineWidth = 2; ctx.strokeRect(1, 1, L - 2, H - 2);
+  return {b64: c.toDataURL("image/png").split(",")[1], w: L, h: H};
+}
+// Pages d'un PDF rendues en images (état des risques).
+async function axPagesPdf(blob, maxPages){
+  const pdfjs = await chargerPdfjs();
+  const doc = await pdfjs.getDocument({data: await blob.arrayBuffer()}).promise;
+  const total = doc.numPages, pages = [];
+  for(let i = 1; i <= Math.min(total, maxPages); i++){
+    const page = await doc.getPage(i), base = page.getViewport({scale: 1});
+    const vue = page.getViewport({scale: Math.min(2.2, 1150 / Math.max(base.width, 1))});
+    const c = document.createElement("canvas"); c.width = Math.round(vue.width); c.height = Math.round(vue.height);
+    const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+    await page.render({canvasContext: ctx, viewport: vue}).promise;
+    pages.push({b64: c.toDataURL("image/jpeg", 0.74).split(",")[1], w: c.width, h: c.height});
+    c.width = c.height = 0;
+  }
+  try{ await doc.destroy(); }catch(e){}
+  return {pages, total};
+}
+async function acteAnnexes(annexes, M){
+  const corps = [], medias = []; let idImg = 900, jointes = 0;
+  const media = (b64, ext) => { const k = medias.length + 1, m = {nom: "annexe" + k + "." + ext, rid: "rIdAx" + k, b64}; medias.push(m); return m.rid; };
+  const tete = (ax) => {
+    corps.push(axP([{t: "ANNEXE " + ax.n, gras: true}], {saut: true, centre: true, taille: 28, avant: 0, suivant: true}));
+    corps.push(axP([{t: ax.titre, gras: true}], {centre: true, taille: 22, avant: 60, suivant: true}));
+    if(ax.lieu) corps.push(axP([{t: ax.lieu, ital: true}], {centre: true, avant: 40, apres: 120, suivant: true}));
+  };
+  const cadre = (im, lmax, hmax) => { const k = Math.min(lmax / im.w, hmax / im.h); return [im.w * k, im.h * k]; };
+  const aFaire = annexes.filter(x => x.type).length; let fait = 0;
+  for(const ax of annexes){
+    if(!ax.type){ ax.etat = M("pièce à joindre"); continue; }
+    fait++; signaler("Annexes de l'acte en préparation : " + fait + " sur " + aFaire + "…");
+    await new Promise(ok => setTimeout(ok, 0));   // laisse l'écran afficher l'avancement
+    const g = ax.g, Mg = ax.M;
+    if(ax.type === "plan"){
+      const im = axPlan(g);
+      if(!im){ ax.etat = M("contour cadastral indisponible : extrait de plan à joindre"); continue; }
+      tete(ax); const [l, h] = cadre(im, AX_L_CM, 17);
+      corps.push(axImage(media(im.b64, "png"), ++idImg, l, h));
+      corps.push(axP("Parcelles de l'Immeuble : " + (Mg.communes.length ? Mg.communes.join(" / ") + ", " : "") + blocNumeros(Mg.parcelles) + ".", {avant: 160}));
+      corps.push(axP([{t: "Plan établi d'après les contours du plan cadastral (données cadastrales ouvertes) : parcelles de l'Immeuble en couleur, autres parcelles de la Société Absorbée en gris ; nord en haut, échelle graphique. Il ne remplace pas l'extrait délivré par le service du cadastre.", ital: true}], {taille: 16, avant: 80}));
+      ax.etat = "jointe ci-après"; jointes++; continue;
+    }
+    if(ax.type === "erp"){
+      const r = risquesDuGroupe(g);
+      if(!r || r.statut !== "termine"){ ax.etat = M(r && r.statut === "en_cours" ? "état des risques en cours de production" : "état des risques à lever"); continue; }
+      const nb = Math.max((r.erps || []).length, (r.drive || []).length), pages = []; let tronque = false;
+      for(let i = 0; i < nb; i++){
+        let blob = null; const d = (r.drive || [])[i], x = (r.erps || [])[i];
+        if(d && d.id && driveConnecte()){ try{ blob = await driveTelecharger(d.id); }catch(e){} }
+        if(!blob && x && x.url){ try{ const rep = await fetch(x.url); if(rep.ok) blob = await rep.blob(); }catch(e){} }
+        if(!blob) continue;
+        try{ const res = await axPagesPdf(blob, Math.max(0, AX_PAGES_MAX - pages.length)); res.pages.forEach(p => pages.push(p)); if(res.total > res.pages.length) tronque = true; }catch(e){}
+      }
+      const le = new Date(r.le), ech = risquesEcheance(r), perime = ech && ech < new Date();
+      if(!pages.length){ ax.etat = M("état des risques du " + le.toLocaleDateString("fr-FR") + " : fichier illisible depuis FUSION, à joindre" + (driveConnecte() ? "" : " (Drive non connecté)")); continue; }
+      tete(ax);
+      corps.push(axP(["État des risques levé le " + le.toLocaleDateString("fr-FR") + (ech ? (perime ? ", " : ", valable jusqu'au " + ech.toLocaleDateString("fr-FR")) : ""), perime ? M("périmé depuis le " + ech.toLocaleDateString("fr-FR") + " : à renouveler avant la signature") : "", " — " + pages.length + " page" + (pages.length > 1 ? "s" : "") + "."], {centre: true, taille: 17, avant: 0, apres: 80, suivant: true}));
+      pages.forEach((p, i) => { const [l, h] = cadre(p, AX_L_CM, i === 0 ? AX_H_CM - 3.2 : AX_H_CM); corps.push(axImage(media(p.b64, "jpeg"), ++idImg, l, h, i === 0 ? {} : {saut: true})); });
+      if(tronque) corps.push(axP([M("état des risques reproduit jusqu'à la page " + pages.length + " seulement : joindre le document complet")], {saut: true}));
+      ax.etat = perime ? M("jointe ci-après, mais périmée : à renouveler") : "jointe ci-après"; jointes++; continue;
+    }
+    if(ax.type === "ser"){
+      tete(ax);
+      const sers = Mg.docs.filter(d => d.type === "SER" && extensionDe(d.nom) === "pdf" && d.couche_texte !== false), textes = [];
+      if(sers.length && driveConnecte()) for(const d of sers){ try{ const r = await textePdfPages(await driveTelecharger(d.drive_id), 200); textes.push({doc: d, texte: r.pages.map(p => p.texte).join("\n")}); }catch(e){} }
+      let incomplet = false;
+      Mg.servitudes.forEach((s, i) => {
+        corps.push(axP([{t: "Servitude ou charge n° " + (i + 1) + (blocV(s.natures) ? " — " + blocV(s.natures) : ""), gras: true}], {avant: 240, suivant: true}));
+        corps.push(axP("Acte de référence : " + (blocV(s.natures) || "acte") + (blocV(s.redacteur) ? ", reçu par " + blocV(s.redacteur).replace(/^NOT\s+/i, "Maître ") + (blocV(s.commune) ? ", notaire à " + blocV(s.commune) : "") : "") + (blocV(s.dateActe) ? ", le " + blocV(s.dateActe) : "") + (blocV(s.volume) ? ", publié volume " + blocV(s.volume) + (blocV(s.numero) ? " numéro " + blocV(s.numero) : "") : "") + "."));
+        corps.push(axP([s.fonds === "dominant" ? {t: "Fonds dominant.", gras: true} : s.fonds === "servant" ? {t: "Fonds servant.", gras: true} : M("qualification fonds dominant / fonds servant à confirmer")]));
+        const ser = textes.find(x => blocV(s.dateActe) && x.doc.date_doc && dateDepuisISO(x.doc.date_doc) && blocDate(blocV(s.dateActe)) && dateDepuisISO(x.doc.date_doc).getTime() === blocDate(blocV(s.dateActe)).getTime()) || (textes.length === 1 ? textes[0] : null);
+        if(ser){ corps.push(axP([{t: "Texte reproduit de la pièce " + ser.doc.nom + " :", ital: true}], {suivant: true})); ser.texte.split(/\n{2,}|(?<=\.)\s{2,}/).map(t => t.trim()).filter(Boolean).forEach(t => corps.push(axP(t))); }
+        else{
+          if(blocV(s.complement)) corps.push(axP("Mention portée à l'état hypothécaire : " + blocV(s.complement)));
+          corps.push(axP([M("texte intégral de la servitude à reprendre de l'acte : aucune pièce lisible n'est déposée pour cet Immeuble")])); incomplet = true;
+        }
+      });
+      ax.etat = incomplet ? M("jointe ci-après, texte des actes à compléter") : "jointe ci-après"; jointes++; continue;
+    }
+    if(ax.type === "ori"){
+      if(!Mg.dernierEhf){ ax.etat = M("origine de propriété à établir : aucun état hypothécaire lu"); continue; }
+      const actes = new Map();
+      Mg.parParcelle.forEach(x => x.toutes.forEach(m => { const k = blocV(m.volume) + "/" + blocV(m.numero) + "|" + blocV(m.dateActe) + "|" + blocV(m.natures); if(!actes.has(k)) actes.set(k, {m, parcelles: []}); actes.get(k).parcelles.push(x.parcelle); }));
+      if(!actes.size){ ax.etat = M("aucune mutation citant les parcelles à l'état hypothécaire lu : origine à établir sur les titres"); continue; }
+      tete(ax);
+      const lignes = [...actes.values()].sort((x, y) => (y.m.dateA || 0) - (x.m.dateA || 0)).map(x => { const m = x.m;
+        const pub = [blocV(m.service) ? "SPF de " + blocV(m.service) : "", blocV(m.dateDepot) ? "le " + blocV(m.dateDepot) : "", blocV(m.volume) ? "volume " + blocV(m.volume) + (blocV(m.numero) ? " numéro " + blocV(m.numero) : "") : ""].filter(Boolean).join(", ");
+        return [blocV(m.dateActe) || [M("date")], (blocV(m.natures) || "acte") + (blocV(m.redacteur) ? " — " + blocV(m.redacteur).replace(/^NOT\s+/i, "Maître ") + (blocV(m.commune) ? ", notaire à " + blocV(m.commune) : "") : ""),
+          [blocNoms(m.disposants) ? "De : " + blocNoms(m.disposants) : "", blocNoms(m.disposants) && blocNoms(m.beneficiaires) ? " — " : "", blocNoms(m.beneficiaires) ? "À : " + blocNoms(m.beneficiaires) : ""],
+          pub || [M("références de publication")], blocNumeros(x.parcelles)]; });
+      corps.push(axTableau([1050, 2500, 2421, 1900, 1200], [["Date de l'acte", "Nature et rédacteur", "Parties", "Publication", "Parcelles"]].concat(lignes)));
+      const dEhf = blocDateFr(dateDepuisISO(Mg.dernierEhf.date_doc)) || Mg.dernierEhf.date_doc || "";
+      corps.push(axP([{t: "Tableau établi d'après l'état hypothécaire" + (dEhf ? " en date du " + dEhf : "") + ", de la mutation la plus récente à la plus ancienne ; l'origine de propriété est relatée dans le corps de l'acte.", ital: true}], {taille: 16, avant: 120}));
+      ax.etat = "jointe ci-après"; jointes++; continue;
+    }
+  }
+  // bordereau : ouvre la partie des annexes
+  const bord = [axP([{t: "ANNEXES", gras: true}], {saut: true, centre: true, taille: 32, avant: 0, suivant: true}),
+    axP([{t: "Bordereau des annexes", gras: true}], {centre: true, taille: 22, avant: 60, apres: 160, suivant: true}),
+    axTableau([750, 3900, 2421, 2000], [["N°", "Annexe", "Immeuble", "État"]].concat(annexes.map(ax => [String(ax.n), ax.titre, (ax.lieu || "").replace(/^Immeuble /, ""), typeof ax.etat === "string" ? ax.etat : [ax.etat]]))),
+    axP([{t: jointes + " annexe" + (jointes > 1 ? "s sont jointes" : " est jointe") + " ci-après sur " + annexes.length + " ; les autres sont à joindre à la minute.", ital: true}], {taille: 16, avant: 120})];
+  return {xml: bord.join("") + corps.join(""), medias, jointes};
 }
 
 /* ---- production de l'acte (16/11/2026, soir) — version À ARTICLES NUMÉROTÉS, sur la trame du deuxième acte de l'étude
@@ -4888,6 +5068,8 @@ async function sortirActe(a){
   const soc = etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "", siren = etat.dossier && etat.dossier.siren || "";
   const groupes = [...etat.groupes].sort((x, y) => x.num - y.num);
   const manquantes = actePiecesManquantes(); let nbManques = 0;
+  const annexes = [];   // toutes les annexes citées dans l'acte, dans l'ordre de leur numéro (17/11/2026)
+  const AX = (n, titre, plus) => annexes.push(Object.assign({n, titre}, plus || {}));
   const M = (lib) => { nbManques++; return {t: "[À COMPLÉTER — " + lib + "]", manque: true}; };
   const v = (val, lib) => val ? val : M(lib);
   const gras = (t) => ({t, gras: true}), ital = (t) => ({t, ital: true});
@@ -4912,8 +5094,8 @@ async function sortirActe(a){
   descAbsorbante();
   P("p", "Représentée par ", v(a.representants, "représentants de la société absorbante et leurs qualités"), ",");
   P("p", "Ayant tous pouvoirs à l'effet des présentes en vertu des statuts et de la loi,");
-  P("annexe", "Annexe 1");
-  if(a.clerc){ P("p", "Lesquels, à ce non présents, sont représentés par ", a.clerc, ", collaborateur du Notaire Soussigné, demeurant professionnellement en l'office notarial susvisé, agissant en vertu de délégations de pouvoirs sous seing privé demeurées annexées."); P("annexe", "Annexe 2"); }
+  P("annexe", "Annexe 1"); AX(1, "Pouvoirs des représentants de la Société Absorbante");
+  if(a.clerc){ P("p", "Lesquels, à ce non présents, sont représentés par ", a.clerc, ", collaborateur du Notaire Soussigné, demeurant professionnellement en l'office notarial susvisé, agissant en vertu de délégations de pouvoirs sous seing privé demeurées annexées."); P("annexe", "Annexe 2"); AX(2, "Délégations de pouvoirs au collaborateur de l'office notarial"); }
   art(1, "Définitions");
   P("p", "Dans le corps du présent acte, les termes ci-après écrits en majuscule, qu'ils soient utilisés indifféremment au singulier ou au pluriel, ont la signification suivante :");
   [["Acte", " » ou « ", "Présentes", " » désigne le présent acte de dépôt."], ["Annexe", " » désigne tous documents annexés aux présentes."], ["Article", " » désigne un ou des articles du présent Acte."],
@@ -4941,7 +5123,8 @@ async function sortirActe(a){
   P("p", "Les pièces ci-après, savoir :");
   let an = a.clerc ? 3 : 2;
   [["Le Projet de Fusion signé en date du ", v(a.date_traite, "date du projet de fusion"), "."], ["Les justificatifs des formalités de publicité du Projet de Fusion."], ["Les documents constatant la réalisation définitive de la Fusion."], ["Une copie de l'extrait Kbis de la Société Absorbée justifiant de sa radiation."]]
-    .forEach(seg => P("piece", ...seg, " ", ital("(Annexe " + (an++) + ")")));
+    .forEach((seg, i) => { AX(an, ["Projet de Fusion", "Justificatifs des formalités de publicité du Projet de Fusion", "Documents constatant la réalisation définitive de la Fusion", "Extrait Kbis de la Société Absorbée justifiant de sa radiation"][i]);
+      P("piece", ...seg, " ", ital("(Annexe " + (an++) + ")")); });
   const duDossier = manquantes.filter(l => l.g == null);
   if(duDossier.length) P("p", M("pièces du dossier encore à réclamer : " + duDossier.map(l => l.texte).join(" ; ")));
   art(1, "Immeubles transmis");
@@ -4960,7 +5143,17 @@ async function sortirActe(a){
       P("p", x.gras ? gras(x.t) : x.t);
     });
     P("p", "Tel que le Bien existe, avec tous droits y attachés, sans aucune exception ni réserve.");
+    const lieuAx = "Immeuble ARTICLE " + ORDINAL_ARTICLE(k + 1) + (s.matiere.communes.length ? " — " + s.matiere.communes.join(" / ") : "");
+    AX(an, "Extrait de plan cadastral", {type: "plan", g, lieu: lieuAx, M: s.matiere});
     P("p", "Un extrait de plan cadastral de l'Immeuble est annexé. ", ital("(Annexe " + (an++) + ")"));
+    AX(an, "État des risques", {type: "erp", g, lieu: lieuAx, M: s.matiere});
+    P("p", "Un état des risques relatif à l'Immeuble est annexé. ", ital("(Annexe " + (an++) + ")"));
+    if(s.matiere.servitudes.length){
+      AX(an, "Descriptif des servitudes et charges", {type: "ser", g, lieu: lieuAx, M: s.matiere});
+      P("p", "Le descriptif des servitudes et charges relevées sur l'Immeuble est annexé. ", ital("(Annexe " + (an++) + ")"));
+    }
+    AX(an, "Tableau de l'origine de propriété", {type: "ori", g, lieu: lieuAx, M: s.matiere});
+    P("p", "Un tableau récapitulatif de l'origine de propriété de l'Immeuble est annexé. ", ital("(Annexe " + (an++) + ")"));
     const duGroupe = manquantes.filter(l => l.g === g.num);
     if(duGroupe.length) P("p", M("pièces encore à réclamer pour cet Immeuble : " + duGroupe.map(l => l.texte).join(" ; ")));
     const val = valeurNombre(a.valeurs[g.num]); if(val) total += val; else valManque = true;
@@ -5008,6 +5201,13 @@ async function sortirActe(a){
   P("p", "Et lecture faite, le Requérant a certifié exactes les déclarations le concernant, avant d'apposer sa signature manuscrite sur tablette numérique.");
   P("p", "Le Notaire Soussigné, qui a recueilli l'image de sa signature, a lui-même apposé sa signature manuscrite, puis signé l'acte au moyen d'un procédé de signature électronique qualifié.");
 
+  // ---- annexes à la suite de l'acte, dans le même fichier (17/11/2026) ; un échec des annexes ne retient jamais l'acte
+  let partieAx = {xml: "", medias: [], jointes: 0}, echecAx = "";
+  if(a.annexes !== false){
+    try{ partieAx = await acteAnnexes(annexes, M); }
+    catch(e){ partieAx = {xml: "", medias: [], jointes: 0}; echecAx = e && e.message || String(e); }
+  }
+
   // ---- assemblage dans la trame
   const JSZip = await chargerJsZip();
   const z = await JSZip.loadAsync(TRAME_ACTE.docx, {base64: true, createFolders: false});
@@ -5019,12 +5219,19 @@ async function sortirActe(a){
     PARSOC: trameRuns("gsoc", ["Par la société ", a.absorbante ? gras(a.absorbante) : M("dénomination de la société absorbante")]),
     SUITE: trameRuns("gsuite", ["(suite à la fusion-absorption de la société ", gras(soc), ")"]), INITIALES: trameRuns("ginit", [ini])};
   Object.keys(rem).forEach(k => { doc = doc.replace("{{RUN_" + k + "}}", rem[k]); });
-  doc = doc.replace("<!--CORPS-->", page2 + X.join(""));
+  doc = doc.replace("<!--CORPS-->", () => page2 + X.join("") + partieAx.xml);
   z.file("word/document.xml", doc, {createFolders: false});
+  if(partieAx.medias.length){
+    partieAx.medias.forEach(m => z.file("word/media/" + m.nom, m.b64, {base64: true, createFolders: false, compression: "STORE"}));
+    let rels = await z.file("word/_rels/document.xml.rels").async("string");
+    rels = rels.replace("</Relationships>", () => partieAx.medias.map(m => '<Relationship Id="' + m.rid + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/' + m.nom + '"/>').join("") + "</Relationships>");
+    z.file("word/_rels/document.xml.rels", rels, {createFolders: false});
+  }
   const blob = await z.generateAsync({type: "blob", compression: "DEFLATE", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"});
   telechargerBlob(blob, nomSortie("acte_fusion_version_" + isoDe(aujourdhui), "docx"));
-  piecesOptMaj({acte: Object.assign({}, a, {genere_le: new Date().toISOString(), docs_au: (etat.documents || []).length})}, "acte-genere", {groupes: groupes.length, signalements: nbManques});
-  signaler("Acte produit : " + groupes.length + " immeuble" + (groupes.length > 1 ? "s" : "") + ", " + nbManques + " passage" + (nbManques > 1 ? "s" : "") + " à compléter, surligné" + (nbManques > 1 ? "s" : "") + " en jaune.");
+  piecesOptMaj({acte: Object.assign({}, a, {genere_le: new Date().toISOString(), docs_au: (etat.documents || []).length})}, "acte-genere", {groupes: groupes.length, signalements: nbManques, annexes_jointes: partieAx.jointes, annexes_echec: echecAx || undefined});
+  signaler("Acte produit : " + groupes.length + " immeuble" + (groupes.length > 1 ? "s" : "") + ", " + nbManques + " passage" + (nbManques > 1 ? "s" : "") + " à compléter, surligné" + (nbManques > 1 ? "s" : "") + " en jaune"
+    + (echecAx ? ". Annexes NON jointes — " + echecAx + "." : a.annexes !== false ? " ; " + partieAx.jointes + " annexe" + (partieAx.jointes > 1 ? "s jointes" : " jointe") + " sur " + annexes.length + "." : "."), Boolean(echecAx));
   rendre();
 }
 const ACTE_RGPD = [
