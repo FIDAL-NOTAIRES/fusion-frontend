@@ -74,6 +74,20 @@
   .p-tete small{font-family:"Segoe UI",system-ui,sans-serif;font-size:12px;color:var(--gris);margin-left:8px}
   /* une couleur de la charte par rubrique : Dossier nuit, Groupes canard, Pièces orange, Documents carmin ; la rubrique ouverte est pleine */
   .onglets{display:flex;padding:0 8px;gap:4px;flex:none;border-bottom:3px solid var(--oc,var(--nuit))}
+  .panneau[data-onglet="societes"] .onglets{--oc:var(--vert)} .onglets button[data-onglet="societes"]{--c:var(--vert)}
+  .onglets button{min-width:0;white-space:nowrap}
+  /* rubrique Sociétés (17/11/2026, nuit) : absorbée, absorbante, opération — les données de la comparution de l'acte */
+  .soc{padding:4px 14px 18px}
+  .soc h4.famille{margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--trait);display:flex;align-items:baseline;gap:8px}
+  .soc h4.famille small{font-weight:400;letter-spacing:0;text-transform:none;color:var(--gris);font-size:12px}
+  .soc .acte-champ{grid-template-columns:150px 1fr}
+  .soc .acte-champ.manque input{border-color:#D4A800;background:#FFFBE6}
+  .soc .soc-nom{font-family:Georgia,"Times New Roman",serif;font-size:15px;margin:2px 0 6px}
+  .soc .soc-nom small{font-family:"Segoe UI",system-ui,sans-serif;font-size:12px;color:var(--gris);margin-left:8px}
+  .soc .soc-etat{font-size:12.5px;color:var(--gris);margin:6px 0;min-height:1em}
+  .soc .soc-etat.alerte{color:var(--carmin)}
+  .soc .soc-indice{font-size:12px;color:var(--gris);margin:0 0 6px 158px}
+  .soc .candidats{max-height:38vh}
   .panneau[data-onglet="dossier"] .onglets{--oc:var(--nuit)} .panneau[data-onglet="groupes"] .onglets{--oc:var(--canard)}
   .panneau[data-onglet="pieces"] .onglets{--oc:#E07A0C} .panneau[data-onglet="documents"] .onglets{--oc:var(--carmin)}
   .onglets button{flex:1;border:0;border-top:3px solid var(--c);border-radius:5px 5px 0 0;background:color-mix(in srgb,var(--c) 11%,#fff);padding:7px 6px 7px;font-size:13.5px;font-weight:600;color:var(--c);display:flex;gap:6px;align-items:center;justify-content:center}
@@ -85,6 +99,7 @@
   .onglets .o-n:empty{display:none}
   .onglets button[aria-selected="true"] .o-n{border-color:#fff}
   .volet{flex:1;overflow:auto;min-height:0}
+  .panneau[data-onglet="societes"]>[data-v]:not([data-v~="societes"]),
   .panneau[data-onglet="dossier"]>[data-v]:not([data-v~="dossier"]),.panneau[data-onglet="groupes"]>[data-v]:not([data-v~="groupes"]),
   .panneau[data-onglet="pieces"]>[data-v]:not([data-v~="pieces"]),.panneau[data-onglet="documents"]>[data-v]:not([data-v~="documents"]){display:none}
   .panneau[data-onglet="groupes"] #liste>.pieces{display:none}
@@ -537,6 +552,7 @@
       <div class="p-tete" id="p-tete">Aucun dossier ouvert</div>
       <div class="onglets" role="tablist" aria-label="Rubriques du dossier">
         <button type="button" role="tab" data-onglet="dossier" aria-selected="true">Dossier</button>
+        <button type="button" role="tab" data-onglet="societes" aria-selected="false">Sociétés<span class="o-n" id="o-societes"></span></button>
         <button type="button" role="tab" data-onglet="groupes" aria-selected="false">Groupes<span class="o-n" id="o-groupes"></span></button>
         <button type="button" role="tab" data-onglet="pieces" aria-selected="false">Pièces<span class="o-n" id="o-pieces"></span></button>
         <button type="button" role="tab" data-onglet="documents" aria-selected="false">Documents</button>
@@ -602,6 +618,8 @@
         </div>
       </details>
       </div>
+
+      <div class="volet soc" id="societes" data-v="societes"></div>
 
       <div class="liste" id="liste" data-v="groupes pieces">
         <p class="vide">Aucune parcelle chargée. Cherchez une société dans la rubrique Dossier.</p>
@@ -4886,12 +4904,10 @@ function ouvrirDonneesActe(){
   const champ = (cle, lib, aide) => '<label class="acte-champ"><span>' + lib + (aide ? ' <em>' + aide + '</em>' : '') + '</span><input data-c="' + cle + '" value="' + echap(a[cle]) + '"></label>';
   const fond = document.createElement("div"); fond.className = "lect-fond";
   fond.innerHTML = '<div class="acte"><div class="lect-tete"><b>Données de l\'acte de fusion</b><span class="lect-sous">Société absorbée : ' + echap(soc) + ' — un champ laissé vide est signalé dans l\'acte, surligné en jaune.</span><button class="btn" data-x="fermer" type="button">Fermer</button></div>'
-    + '<div class="acte-corps"><h4>Société absorbante (requérante)</h4>'
-    + champ("absorbante", "Dénomination") + champ("absorbante_forme", "Forme", "ex. société par actions simplifiée") + champ("absorbante_siege", "Siège") + champ("absorbante_immat", "Immatriculation", "SIREN, RCS ou registre étranger")
-    + champ("representants", "Représentée par", "noms et qualités") + champ("clerc", "Elle-même représentée par", "clerc de l'étude, facultatif")
-    + '<h4>Société absorbée</h4><p class="acte-aide">Dénomination et SIREN repris du dossier : ' + echap(soc) + (etat.dossier && etat.dossier.siren ? ' (' + echap(etat.dossier.siren) + ')' : '') + '.</p>'
-    + champ("absorbee_forme", "Forme") + champ("absorbee_siege", "Siège") + champ("absorbee_immat", "Immatriculation", "laisser vide pour reprendre le SIREN")
-    + '<h4>Opération</h4>' + champ("lien_capital", "Lien en capital") + champ("date_traite", "Date du traité de fusion", "ex. 31 juillet 2023") + champ("date_realisation", "Date de réalisation définitive") + champ("date_signature", "Date de signature de l'acte", "facultatif")
+    + '<div class="acte-corps"><h4>Sociétés et opération</h4><p class="acte-aide">Absorbante : <b>' + echap(a.absorbante || "à renseigner") + '</b> — absorbée : <b>' + echap(soc) + '</b>. '
+      + (societesManques() ? societesManques() + ' champ' + (societesManques() > 1 ? 's' : '') + ' encore vide' + (societesManques() > 1 ? 's' : '') + ', signalé' + (societesManques() > 1 ? 's' : '') + ' en jaune dans l\'acte. ' : 'Tout est renseigné. ')
+      + '<button class="lien-btn" type="button" data-x="societes">Ouvrir la rubrique Sociétés</button></p>'
+    + '<h4>Signature</h4>' + champ("date_signature", "Date de signature de l'acte", "facultatif")
     + '<h4>Valorisation des immeubles</h4><table class="acte-val"><thead><tr><th>Groupe</th><th>Commune</th><th>Valeur (€)</th></tr></thead><tbody>'
     + groupes.map(g => '<tr><td>' + numeroGroupe4(g.num) + '</td><td>' + echap(piecesCommunesGroupe(g.num)) + '</td><td><input data-v="' + g.num + '" inputmode="decimal" value="' + echap(a.valeurs[g.num] || "") + '"></td></tr>').join("")
     + '</tbody></table><h4>Annexes</h4><label class="acte-aide" style="display:flex;gap:8px;align-items:flex-start;color:inherit;cursor:pointer"><input type="checkbox" data-k="annexes"' + (a.annexes !== false ? ' checked' : '') + ' style="margin-top:2px"><span>Joindre les annexes à la suite de l\'acte, dans le même fichier : bordereau, extraits de plan cadastral, états des risques levés, descriptif des servitudes, tableau de l\'origine de propriété. Ce qui manque est signalé en jaune au bordereau.</span></label>'
@@ -4903,6 +4919,7 @@ function ouvrirDonneesActe(){
   fond.addEventListener("click", async e => {
     const x = e.target.dataset && e.target.dataset.x; if(e.target === fond) x === undefined && fond.remove();
     if(x === "fermer"){ piecesOptMaj({acte: Object.assign(lire(), {genere_le: a.genere_le, docs_au: a.docs_au})}, "acte-donnees", {}); fond.remove(); }
+    if(x === "societes"){ piecesOptMaj({acte: Object.assign(lire(), {genere_le: a.genere_le, docs_au: a.docs_au})}, "acte-donnees", {}); fond.remove(); ongletPoser("societes"); rendreSocietes(true); }
     if(x === "generer"){ e.target.disabled = true; const n = lire(); fond.remove();
       try{ await sortirActe(n); }catch(err){ signaler("Acte non produit — " + (err.message || err), true); } }
   });
@@ -5381,6 +5398,92 @@ function rendrePieces(liste){
   liste.appendChild(det);
 }
 
+/* ---- RUBRIQUE « SOCIÉTÉS » (17/11/2026, nuit — demandée par JFD) : les sociétés concernées par la fusion sont une donnée du DOSSIER,
+   plus de la seule fiche de l'acte. Mêmes champs qu'avant (piecesOpt.acte), donc l'acte ne change pas. L'annuaire officiel des entreprises
+   (déjà interrogé pour ouvrir un dossier) remplit dénomination, forme, siège et SIREN ; il ne donne ni le capital ni la ville du registre. */
+const SOC_REQUIS = ["absorbante", "absorbante_forme", "absorbante_siege", "absorbante_immat", "representants", "absorbee_forme", "absorbee_siege", "date_traite", "date_realisation"];
+function societesManques(){ const a = acteDonnees(); return SOC_REQUIS.filter(k => !String(a[k] || "").trim()).length; }
+function societePoser(maj, origine){
+  piecesOptMaj({acte: Object.assign({}, acteDonnees(), maj)}, "societes", {champs: Object.keys(maj), origine: origine || "saisie"});
+  ongletsMaj();
+}
+async function societesAnnuaire(q){
+  const r = await fetch("/api/redpar?etape=societes&q=" + encodeURIComponent(q), {headers: {Accept: "application/json"}});
+  const d = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(d.erreur || ("HTTP " + r.status));
+  return d.societes || [];
+}
+function societeFiche(c){
+  const siren = String(c.siren || "").replace(/\D/g, ""), f = String(c.formeJuridique || "").trim();
+  return {nom: c.nom || "", forme: /^[A-ZÀ-Ý][a-zà-ÿ]/.test(f) ? f.charAt(0).toLowerCase() + f.slice(1) : f, siege: c.adresse || "",
+    immat: siren.length === 9 ? "SIREN " + siren.slice(0, 3) + " " + siren.slice(3, 6) + " " + siren.slice(6) : "", dirigeants: (c.dirigeants || []).join(", ")};
+}
+function rendreSocietes(force){
+  const z = document.getElementById("societes"); if(!z) return;
+  const actif = document.activeElement;
+  if(!force && actif && z.contains(actif) && actif.tagName === "INPUT") return;   // une saisie en cours n'est jamais écrasée par un re-rendu
+  if(!etat.dossier){ z.innerHTML = '<p class="vide">Ouvrez d\'abord un dossier dans la rubrique Dossier : les sociétés concernées par la fusion se renseignent ici.</p>'; return; }
+  const a = acteDonnees(), soc = etat.dossier.denomination || etat.dossier.siren || "", siren = etat.dossier.siren || "";
+  const champ = (cle, lib, aide, facultatif) => '<label class="acte-champ' + (!facultatif && SOC_REQUIS.includes(cle) && !String(a[cle] || "").trim() ? " manque" : "") + '"><span>' + lib + (aide ? ' <em>' + aide + '</em>' : '') + '</span><input data-c="' + cle + '" value="' + echap(a[cle]) + '"></label>';
+  z.innerHTML = '<h4 class="famille">Société absorbée <small>celle du dossier</small></h4>'
+    + '<p class="soc-nom">' + echap(soc) + (siren && soc !== siren ? '<small>SIREN ' + echap(siren) + '</small>' : '') + '</p>'
+    + '<div class="societe-ligne"><button class="btn" type="button" data-x="absorbee">Compléter depuis l\'annuaire</button></div><p class="soc-etat" data-etat="absorbee"></p>'
+    + champ("absorbee_forme", "Forme", "et capital") + champ("absorbee_siege", "Siège") + champ("absorbee_immat", "Immatriculation", "vide = SIREN du dossier")
+    + '<h4 class="famille">Société absorbante <small>requérante à l\'acte</small></h4>'
+    + '<div class="societe-ligne"><input type="text" id="soc-q" placeholder="Nom ou SIREN de la société absorbante" autocomplete="off" style="flex:1;min-width:0;font:inherit;padding:6px 9px;border:1px solid var(--trait);border-radius:3px"><button class="btn plein" type="button" data-x="absorbante">Chercher</button></div>'
+    + '<p class="soc-etat" data-etat="absorbante"></p><ul class="candidats" id="soc-candidats"></ul>'
+    + champ("absorbante", "Dénomination") + champ("absorbante_forme", "Forme", "et capital") + champ("absorbante_siege", "Siège") + champ("absorbante_immat", "Immatriculation", "SIREN et registre")
+    + champ("representants", "Représentée par", "noms et qualités")
+    + (a.absorbante_dirigeants ? '<p class="soc-indice">Dirigeants à l\'annuaire : ' + echap(a.absorbante_dirigeants) + ' — <button class="lien-btn" type="button" data-x="dirigeants">reprendre</button></p>' : '')
+    + champ("clerc", "Elle-même représentée par", "clerc de l'étude, facultatif", true)
+    + '<h4 class="famille">Opération</h4>'
+    + champ("lien_capital", "Lien en capital", "", true) + champ("date_traite", "Date du traité", "ex. 31 juillet 2023") + champ("date_realisation", "Réalisation définitive", "date");
+  const etatMsg = (role, t, alerte) => { const p = z.querySelector('[data-etat="' + role + '"]'); if(p){ p.textContent = t || ""; p.classList.toggle("alerte", Boolean(alerte)); } };
+  z.onchange = (e) => { const i = e.target; if(!i.dataset || !i.dataset.c) return;
+    societePoser({[i.dataset.c]: i.value.trim()});
+    const l = i.closest(".acte-champ"); if(l) l.classList.toggle("manque", SOC_REQUIS.includes(i.dataset.c) && !i.value.trim()); };
+  z.onkeydown = (e) => { if(e.key === "Enter" && e.target.id === "soc-q"){ e.preventDefault(); z.querySelector('[data-x="absorbante"]').click(); } };
+  z.onclick = async (e) => {
+    const b = e.target.closest("[data-x]"); if(!b || !z.contains(b)) return;
+    if(b.dataset.x === "dirigeants"){ societePoser({representants: acteDonnees().absorbante_dirigeants || ""}, "annuaire"); rendreSocietes(true); return; }
+    if(b.dataset.x === "absorbee"){
+      if(!/^\d{9}$/.test(String(siren))){ etatMsg("absorbee", "Le dossier ne porte pas de SIREN : renseignez les champs à la main.", true); return; }
+      b.disabled = true; etatMsg("absorbee", "Recherche dans l'annuaire officiel des entreprises…");
+      try{
+        const liste = await societesAnnuaire(siren), c = liste.find(x => String(x.siren || "").replace(/\D/g, "") === String(siren));
+        if(!c){ etatMsg("absorbee", "Société introuvable à l'annuaire sous le SIREN " + siren + ".", true); return; }
+        const f = societeFiche(c);
+        societePoser({absorbee_forme: f.forme, absorbee_siege: f.siege, absorbee_immat: f.immat}, "annuaire"); rendreSocietes(true);
+        const p = document.querySelector('#societes [data-etat="absorbee"]'); if(p) p.textContent = "Repris de l'annuaire officiel" + (c.statut && c.statut !== "Active" ? " — société « " + c.statut + " »" : "") + ". Le capital et la ville du registre restent à ajouter.";
+      }catch(err){ etatMsg("absorbee", err.message || "Annuaire inaccessible", true); }
+      finally{ b.disabled = false; }
+      return;
+    }
+    if(b.dataset.x === "absorbante"){
+      const q = (document.getElementById("soc-q").value || "").trim(), ul = document.getElementById("soc-candidats");
+      ul.innerHTML = "";
+      if(q.length < 2){ etatMsg("absorbante", "Saisissez un nom ou un SIREN.", true); return; }
+      b.disabled = true; etatMsg("absorbante", "Recherche dans l'annuaire officiel des entreprises…");
+      try{
+        const liste = await societesAnnuaire(q.replace(/^(\d{3})\s?(\d{3})\s?(\d{3})$/, "$1$2$3"));
+        if(!liste.length){ etatMsg("absorbante", "Aucune société trouvée pour « " + q + " ».", true); return; }
+        etatMsg("absorbante", liste.length + " société" + (liste.length > 1 ? "s trouvées" : " trouvée") + " — choisissez la société absorbante :");
+        liste.forEach(c => {
+          const li = document.createElement("li"), bt = document.createElement("button"); bt.type = "button";
+          bt.innerHTML = '<span class="nom">' + echap(c.nom) + '</span><span class="badge">' + echap(c.formeJuridique) + '</span><span class="badge ' + (c.statut === "Active" ? "actif" : "cesse") + '">' + echap(c.statut) + '</span>'
+            + '<span class="det">SIREN <b>' + echap(c.siren) + '</b></span><span class="det">' + echap(c.adresse) + '</span>'
+            + (c.dirigeants && c.dirigeants.length ? '<span class="det">Dirigeants : ' + echap(c.dirigeants.join(", ")) + '</span>' : "");
+          bt.addEventListener("click", (ev) => { ev.stopPropagation(); const f = societeFiche(c);
+            societePoser({absorbante: f.nom, absorbante_forme: f.forme, absorbante_siege: f.siege, absorbante_immat: f.immat, absorbante_dirigeants: f.dirigeants}, "annuaire"); rendreSocietes(true);
+            const p = document.querySelector('#societes [data-etat="absorbante"]'); if(p) p.textContent = "Repris de l'annuaire officiel. Le capital, la ville du registre et les qualités des représentants restent à ajouter."; });
+          li.appendChild(bt); ul.appendChild(li);
+        });
+      }catch(err){ etatMsg("absorbante", err.message || "Annuaire inaccessible", true); }
+      finally{ b.disabled = false; }
+    }
+  };
+}
+
 /* RUBRIQUES de la colonne (17/11/2026, soir) : la rubrique Groupes s'ouvre seule dès qu'un dossier est chargé, Dossier quand il n'y en a pas */
 function ongletPoser(nom){
   const p = document.getElementById("panneau"); if(!p || p.dataset.onglet === nom) return false;
@@ -5401,6 +5504,8 @@ function ongletsMaj(){
     zd.querySelectorAll("li").forEach(li => { const b = li.querySelector("button[data-siren]"), courant = Boolean(siren && b && b.dataset.siren === String(siren)); li.hidden = courant; if(!courant) nb++; });
     sm.innerHTML = (siren ? "Autres dossiers" : "Dossiers enregistrés") + ' <span class="n">(' + nb + ')</span>';
   }
+  const os = document.getElementById("o-societes");
+  if(os){ const nm = etat.dossier ? societesManques() : 0; os.textContent = nm ? String(nm) : ""; os.title = nm ? nm + " champ" + (nm > 1 ? "s" : "") + " encore vide" + (nm > 1 ? "s" : "") + ", signalé" + (nm > 1 ? "s" : "") + " en jaune dans l'acte" : ""; }
   const og = document.getElementById("o-groupes"); if(og) og.textContent = charge ? String(etat.groupes.length) : "";
   const op = document.getElementById("o-pieces"), n = document.querySelector("#liste > .pieces > summary .n");
   if(op){ op.textContent = charge && n ? n.textContent : ""; op.classList.toggle("vif", Boolean(n && !n.classList.contains("zero"))); }
@@ -5587,6 +5692,7 @@ function rendre(){
 
   majBoutons();
   ongletsMaj();
+  rendreSocietes();
   rendreConcordance();
   dessiner();
 }
