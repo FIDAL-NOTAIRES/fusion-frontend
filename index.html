@@ -266,9 +266,22 @@
   .pieces .pieces-btn{margin-left:auto;font-size:11.5px;padding:3px 9px;text-transform:none;letter-spacing:0}
   .pieces .pieces-opt{display:flex;gap:6px;align-items:center;padding:2px 14px 6px;font-size:12px;color:var(--gris)}
   .pieces .pieces-groupe{margin:0;padding:6px 14px 2px;font-family:Georgia,serif;font-size:12.5px;color:var(--carmin)}
-  .pieces-cat{margin-top:10px;padding-top:8px;border-top:1px solid var(--trait);font-size:13.5px}
-  .pieces-site{margin:6px 14px 2px 22px;font-size:11px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--canard)}
-  .pieces-site + .pieces-liste{margin-left:8px}
+  /* arborescence dépliante : triangle dessiné, deux niveaux */
+  .arbre>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:7px 14px;user-select:none}
+  .arbre>summary::-webkit-details-marker{display:none}
+  .arbre>summary::before{content:"";flex:none;border-style:solid;border-width:5px 0 5px 8px;border-color:transparent transparent transparent var(--orange);transition:transform .12s}
+  .arbre[open]>summary::before{transform:rotate(90deg)}
+  .arbre>summary:hover{background:#EEF3F6}
+  .arbre .a-t{flex:1;min-width:0}
+  .arbre.a1{border-top:1px solid var(--trait)}
+  .arbre.a1>summary{font-family:Georgia,"Times New Roman",serif;font-size:14px;color:var(--nuit);background:#F6F8FA}
+  .arbre.a2{margin-left:16px;border-left:2px solid var(--trait)}
+  .arbre.a2>summary{font-size:11.5px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:var(--canard);padding:6px 10px}
+  .arbre .spf-btn{flex:none;text-transform:none;letter-spacing:0;font-weight:400;padding:1px 8px;font-size:11px}
+  .a-n{flex:none;font-family:"Segoe UI",system-ui,sans-serif;font-size:11px;font-weight:600;letter-spacing:0;text-transform:none;border-radius:9px;padding:0 7px;line-height:17px;background:var(--orange);color:#fff}
+  .a-n.zero{background:#E4F3EA;color:var(--vert)} .a-n.gris{background:var(--trait);color:#4A5561;font-weight:400}
+  .pieces .arbre.a1>summary{background:none;color:var(--carmin)}
+  .pieces .arbre.a1>.pieces-liste{margin-left:14px}
   .pieces-liste{list-style:none;margin:0;padding:0 0 4px}
   .pieces-liste li{display:grid;grid-template-columns:1fr auto;gap:4px 10px;padding:6px 14px;border-top:1px solid #F1E9DC;font-size:12.5px;align-items:start}
   .pieces-liste .txt{color:var(--nuit)}
@@ -4748,6 +4761,16 @@ function piecesParCategorie(lignes){
   lignes.forEach(l => { const c = pieceCategorie(l), st = pieceSite(l); if(!cats.has(c)) cats.set(c, new Map()); const sites = cats.get(c); if(!sites.has(st.cle)) sites.set(st.cle, {titre: st.titre, dossier: Boolean(st.dossier), liste: []}); sites.get(st.cle).liste.push(l); });
   return PIECES_CATEGORIES.filter(([c]) => cats.has(c)).map(([c, titre]) => ({titre, sites: [...cats.get(c).entries()].sort((a, b) => a[0].localeCompare(b[0], "fr", {numeric: true})).map(x => x[1])}));
 }
+/* 17/11/2026 (nuit) — LISTES DÉPLIANTES EN ARBORESCENCE (demandé par JFD) : pièces = catégorie › site › pièces ; groupes = service de la
+   publicité foncière › commune › groupes. Chaque nœud retient s'il est ouvert, d'un rendu à l'autre, jusqu'au changement de dossier. */
+const arbreEtat = new Map();
+function arbreNoeud(cle, titre, compteur, ouvertParDefaut, niveau){
+  const d = document.createElement("details"); d.className = "arbre a" + niveau;
+  d.open = arbreEtat.has(cle) ? arbreEtat.get(cle) : Boolean(ouvertParDefaut);
+  d.innerHTML = '<summary><span class="a-t">' + echap(titre) + '</span>' + (compteur || "") + '</summary>';
+  d.addEventListener("toggle", () => arbreEtat.set(cle, d.open));
+  return d;
+}
 function piecesParGroupe(lignes){
   const m = new Map(); lignes.forEach(l => { const k = l.g == null ? -1 : l.g; if(!m.has(k)) m.set(k, []); m.get(k).push(l); });
   return [...m.entries()].sort((a, b) => a[0] - b[0]).map(([k, liste]) => ({titre: k < 0 ? "Ensemble du dossier" : "Groupe " + numeroGroupe4(k) + (piecesCommunesGroupe(k) ? " — " + piecesCommunesGroupe(k) : ""), liste}));
@@ -5389,8 +5412,12 @@ function rendrePieces(liste){
     det.appendChild(tete);
     if(extra) det.appendChild(extra);
     if(!l.length){ det.insertAdjacentHTML("beforeend", '<p class="rien">Rien à ce stade.</p>'); return; }
-    piecesParCategorie(l).forEach(cat => { det.insertAdjacentHTML("beforeend", '<p class="pieces-groupe pieces-cat">' + echap(cat.titre) + '</p>'); cat.sites.forEach(b => {
-      if(!(cat.sites.length === 1 && b.dossier)) det.insertAdjacentHTML("beforeend", '<p class="pieces-site">' + echap(b.titre) + '</p>');
+    const pastille = (ll) => { const n = nb(ll, "a_reclamer"); return '<span class="a-n' + (n ? "" : " zero") + '" title="' + (n ? n + " à réclamer sur " + ll.length : "plus rien à réclamer") + '">' + (n ? n : "✓") + '</span>'; };
+    piecesParCategorie(l).forEach(cat => { const toutes = cat.sites.flatMap(b => b.liste);
+      const nc = arbreNoeud("p|" + bouton + "|" + cat.titre, cat.titre, pastille(toutes), toutes.length <= 3, 1); det.appendChild(nc);
+      cat.sites.forEach(b => {
+      let hote = nc;
+      if(!(cat.sites.length === 1 && b.dossier)){ hote = arbreNoeud("p|" + bouton + "|" + cat.titre + "|" + b.titre, b.titre, pastille(b.liste), cat.sites.length <= 4, 2); nc.appendChild(hote); }
       const ul = document.createElement("ul"); ul.className = "pieces-liste";
       b.liste.forEach(x => {
         const reclamable = x.etat === "a_reclamer", coche = pieceCochee(x);
@@ -5406,7 +5433,7 @@ function rendrePieces(liste){
         if(pd) pd.addEventListener("change", e => { const d = Object.assign({}, (etat.piecesOpt || {}).dest || {}); if(e.target.value === "client") delete d[x.id]; else d[x.id] = e.target.value; piecesOptMaj({dest: d}, "piece-destinataire", {piece: x.id, destinataire: e.target.value}); rendre(); });
         ul.appendChild(li);
       });
-      det.appendChild(ul);
+      hote.appendChild(ul);
     }); });
   };
   const trav = document.createElement("label"); trav.className = "pieces-opt";
@@ -5527,7 +5554,7 @@ function ongletPoser(nom){
 function ongletsMaj(){
   const charge = etat.parcelles.length > 0, soc = etat.dossier ? (etat.dossier.denomination || etat.dossier.siren || "") : "";
   const cle = (etat.dossier && etat.dossier.siren || "") + "|" + charge;
-  if(cle !== ongletsMaj.cle){ ongletsMaj.cle = cle; ongletPoser(charge ? "groupes" : "dossier"); }
+  if(cle !== ongletsMaj.cle){ ongletsMaj.cle = cle; arbreEtat.clear(); ongletPoser(charge ? "groupes" : "dossier"); }
   const t = document.getElementById("p-tete");
   if(t) t.innerHTML = charge ? echap(soc || "Jeu local") + (etat.dossier && etat.dossier.siren && soc !== etat.dossier.siren ? '<small>SIREN ' + echap(etat.dossier.siren) + '</small>' : '') : "Aucun dossier ouvert";
   // liste des dossiers de la base : le dossier ouvert n'y figure pas, les autres sont annoncés comme tels
@@ -5627,12 +5654,17 @@ function rendre(){
       (!u.k.spf - !v.k.spf) || u.k.spf.localeCompare(v.k.spf, "fr") || u.k.commune.localeCompare(v.k.commune, "fr")
       || u.k.sections.localeCompare(v.k.sections, "fr") || (u.k.num - v.k.num));
 
-    let teteCourante = null;
+    let teteCourante = null, spfCourant = null, noeudSpf = null, noeudCommune = null;
+    const libSpfDe = (k) => k.spf ? "SPF " + k.spf + (k.auto ? " (automatique)" : "") : "SPF non encore lu";
+    const parSpf = {}, parTete = {}; let spfOuvert = null, teteOuverte = null;
+    ordonnes.forEach(({g, k}) => { const a = libSpfDe(k), t = a + " — " + (k.commune || "Commune inconnue"); parSpf[a] = (parSpf[a] || 0) + 1; parTete[t] = (parTete[t] || 0) + 1; if(g.num === etat.ouvert){ spfOuvert = a; teteOuverte = t; } });
+    const petit = etat.groupes.length <= 30, compte = (n) => '<span class="a-n gris">' + n + ' groupe' + (n > 1 ? 's' : '') + '</span>';
     ordonnes.forEach(({g, k}) => {
-      const enTete = (k.spf ? "SPF " + k.spf + (k.auto ? " (automatique)" : "") : "SPF non encore lu")
-                    + " — " + (k.commune || "Commune inconnue");
+      const libSpf = libSpfDe(k), enTete = libSpf + " — " + (k.commune || "Commune inconnue");
+      if(libSpf !== spfCourant){ noeudSpf = arbreNoeud("g|" + libSpf, libSpf, compte(parSpf[libSpf]), petit || libSpf === spfOuvert, 1); liste.appendChild(noeudSpf); spfCourant = libSpf; teteCourante = null; }
       if(enTete !== teteCourante){
-        const h = document.createElement("div"); h.className = "tete-tri"; h.textContent = enTete;
+        noeudCommune = arbreNoeud("g|" + enTete, k.commune || "Commune inconnue", compte(parTete[enTete]), petit || enTete === teteOuverte, 2);
+        const h = noeudCommune.querySelector("summary");
         if(!k.spf){
           // Attribution à toute la commune : les groupes de cette commune encore sans SPF
           const b = document.createElement("button");
@@ -5640,14 +5672,14 @@ function rendre(){
           b.title = "Attribuer un service de la publicité foncière à tous les groupes de cette commune encore sans SPF";
           const communeCible = k.commune;
           b.addEventListener("click", ev => {
-            ev.stopPropagation();
+            ev.stopPropagation(); ev.preventDefault();
             const cibles = etat.groupes.filter(x => !spfDuGroupe(x)
               && [...x.membres].some(i => etat.parcelles[i].props.nom_commune === communeCible));
             attribuerSpf(cibles, "les " + cibles.length + " groupe(s) de " + communeCible);
           });
           h.appendChild(b);
         }
-        liste.appendChild(h); teteCourante = enTete;
+        noeudSpf.appendChild(noeudCommune); teteCourante = enTete;
       }
       const membres = [...g.membres].map(i => etat.parcelles[i])
         .sort((a,b) => a.ref.localeCompare(b.ref,"fr",{numeric:true}));
@@ -5712,7 +5744,7 @@ function rendre(){
         bloc.appendChild(rendreSorties(g));
         bloc.appendChild(rendreDepot(g));
       }
-      liste.appendChild(bloc);
+      noeudCommune.appendChild(bloc);
     });
   }
 
