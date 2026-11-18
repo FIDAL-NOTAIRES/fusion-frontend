@@ -5084,9 +5084,18 @@ function axFondUtilisable(c){   // le fond doit être lisible par FUSION (sinon 
     for(let i = 0; i < d.length; i += 4 * 97){ if(d[i + 3] > 40 && (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235)) n++; }
     return n > 25; }catch(e){ return false; }
 }
-async function axFondCadastre(X1, Y1, X2, Y2, L, H){
+async function axFondCadastre(X1, Y1, X2, Y2, L, H, insees){
   const c = document.createElement("canvas"); c.width = L; c.height = H; const ctx = c.getContext("2d");
-  // 1) l'image du cadre exact
+  // 0) LE PLAN DE LA DGFiP (cadastre.gouv.fr), voulu par JFD : un service par commune, lu par /api/cadastre ; une image par commune de l'immeuble
+  const codes = [...new Set((insees || []).map(x => String(x || "").toUpperCase()).filter(x => /^(\d{2}|2[AB])\d{3}$/.test(x)))].slice(0, 4);
+  if(codes.length){
+    const plans = await Promise.all(codes.map(code => axImageDistante("/api/cadastre?insee=" + code + "&bbox=" + [X1, Y1, X2, Y2].map(v => v.toFixed(2)).join(",") + "&w=" + L + "&h=" + H, 28000)));
+    plans.forEach(p => { if(p) ctx.drawImage(p, 0, 0, L, H); });
+    if(plans.some(Boolean) && axFondUtilisable(c)){ c.source = "dgfip"; return c; }
+    ctx.clearRect(0, 0, L, H);
+  }
+  c.source = "ign";
+  // 1) à défaut, le plan publié par l'IGN : l'image du cadre exact
   const im = await axImageDistante("https://data.geopf.fr/wms-r/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=CADASTRALPARCELS.PARCELLAIRE_EXPRESS&STYLES=&CRS=EPSG:3857&BBOX=" + [X1, Y1, X2, Y2].map(v => v.toFixed(2)).join(",") + "&WIDTH=" + L + "&HEIGHT=" + H + "&FORMAT=image/png&TRANSPARENT=TRUE", 20000);
   if(im){ ctx.drawImage(im, 0, 0, L, H); if(axFondUtilisable(c)) return c; ctx.clearRect(0, 0, L, H); }
   // 2) à défaut, les tuiles du même plan
@@ -5114,7 +5123,7 @@ async function axPlan(g){
   const cx = (X1 + X2) / 2, cy = (Y1 + Y2) / 2, ppm = Math.min(L / (X2 - X1), H / (Y2 - Y1));
   X1 = cx - L / 2 / ppm; X2 = cx + L / 2 / ppm; Y1 = cy - H / 2 / ppm; Y2 = cy + H / 2 / ppm;
   const px = (pt) => { const m = merc(pt); return [(m[0] - X1) * ppm, (Y2 - m[1]) * ppm]; };
-  let fond = null; try{ fond = await axFondCadastre(X1, Y1, X2, Y2, L, H); }catch(e){ fond = null; }
+  let fond = null; try{ fond = await axFondCadastre(X1, Y1, X2, Y2, L, H, membres.map(p => p.props && p.props.commune)); }catch(e){ fond = null; }
   const c = document.createElement("canvas"); c.width = L; c.height = H; const ctx = c.getContext("2d");
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, L, H); ctx.lineJoin = "round";
   if(fond) ctx.drawImage(fond, 0, 0);
@@ -5146,7 +5155,7 @@ async function axPlan(g){
   ctx.beginPath(); ctx.moveTo(nx, ny - 36); ctx.lineTo(nx - 15, ny + 14); ctx.lineTo(nx, ny + 3); ctx.lineTo(nx + 15, ny + 14); ctx.closePath(); ctx.fillStyle = "#222"; ctx.fill();
   ctx.font = "600 24px 'Segoe UI', Arial, sans-serif"; ctx.fillText("N", nx, ny + 38);
   ctx.strokeStyle = "#444"; ctx.lineWidth = 2; ctx.strokeRect(1, 1, L - 2, H - 2);
-  return {b64: c.toDataURL("image/png").split(",")[1], w: L, h: H, fond: Boolean(fond)};
+  return {b64: c.toDataURL("image/png").split(",")[1], w: L, h: H, fond: Boolean(fond), source: fond ? fond.source : ""};
 }
 // Pages d'un PDF rendues en images (état des risques).
 async function axPagesPdf(blob, maxPages){
@@ -5186,7 +5195,8 @@ async function acteAnnexes(annexes, M){
       tete(ax); const [l, h] = cadre(im, AX_L_CM, 17);
       corps.push(axImage(media(im.b64, "png"), ++idImg, l, h));
       corps.push(axP("Parcelles de l'Immeuble : " + (Mg.communes.length ? Mg.communes.join(" / ") + ", " : "") + blocNumeros(Mg.parcelles) + ".", {avant: 160}));
-      corps.push(axP([{t: im.fond ? "Extrait du plan cadastral (Parcellaire Express publié par l'IGN, établi d'après le plan cadastral de la direction générale des finances publiques) ; les parcelles de l'Immeuble sont surlignées ; nord en haut, échelle graphique. Il ne remplace pas l'extrait délivré par le service du cadastre."
+      corps.push(axP([{t: im.source === "dgfip" ? "Extrait du plan cadastral de la direction générale des finances publiques (service de consultation du plan cadastral, cadastre.gouv.fr) ; les parcelles de l'Immeuble sont surlignées ; nord en haut, échelle graphique."
+        : im.fond ? "Extrait du plan cadastral publié par l'IGN (Parcellaire Express, établi d'après le plan cadastral de la direction générale des finances publiques), le service du plan cadastral n'ayant pas répondu ; les parcelles de l'Immeuble sont surlignées ; nord en haut, échelle graphique. Il ne remplace pas l'extrait délivré par le service du cadastre."
         : "Plan établi d'après les contours du plan cadastral (données cadastrales ouvertes), le fond cadastral n'ayant pas pu être obtenu : parcelles de l'Immeuble en couleur, autres parcelles de la Société Absorbée en gris ; nord en haut, échelle graphique. Il ne remplace pas l'extrait délivré par le service du cadastre.", ital: true}], {taille: 16, avant: 80}));
       ax.etat = "jointe ci-après"; jointes++; continue;
     }
