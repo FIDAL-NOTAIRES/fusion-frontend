@@ -598,6 +598,15 @@
   .soc h4.famille .verrou.pose{background:var(--nuit);border-color:var(--nuit);color:#fff}
   .soc .acte-champ.verrouille input{background:#EEF1F4;border-color:transparent;color:var(--nuit);-webkit-text-fill-color:var(--nuit);opacity:1;cursor:not-allowed}
   .soc .acte-champ.verrouille span{color:var(--gris)}
+  /* fenêtre des extraits du plan cadastral (PAINT dans un cadre) */
+  .paint-fond{position:fixed;inset:0;z-index:5000;background:rgba(15,34,56,.55);display:flex;align-items:center;justify-content:center}
+  .paint-boite{background:#fff;border-radius:8px;width:min(1280px,94vw);height:min(900px,92vh);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.35)}
+  .paint-tete{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 18px;background:var(--nuit);color:#fff;font-size:15px}
+  .paint-tete b{font-family:Georgia,"Times New Roman",serif;font-weight:400;font-size:17px}
+  .paint-actions{display:flex;gap:10px;flex:none} .paint-actions .btn{background:#fff}
+  .paint-etat{margin:0;padding:9px 18px;font-size:13.5px;color:var(--nuit);background:#F6FAFB;border-bottom:1px solid var(--trait)}
+  .paint-etat.alerte{background:#FFF3E0;color:#8A4B00;font-weight:600}
+  .paint-cadre{flex:1;min-height:0} .paint-cadre iframe{width:100%;height:100%;border:0;display:block}
 </style>
   <script src="https://connexion-omega.vercel.app/bandeau.js" defer></script>
 </head>
@@ -5084,18 +5093,9 @@ function axFondUtilisable(c){   // le fond doit être lisible par FUSION (sinon 
     for(let i = 0; i < d.length; i += 4 * 97){ if(d[i + 3] > 40 && (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235)) n++; }
     return n > 25; }catch(e){ return false; }
 }
-async function axFondCadastre(X1, Y1, X2, Y2, L, H, insees){
+async function axFondCadastre(X1, Y1, X2, Y2, L, H){
   const c = document.createElement("canvas"); c.width = L; c.height = H; const ctx = c.getContext("2d");
-  // 0) LE PLAN DE LA DGFiP (cadastre.gouv.fr), voulu par JFD : un service par commune, lu par /api/cadastre ; une image par commune de l'immeuble
-  const codes = [...new Set((insees || []).map(x => String(x || "").toUpperCase()).filter(x => /^(\d{2}|2[AB])\d{3}$/.test(x)))].slice(0, 4);
-  if(codes.length){
-    const plans = await Promise.all(codes.map(code => axImageDistante("/api/cadastre?insee=" + code + "&bbox=" + [X1, Y1, X2, Y2].map(v => v.toFixed(2)).join(",") + "&w=" + L + "&h=" + H, 28000)));
-    plans.forEach(p => { if(p) ctx.drawImage(p, 0, 0, L, H); });
-    if(plans.some(Boolean) && axFondUtilisable(c)){ c.source = "dgfip"; return c; }
-    ctx.clearRect(0, 0, L, H);
-  }
-  c.source = "ign";
-  // 1) à défaut, le plan publié par l'IGN : l'image du cadre exact
+  // 1) l'image du cadre exact
   const im = await axImageDistante("https://data.geopf.fr/wms-r/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=CADASTRALPARCELS.PARCELLAIRE_EXPRESS&STYLES=&CRS=EPSG:3857&BBOX=" + [X1, Y1, X2, Y2].map(v => v.toFixed(2)).join(",") + "&WIDTH=" + L + "&HEIGHT=" + H + "&FORMAT=image/png&TRANSPARENT=TRUE", 20000);
   if(im){ ctx.drawImage(im, 0, 0, L, H); if(axFondUtilisable(c)) return c; ctx.clearRect(0, 0, L, H); }
   // 2) à défaut, les tuiles du même plan
@@ -5107,10 +5107,110 @@ async function axFondCadastre(X1, Y1, X2, Y2, L, H, insees){
   (await Promise.all(tuiles)).forEach(({t, tx, ty}) => { if(!t) return; const k = L / (X2 - X1); ctx.drawImage(t, (tx * cote - MONDE - X1) * k, (Y2 - (MONDE - ty * cote)) * k, cote * k, cote * k); });
   return axFondUtilisable(c) ? c : null;
 }
-// Extrait de plan : fond cadastral officiel, parcelles de l'immeuble surlignées, échelle graphique, nord en haut.
-async function axPlan(g){
+/* ---- LE VRAI EXTRAIT DU PLAN CADASTRAL, COLORIÉ PAR PAINT (18/11/2026 — JFD : « le vrai plan avec le cartouche DGFiP et la colorisation de
+   parcelle comme on pourrait le faire avec PAINT »). FUSION APPELLE PAINT, il ne le refait pas : PAINT est ouvert dans un cadre, il demande
+   l'extrait officiel au service de consultation du plan cadastral (cadastre.gouv.fr), le cale, colorie les parcelles de l'immeuble et renvoie
+   l'image de la page, cartouche compris. Même passerelle et même contrat d'adresse que HISTO (histo-pont.js côté PAINT, ?charge=histo) : rien
+   n'est à changer dans PAINT. Un plan à la fois, dans une fenêtre visible (un cadre masqué est mis en sommeil par le navigateur) ; si PAINT ne
+   peut pas colorier seul, la fenêtre laisse colorier à la main ou passer le plan. Un plan passé ou en échec retombe sur le plan de l'IGN. */
+const PAINT_URL = "https://paint-blue.vercel.app/index.html", PAINT_ORIGINE = new URL(PAINT_URL).origin;
+const PAINT_DELAI_MS = 6 * 60 * 1000;
+const AX_CC = {a: 6378137.0, e: Math.sqrt(2 / 298.257222101 - Math.pow(1 / 298.257222101, 2)), lon0: 3.0 * Math.PI / 180};
+function axCcParams(zz){
+  const e = AX_CC.e, e2 = e * e, rad = d => d * Math.PI / 180, lat0 = rad(zz), lat1 = rad(zz - 0.75), lat2 = rad(zz + 0.75);
+  const m = p => Math.cos(p) / Math.sqrt(1 - e2 * Math.pow(Math.sin(p), 2));
+  const t = p => Math.tan(Math.PI / 4 - p / 2) / Math.pow((1 - e * Math.sin(p)) / (1 + e * Math.sin(p)), e / 2);
+  const n = Math.log(m(lat1) / m(lat2)) / Math.log(t(lat1) / t(lat2)), F = m(lat1) / (n * Math.pow(t(lat1), n));
+  return {n, F, r0: AX_CC.a * F * Math.pow(t(lat0), n), x0: 1700000, y0: (zz - 41) * 1e6 + 200000};
+}
+function axProjeterCC(lon, lat, zz){   // projection conique conforme par zone : mêmes formules que PAINT, REDPAR et HISTO
+  const P = axCcParams(zz), e = AX_CC.e, p = lat * Math.PI / 180;
+  const t = Math.tan(Math.PI / 4 - p / 2) / Math.pow((1 - e * Math.sin(p)) / (1 + e * Math.sin(p)), e / 2);
+  const r = AX_CC.a * P.F * Math.pow(t, P.n), th = P.n * (lon * Math.PI / 180 - AX_CC.lon0);
+  return [P.x0 + r * Math.sin(th), P.y0 + P.r0 - r * Math.cos(th)];
+}
+const AX_EMPRISES_1000 = {"A4|portrait": [195.5, 211.0], "A4|paysage": [210.7, 197.0], "A3|portrait": [281.5, 301.0], "A3|paysage": [316.0, 283.0]};
+const AX_ECHELLES = [1000, 1250, 1500, 2000, 2500, 4000, 5000];   // celles que PAINT pratique pour ses documents ; au-delà, pas d'extrait
+function axDansAnneau(pt, anneau){ let d = false; for(let i = 0, j = anneau.length - 1; i < anneau.length; j = i++){ const a = anneau[i], b = anneau[j]; if((a[1] > pt[1]) !== (b[1] > pt[1]) && pt[0] < (b[0] - a[0]) * (pt[1] - a[1]) / (b[1] - a[1]) + a[0]) d = !d; } return d; }
+function axParametresPaint(g){
+  const membres = [...g.membres].map(i => etat.parcelles[i]).filter(p => p && p.anneaux && p.anneaux.length && p.props)
+    .sort((a, b) => String(a.ref).localeCompare(String(b.ref), "fr", {numeric: true}));
+  if(!membres.length) return null;
+  const communes = [...new Set(membres.map(p => p.props.commune).filter(Boolean))];
+  if(communes.length !== 1 || !/^(\d{2}|2[AB])\d{3}$/i.test(communes[0])) return null;   // un extrait ne couvre qu'une commune
+  const p0 = membres[0]; if(!p0.props.section || p0.props.numero == null || p0.props.numero === "") return null;
+  const ll0 = deprojeter(p0.anneaux[0][0][0], p0.anneaux[0][0][1], etat.lat0), zz = Math.min(50, Math.max(42, Math.round(ll0[1])));
+  const cc = (pt) => { const ll = deprojeter(pt[0], pt[1], etat.lat0); return axProjeterCC(ll[0], ll[1], zz); };
+  // contours : l'extérieur de chaque partie de parcelle ; un anneau logé dans le premier est un trou, on ne le peint pas
+  const contours = membres.map(p => p.anneaux.filter((a, k) => k === 0 || !axDansAnneau(a[0], p.anneaux[0])).map(a => a.map(cc)));
+  const pts = contours.flat(2); let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  pts.forEach(q => { x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]); });
+  const w = Math.round((x1 - x0) * 10) / 10, h = Math.round((y1 - y0) * 10) / 10;
+  let ef = null;
+  for(const e of AX_ECHELLES){ for(const f of ["A4|portrait", "A4|paysage", "A3|portrait", "A3|paysage"]){ const d = AX_EMPRISES_1000[f]; if(w * 1.10 <= d[0] * e / 1000 && h * 1.10 <= d[1] * e / 1000){ ef = {echelle: String(e), format: f}; break; } } if(ef) break; }
+  if(!ef) return null;   // l'immeuble ne tient pas sur un extrait au 1/5 000 : plan de repli
+  const cx = ((x0 + x1) / 2).toFixed(1), cy = ((y0 + y1) / 2).toFixed(1), idu = String(p0.props.idu || "");
+  const q = new URLSearchParams({commune: communes[0].toUpperCase(), nomCommune: p0.props.nom_commune || "", prefixe: idu.length === 14 ? idu.slice(5, 8) : "000",
+    section: String(p0.props.section), parcelle: String(p0.props.numero), echelle: ef.echelle, format: ef.format, x: cx, y: cy, pt: cx + "," + cy, dim: w + "x" + h,
+    poly: contours.map(c => c.map(a => a.map(pt => pt[0].toFixed(2) + "," + pt[1].toFixed(2)).join(";")).join("~")).join("|"),
+    tab: membres.map(p => String(p.props.section || "") + "," + String(p.props.numero || "").replace(/^0+/, "") + "," + (p.surface ? Math.round(p.surface) + " m²" : "")).join(";"), auto: "1"});
+  if(membres.length === 1 && p0.surface) q.set("surface", String(Math.round(p0.surface)));
+  return {qs: q.toString(), echelle: ef.echelle};
+}
+const axPaint = {fenetre: null, passerTout: false, plans: new Map()};
+function axPaintOuvrir(){
+  if(axPaint.fenetre) return axPaint.fenetre;
+  const f = document.createElement("div"); f.className = "paint-fond";
+  f.innerHTML = '<div class="paint-boite"><div class="paint-tete"><div><b>Extraits du plan cadastral</b><span id="paint-titre"></span></div>'
+    + '<div class="paint-actions"><button class="btn" type="button" data-x="passer">Passer ce plan</button><button class="btn" type="button" data-x="tout">Passer tous les plans</button></div></div>'
+    + '<p class="paint-etat" id="paint-etat">PAINT demande l\'extrait au service du cadastre, le cale et colorie les parcelles de l\'immeuble.</p><div class="paint-cadre" id="paint-cadre"></div></div>';
+  document.body.appendChild(f); axPaint.fenetre = f; return f;
+}
+function axPaintFermer(){ if(axPaint.fenetre){ axPaint.fenetre.remove(); axPaint.fenetre = null; } }
+function axPlanPaint(qs, libelle){
+  return new Promise(resoudre => {
+    const f = axPaintOuvrir(), cadre = f.querySelector("#paint-cadre"), etatP = f.querySelector("#paint-etat");
+    f.querySelector("#paint-titre").textContent = " — " + libelle;
+    etatP.classList.remove("alerte"); etatP.textContent = "PAINT demande l'extrait au service du cadastre, le cale et colorie les parcelles de l'immeuble.";
+    const ifr = document.createElement("iframe"); ifr.title = "PAINT"; ifr.src = PAINT_URL + "?charge=histo&cb=" + Date.now(); cadre.innerHTML = ""; cadre.appendChild(ifr);
+    let fini = false, manuel = false;
+    const finir = (res) => { if(fini) return; fini = true; window.removeEventListener("message", ecoute); f.removeEventListener("click", clic); clearTimeout(garde); ifr.remove(); resoudre(res); };
+    const ecoute = (e) => {
+      if(e.origin !== PAINT_ORIGINE || e.source !== ifr.contentWindow) return;
+      const d = e.data || {};
+      if(d.type === "paint-pret") ifr.contentWindow.postMessage({type: "paint-params", qs}, PAINT_ORIGINE);
+      else if(d.type === "paint-etape"){ if(!manuel) etatP.textContent = "PAINT : " + String(d.texte || "").slice(0, 160); }
+      else if(d.type === "paint-image" && d.png) finir({png: d.png, manuel: Boolean(d.manuel)});
+      else if(d.type === "paint-echec") finir({echec: String(d.message || "échec de PAINT")});
+      else if(d.type === "paint-attente-manuelle"){ manuel = true; etatP.classList.add("alerte");
+        etatP.textContent = "PAINT n'a pas pu colorier seul ce plan (" + String(d.reserve || "").slice(0, 200) + "). Coloriez les parcelles à la main dans le plan ci-dessous, puis cliquez sur « Transmettre à HISTO » en haut à droite du plan — ou passez ce plan."; }
+    };
+    const clic = (e) => { const b = e.target.closest("[data-x]"); if(!b) return; if(b.dataset.x === "tout") axPaint.passerTout = true; finir({echec: "plan passé"}); };
+    window.addEventListener("message", ecoute); f.addEventListener("click", clic);
+    const garde = setTimeout(function veille(){ if(manuel) return; finir({echec: "PAINT ne répond pas"}); }, PAINT_DELAI_MS);
+  });
+}
+async function axImageAllegee(dataUrl, coteMax){   // l'extrait arrive en PNG pleine définition : on le ramène à un JPEG net mais léger pour le Word
+  const im = await new Promise(ok => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => ok(null); i.src = dataUrl; });
+  if(!im || !im.width) return null;
+  const k = Math.min(1, coteMax / Math.max(im.width, im.height)), c = document.createElement("canvas"); c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+  const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height); ctx.imageSmoothingQuality = "high"; ctx.drawImage(im, 0, 0, c.width, c.height);
+  return {b64: c.toDataURL("image/jpeg", 0.88).split(",")[1], w: c.width, h: c.height};
+}
+async function axExtraitPaint(g, libelle){
+  if(axPaint.passerTout) return null;
+  const P = axParametresPaint(g); if(!P) return null;
+  if(axPaint.plans.has(P.qs)) return axPaint.plans.get(P.qs);   // même immeuble, mêmes parcelles : l'extrait déjà obtenu dans cette séance ressert
+  const r = await axPlanPaint(P.qs, libelle); if(!r || !r.png) return null;
+  const im = await axImageAllegee(r.png, 2300); if(!im) return null;
+  const plan = {b64: im.b64, w: im.w, h: im.h, ext: "jpeg", fond: true, source: "paint", echelle: P.echelle, manuel: r.manuel};
+  axPaint.plans.set(P.qs, plan); return plan;
+}
+// Plan de repli : fond du plan cadastral publié par l'IGN, parcelles de l'immeuble surlignées, échelle graphique, nord en haut.
+async function axPlan(g, libelle){
   const membres = [...g.membres].map(i => etat.parcelles[i]).filter(p => p && p.anneaux && p.anneaux.length && p.bbox);
   if(!membres.length) return null;
+  try{ const extrait = await axExtraitPaint(g, libelle || ""); if(extrait) return extrait; }catch(e){}
   const merc = (pt) => { const ll = deprojeter(pt[0], pt[1], etat.lat0); return axMercator(ll[0], ll[1]); };
   let X1 = Infinity, Y1 = Infinity, X2 = -Infinity, Y2 = -Infinity, latMoy = 0;
   membres.forEach(p => { [[p.bbox.x1, p.bbox.y1], [p.bbox.x2, p.bbox.y2]].forEach(pt => { const m = merc(pt); X1 = Math.min(X1, m[0]); X2 = Math.max(X2, m[0]); Y1 = Math.min(Y1, m[1]); Y2 = Math.max(Y2, m[1]); }); });
@@ -5123,7 +5223,7 @@ async function axPlan(g){
   const cx = (X1 + X2) / 2, cy = (Y1 + Y2) / 2, ppm = Math.min(L / (X2 - X1), H / (Y2 - Y1));
   X1 = cx - L / 2 / ppm; X2 = cx + L / 2 / ppm; Y1 = cy - H / 2 / ppm; Y2 = cy + H / 2 / ppm;
   const px = (pt) => { const m = merc(pt); return [(m[0] - X1) * ppm, (Y2 - m[1]) * ppm]; };
-  let fond = null; try{ fond = await axFondCadastre(X1, Y1, X2, Y2, L, H, membres.map(p => p.props && p.props.commune)); }catch(e){ fond = null; }
+  let fond = null; try{ fond = await axFondCadastre(X1, Y1, X2, Y2, L, H); }catch(e){ fond = null; }
   const c = document.createElement("canvas"); c.width = L; c.height = H; const ctx = c.getContext("2d");
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, L, H); ctx.lineJoin = "round";
   if(fond) ctx.drawImage(fond, 0, 0);
@@ -5155,7 +5255,7 @@ async function axPlan(g){
   ctx.beginPath(); ctx.moveTo(nx, ny - 36); ctx.lineTo(nx - 15, ny + 14); ctx.lineTo(nx, ny + 3); ctx.lineTo(nx + 15, ny + 14); ctx.closePath(); ctx.fillStyle = "#222"; ctx.fill();
   ctx.font = "600 24px 'Segoe UI', Arial, sans-serif"; ctx.fillText("N", nx, ny + 38);
   ctx.strokeStyle = "#444"; ctx.lineWidth = 2; ctx.strokeRect(1, 1, L - 2, H - 2);
-  return {b64: c.toDataURL("image/png").split(",")[1], w: L, h: H, fond: Boolean(fond), source: fond ? fond.source : ""};
+  return {b64: c.toDataURL("image/png").split(",")[1], w: L, h: H, fond: Boolean(fond)};
 }
 // Pages d'un PDF rendues en images (état des risques).
 async function axPagesPdf(blob, maxPages){
@@ -5184,20 +5284,22 @@ async function acteAnnexes(annexes, M){
   };
   const cadre = (im, lmax, hmax) => { const k = Math.min(lmax / im.w, hmax / im.h); return [im.w * k, im.h * k]; };
   const aFaire = annexes.filter(x => x.type).length; let fait = 0;
+  const nbPlans = annexes.filter(x => x.type === "plan").length; let rangPlan = 0; axPaint.passerTout = false;
+  try{
   for(const ax of annexes){
     if(!ax.type){ ax.etat = M("pièce à joindre"); continue; }
     fait++; signaler("Annexes de l'acte en préparation : " + fait + " sur " + aFaire + "…");
     await new Promise(ok => setTimeout(ok, 0));   // laisse l'écran afficher l'avancement
     const g = ax.g, Mg = ax.M;
     if(ax.type === "plan"){
-      const im = await axPlan(g);
+      const im = await axPlan(g, ax.lieu + " (plan " + (++rangPlan) + " sur " + nbPlans + ")");
       if(!im){ ax.etat = M("contour cadastral indisponible : extrait de plan à joindre"); continue; }
-      tete(ax); const [l, h] = cadre(im, AX_L_CM, 17);
-      corps.push(axImage(media(im.b64, "png"), ++idImg, l, h));
+      tete(ax); const [l, h] = cadre(im, AX_L_CM, im.source === "paint" ? 19 : 17);
+      corps.push(axImage(media(im.b64, im.ext || "png"), ++idImg, l, h));
       corps.push(axP("Parcelles de l'Immeuble : " + (Mg.communes.length ? Mg.communes.join(" / ") + ", " : "") + blocNumeros(Mg.parcelles) + ".", {avant: 160}));
-      corps.push(axP([{t: im.source === "dgfip" ? "Extrait du plan cadastral de la direction générale des finances publiques (service de consultation du plan cadastral, cadastre.gouv.fr) ; les parcelles de l'Immeuble sont surlignées ; nord en haut, échelle graphique."
-        : im.fond ? "Extrait du plan cadastral publié par l'IGN (Parcellaire Express, établi d'après le plan cadastral de la direction générale des finances publiques), le service du plan cadastral n'ayant pas répondu ; les parcelles de l'Immeuble sont surlignées ; nord en haut, échelle graphique. Il ne remplace pas l'extrait délivré par le service du cadastre."
-        : "Plan établi d'après les contours du plan cadastral (données cadastrales ouvertes), le fond cadastral n'ayant pas pu être obtenu : parcelles de l'Immeuble en couleur, autres parcelles de la Société Absorbée en gris ; nord en haut, échelle graphique. Il ne remplace pas l'extrait délivré par le service du cadastre.", ital: true}], {taille: 16, avant: 80}));
+      corps.push(axP([{t: im.source === "paint" ? "Extrait du plan cadastral délivré par le service de consultation du plan cadastral de la direction générale des finances publiques (cadastre.gouv.fr), à l'échelle 1/" + Number(im.echelle).toLocaleString("fr-FR") + " ; les parcelles de l'Immeuble y sont coloriées" + (im.manuel ? " (coloriage repris à la main)" : "") + "."
+        : im.fond ? "Extrait du plan cadastral publié par l'IGN (Parcellaire Express, établi d'après le plan cadastral de la direction générale des finances publiques), l'extrait du service du cadastre n'ayant pas pu être obtenu ; les parcelles de l'Immeuble sont surlignées ; nord en haut, échelle graphique. Il ne remplace pas l'extrait délivré par le service du cadastre."
+        : "Plan établi d'après les contours du plan cadastral (données cadastrales ouvertes), ni l'extrait du service du cadastre ni le fond cadastral n'ayant pu être obtenus : parcelles de l'Immeuble en couleur, autres parcelles de la Société Absorbée en gris ; nord en haut, échelle graphique. Il ne remplace pas l'extrait délivré par le service du cadastre.", ital: true}], {taille: 16, avant: 80}));
       ax.etat = "jointe ci-après"; jointes++; continue;
     }
     if(ax.type === "erp"){
@@ -5254,6 +5356,7 @@ async function acteAnnexes(annexes, M){
       ax.etat = "jointe ci-après"; jointes++; continue;
     }
   }
+  }finally{ axPaintFermer(); }
   // bordereau : ouvre la partie des annexes
   const bord = [axP([{t: "ANNEXES", gras: true}], {saut: true, centre: true, taille: 32, avant: 0, suivant: true}),
     axP([{t: "Bordereau des annexes", gras: true}], {centre: true, taille: 22, avant: 60, apres: 160, suivant: true}),
