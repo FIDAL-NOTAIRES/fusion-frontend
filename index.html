@@ -1448,7 +1448,7 @@ function fusionnerCoches(){
 }
 
 /* ---------- carte ---------- */
-let carte, coucheParcelles;
+let carte, coucheParcelles, coucheRonds;
 function initCarte(){
   carte = L.map("carte", {zoomControl:true, attributionControl:true});
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -1456,11 +1456,52 @@ function initCarte(){
   }).addTo(carte);
   carte.setView([46.6, 2.5], 6);
   coucheParcelles = L.layerGroup().addTo(carte);
+  coucheRonds = L.layerGroup().addTo(carte);
+  carte.on("zoomend", dessinerRonds);
+}
+
+/* Ronds de repérage, comme dans REDPAR : tant que la carte est trop éloignée
+   pour que les contours se voient, chaque site porte un rond avec son nombre
+   de parcelles ; un clic rapproche la carte sur le site. */
+const RONDS_ZOOM_MAX = 14;   // au-delà, les contours suffisent : plus de rond
+const RONDS_PAS_PX = 46;     // parcelles à moins de cette distance à l'écran : un seul rond
+function dessinerRonds(){
+  if(!coucheRonds || !carte) return;
+  coucheRonds.clearLayers();
+  if(!etat.parcelles.length) return;
+  const z = carte.getZoom();
+  if(z > RONDS_ZOOM_MAX) return;
+  const amas = [];
+  etat.parcelles.forEach(p => {
+    const c = deprojeter(p.centre.x, p.centre.y, etat.lat0);
+    const ll = L.latLng(c[1], c[0]);
+    const px = carte.project(ll, z);
+    let a = null;
+    for(const k of amas){ if(Math.hypot(k.x/k.n - px.x, k.y/k.n - px.y) <= RONDS_PAS_PX){ a = k; break; } }
+    if(!a){ a = {x:0, y:0, n:0, lat:0, lng:0, bornes:L.latLngBounds([]), communes:new Set()}; amas.push(a); }
+    a.x += px.x; a.y += px.y; a.lat += ll.lat; a.lng += ll.lng; a.n++;
+    p.anneaux[0].forEach(pt => { const d = deprojeter(pt[0], pt[1], etat.lat0); a.bornes.extend([d[1], d[0]]); });
+    const com = p.props && (p.props.commune || p.props.nom_commune); if(com) a.communes.add(com);
+  });
+  amas.forEach(a => {
+    const t = a.n > 1 ? 40 : 24;
+    const icone = L.divIcon({
+      className: "rond-site",
+      html: '<div style="background:#1e2952;color:#fbbf24;width:'+t+'px;height:'+t+'px;border-radius:50%;border:'+(a.n > 1 ? '3px solid #fbbf24' : '2px solid #fff')+';display:flex;align-items:center;justify-content:center;font-weight:700;font-size:'+(a.n > 1 ? 13 : 11)+'px;box-shadow:0 2px 6px rgba(0,0,0,.3);cursor:pointer">'+(a.n > 1 ? a.n : "●")+'</div>',
+      iconSize: [t, t], iconAnchor: [t/2, t/2]
+    });
+    const m = L.marker([a.lat/a.n, a.lng/a.n], {icon: icone, keyboard: false});
+    const lieux = [...a.communes].slice(0, 3).join(", ") + (a.communes.size > 3 ? "…" : "");
+    m.bindTooltip((lieux ? lieux + " — " : "") + a.n + (a.n > 1 ? " parcelles" : " parcelle"), {direction: "top", offset: [0, -t/2]});
+    m.on("click", () => { if(a.bornes.isValid()) carte.fitBounds(a.bornes.pad(0.4), {maxZoom: 18}); });
+    coucheRonds.addLayer(m);
+  });
 }
 
 function dessiner(){
   if(!coucheParcelles) return;
   coucheParcelles.clearLayers();
+  if(coucheRonds) coucheRonds.clearLayers();
   if(!etat.parcelles.length) return;
 
   const groupeOuvert = etat.groupes.find(g => g.num === etat.ouvert);
@@ -1536,6 +1577,7 @@ function dessiner(){
     if(b.isValid()) carte.fitBounds(b.pad(1.2), {maxZoom: 18});
     etat.zoomSur = null;
   }
+  dessinerRonds();
 }
 
 function distanceBoites(a, b){
