@@ -264,6 +264,13 @@
   .charge-ligne select{font:inherit;font-size:12.5px;text-transform:none;letter-spacing:0;padding:4px 6px;border:1px solid var(--trait);border-radius:4px;background:#fff;color:var(--nuit);width:100%;min-width:0;max-width:100%}
   .charge-alerte{margin:7px 0 0;padding:5px 8px;border-radius:4px;background:#FFE6C7;color:#7A4300;font-size:12px}
   .charge-note{margin:6px 0 0;font-size:11.5px;color:var(--gris)}
+  /* 21/11/2026 (JFD) : pas de dossier sans notaire en charge NI numéro Kivia — tant que l'un manque, rien d'autre ne s'affiche */
+  .charge-kivia{flex:1 1 150px;min-width:0;display:flex;flex-direction:column;gap:3px;font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:var(--canard)}
+  .charge-kivia input{font:inherit;font-size:12.5px;text-transform:none;letter-spacing:0;padding:4px 6px;border:1px solid var(--trait);border-radius:4px;background:#fff;color:var(--nuit);width:100%;min-width:0}
+  body.fusion-bloque .charge-kivia input:placeholder-shown,body.fusion-bloque #charge-assoc:invalid{border-color:#FF982D}
+  body.fusion-bloque .onglets,body.fusion-bloque #reprise,body.fusion-bloque #concordance,body.fusion-bloque #reglages,
+  body.fusion-bloque .panneau [data-v]:not([data-v="dossier"]),body.fusion-bloque .pied{display:none !important}
+  body.fusion-bloque .carte-zone{visibility:hidden}
   .lien-btn{border:0;background:none;padding:0;font:inherit;color:var(--canard);text-decoration:underline;cursor:pointer}
   .pieces .cat-tete{flex-wrap:wrap}
   .pieces .pieces-btn{margin-left:auto;font-size:11.5px;padding:3px 9px;text-transform:none;letter-spacing:0}
@@ -963,7 +970,7 @@ const etat = {
   piecesOuvert: false,   // onglet « Pièces à réclamer » (12/11/2026) : replié par défaut
   pieces: {},            // état pointé de chaque pièce à réclamer : {id: {etat, le}} — absente = à réclamer
   piecesOpt: {},         // {travaux: true} quand le client signale des travaux de moins de dix ans
-  charge: null,          // {associe, collaborateur} : notaire en charge du dossier, choisis dans CARNET
+  charge: null,          // {associe, collaborateur, kivia} : notaire en charge (CARNET) et numéro de dossier Kivia (21/11/2026)
   risques: {parGroupe: {}}, // état des risques levé par groupe (12/11/2026) : {statut, travail, le, erps, drive, icpe}
   concordance: [],       // mouvements de périmètre après numérotation (fusion, détachement) — table de concordance persistée avec le dossier
   histo: histoVide(),    // appui HISTO du dossier en cours (09/10/2026) : résultats de l'appel, décisions et rattachements
@@ -4712,7 +4719,7 @@ function destinataireCollab(){
 }
 function rendreCharge(){
   const z = document.getElementById("charge"); if(!z) return;
-  if(!etat.dossier){ z.hidden = true; z.innerHTML = ""; return; }
+  if(!etat.dossier){ z.hidden = true; z.innerHTML = ""; bloquerSansCharge(false); return; }
   z.hidden = false;
   if(carnet.statut === "non" && driveConnecte()) carnetCharger();
   const ch = etat.charge || {};
@@ -4732,9 +4739,11 @@ function rendreCharge(){
   const opt = (liste, courant, vide) => '<option value="">' + vide + '</option>' + liste.map(o => '<option value="' + echap(o.v) + '"' + (meme(courant, o) ? " selected" : "") + '>' + echap(o.t) + '</option>').join("")
     + (courant && !liste.some(o => meme(courant, o)) ? '<option value="_garde" selected>' + echap(chargeLibelle(courant)) + '</option>' : "");
   const dest = destinataireCollab();
+  const manque = [c2.associe ? null : "l'associé en charge", c2.kivia ? null : "le numéro de dossier Kivia"].filter(Boolean);
   z.innerHTML = '<div class="charge-ligne"><label>Associé en charge<select id="charge-assoc">' + opt(assoc, c2.associe, "— à désigner —") + '</select></label>'
-    + '<label>Collaborateur<select id="charge-collab"' + (depuisCarnet ? "" : " disabled") + '>' + opt(collab, c2.collaborateur, "— aucun —") + '</select></label></div>'
-    + (c2.associe ? "" : '<p class="charge-alerte">L\'associé en charge est requis : c\'est lui que désigne la réserve « validation par le notaire associé ».</p>')
+    + '<label>Collaborateur<select id="charge-collab"' + (depuisCarnet ? "" : " disabled") + '>' + opt(collab, c2.collaborateur, "— aucun —") + '</select></label>'
+    + '<label class="charge-kivia">N° de dossier Kivia<input type="text" id="charge-kivia" maxlength="40" autocomplete="off" placeholder="à renseigner" value="' + echap(c2.kivia || "") + '"></label></div>'
+    + (manque.length ? '<p class="charge-alerte">Renseignez ' + manque.join(" et ") + ' : le dossier ne s\'affiche pas tant que ' + (manque.length > 1 ? "ces deux informations manquent" : "cette information manque") + '.</p>' : "")
     + '<p class="charge-note">Demandes de pièces adressées à ' + echap(dest.libelle) + ' — ' + echap(dest.courriel)
     + (carnet.statut === "charge" ? "" : carnet.statut === "en-cours" ? " · lecture de CARNET…" : carnet.statut === "echec" ? ' · CARNET indisponible (' + echap(carnet.erreur) + ') <button class="lien-btn" id="charge-reessai" type="button">Réessayer</button>' : " · connectez le Drive pour lire l'annuaire CARNET") + '</p>';
   const choisir = (role, liste, v) => {
@@ -4747,7 +4756,28 @@ function rendreCharge(){
   };
   z.querySelector("#charge-assoc").addEventListener("change", e => choisir("associe", assoc, e.target.value));
   z.querySelector("#charge-collab").addEventListener("change", e => choisir("collaborateur", collab, e.target.value));
+  const kv = z.querySelector("#charge-kivia");
+  const poserKivia = () => {
+    const v = kv.value.trim().replace(/\s+/g, " ").slice(0, 40);
+    if(v === ((etat.charge || {}).kivia || "")) return;
+    etat.charge = Object.assign({}, etat.charge || {}, {kivia: v || null});
+    marquerModifie("charge", {kivia: v || null});
+    rendre();
+  };
+  kv.addEventListener("change", poserKivia);
+  kv.addEventListener("keydown", e => { if(e.key === "Enter"){ e.preventDefault(); poserKivia(); } });
+  bloquerSansCharge(manque.length > 0);
   const re = z.querySelector("#charge-reessai"); if(re) re.addEventListener("click", () => carnetCharger(true));
+}
+
+// 21/11/2026 (JFD, option A) : dès le chargement de la société, RIEN ne s'affiche (rubriques, groupes, carte)
+// tant que l'associé en charge et le numéro de dossier Kivia ne sont pas renseignés ; vaut aussi à la
+// réouverture d'un dossier ancien qui ne les a pas. Seule la rubrique Dossier reste visible.
+function bloquerSansCharge(bloque){
+  const avant = document.body.classList.contains("fusion-bloque");
+  document.body.classList.toggle("fusion-bloque", Boolean(bloque));
+  if(bloque) ongletPoser("dossier");
+  else if(avant && etat.parcelles.length) ongletPoser("groupes");   // le dossier se découvre dès que les deux informations sont posées
 }
 
 /* ---------- pièces à réclamer ---------- */
@@ -6018,7 +6048,7 @@ function ongletPoser(nom){
 function ongletsMaj(){
   const charge = etat.parcelles.length > 0, soc = etat.dossier ? (etat.dossier.denomination || etat.dossier.siren || "") : "";
   const cle = (etat.dossier && etat.dossier.siren || "") + "|" + charge;
-  if(cle !== ongletsMaj.cle){ ongletsMaj.cle = cle; arbreEtat.clear(); if(!instruction.enCours) instruction.texte = ""; ongletPoser(charge ? "groupes" : "dossier"); }
+  if(cle !== ongletsMaj.cle){ ongletsMaj.cle = cle; arbreEtat.clear(); if(!instruction.enCours) instruction.texte = ""; ongletPoser(charge && !document.body.classList.contains("fusion-bloque") ? "groupes" : "dossier"); }
   const t = document.getElementById("p-tete");
   if(t) t.innerHTML = charge ? echap(soc || "Jeu local") + (etat.dossier && etat.dossier.siren && soc !== etat.dossier.siren ? '<small>SIREN ' + echap(etat.dossier.siren) + '</small>' : '') : "Aucun dossier ouvert";
   // liste des dossiers de la base : le dossier ouvert n'y figure pas, les autres sont annoncés comme tels
