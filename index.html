@@ -273,7 +273,23 @@
   .cpt-na{display:inline-block;margin-left:8px;font-size:11.5px;color:#8A93A0;font-style:italic}
   .cpt-past{display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 3px 0 0;vertical-align:baseline}
   .p-tete .cpt{display:flex;margin:5px 0 0;white-space:normal;font-family:"Segoe UI",system-ui,sans-serif}
-  .sorties .cpt-bloc{flex-basis:100%;display:flex;align-items:center;gap:10px;margin:0 0 6px}
+  .sorties .cpt-bloc{flex-basis:100%;display:flex;align-items:center;gap:10px;margin:0 0 6px;cursor:pointer}
+  .cpt-listes{flex-basis:100%;margin:0 0 10px;padding:8px 10px;border:1px solid var(--trait);border-radius:6px;background:#fff;color:var(--nuit);font-size:12.5px}
+  .cpt-listes h5{margin:8px 0 5px;font-size:12px;letter-spacing:.4px;text-transform:uppercase;color:var(--canard)}
+  .cpt-listes h5:first-child{margin-top:0}
+  .cpt-listes .n{margin-left:6px;font-weight:600;color:var(--gris);text-transform:none;letter-spacing:0}
+  .cpt-listes ul{list-style:none;margin:0 0 6px;padding:0}
+  .cpt-listes li{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;padding:3px 0;border-top:1px dotted var(--trait)}
+  .cpt-listes li .lib{flex:1 1 200px;min-width:0}
+  .cpt-listes li small{display:block;color:var(--gris);font-size:11.5px}
+  .cpt-piece{margin:0 0 8px}
+  .cpt-piece-t{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;padding:3px 0}
+  .cpt-piece-t b{flex:1 1 200px;min-width:0;font-weight:600}
+  .cpt-etat{font-size:11.5px;color:var(--canard)}
+  .cpt-vide{margin:0 0 6px;color:var(--gris);font-style:italic}
+  .cpt-motif{flex-basis:100%;display:flex;gap:6px;align-items:center}
+  .cpt-motif input{flex:1;min-width:0;font:inherit;font-size:12.5px;padding:3px 6px;border:1px solid var(--trait);border-radius:4px}
+  .cpt-motif input.manque{border-color:#FF982D}
   /* 21/11/2026 (JFD) : pas de dossier sans notaire en charge NI numéro Kivia — tant que l'un manque, rien d'autre ne s'affiche */
   .charge-kivia{flex:1 1 150px;min-width:0;display:flex;flex-direction:column;gap:3px;font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:var(--canard)}
   .charge-kivia input{font:inherit;font-size:12.5px;text-transform:none;letter-spacing:0;padding:4px 6px;border:1px solid var(--trait);border-radius:4px;background:#fff;color:var(--nuit);width:100%;min-width:0}
@@ -980,6 +996,7 @@ const etat = {
   piecesOuvert: false,   // onglet « Pièces à réclamer » (12/11/2026) : replié par défaut
   pieces: {},            // état pointé de chaque pièce à réclamer : {id: {etat, le}} — absente = à réclamer
   piecesOpt: {},         // {travaux: true} quand le client signale des travaux de moins de dix ans
+  compteur: {main: {}, levees: {}}, // compteur de justificatifs (lot 3, 21/11/2026) : informations validées à la main et divergences levées, {id: {motif, par, le}}
   charge: null,          // {associe, collaborateur, kivia} : notaire en charge (CARNET) et numéro de dossier Kivia (21/11/2026)
   risques: {parGroupe: {}}, // état des risques levé par groupe (12/11/2026) : {statut, travail, le, erps, drive, icpe}
   concordance: [],       // mouvements de périmètre après numérotation (fusion, détachement) — table de concordance persistée avec le dossier
@@ -4266,31 +4283,51 @@ const CPT_COUL = {canard: "#33838B", orange: "#FF982D", carmin: "#A01040", gris:
 const compteurMemo = new Map();
 function compteurGroupe(g){
   if(compteurMemo.has(g.num)) return compteurMemo.get(g.num);
-  const M = matiereRendu(g), infos = [];
-  const poser = (type, libelle, etatInfo) => infos.push({type, libelle, etat: etatInfo});
+  const M = matiereRendu(g), infos = [], base = cleGroupe(g);
+  // id STABLE de l'information (clé du groupe + nature + objet) ; `piece` : la pièce attendue (id d'une ligne des pièces à réclamer
+  // quand elle existe) ; `action` : le geste à faire à l'écran quand aucune pièce ne manque
+  const poser = (type, cle, libelle, etatInfo, suite) => infos.push(Object.assign({id: base + "|" + type + "|" + cle, type, libelle, etat: etatInfo}, suite || {}));
   const nonAnalyse = !M.dernierEhf;
   if(!nonAnalyse){
+    const nomActe = (m) => { const n = blocV(m.natures) || "acte", d = blocV(m.dateActe); return n.charAt(0).toUpperCase() + n.slice(1).toLowerCase() + (d ? " du " + d : ""); };
+    const cleM = (m) => (blocV(m.volume) && blocV(m.numero) ? blocV(m.volume) + "/" + blocV(m.numero) : blocV(m.dateActe) + "|" + blocV(m.natures)).replace(/\s+/g, " ");
+    const titreDe = new Map();   // parcelle → pièce « titre de propriété » attendue (même identifiant que la ligne des pièces à réclamer)
+    M.parActe.forEach((x, k) => x.parcelles.forEach(p => titreDe.set(filCleCourte(p), {piece: base + "|titre|" + k.replace(/\s+/g, " "), pieceLib: "Titre de propriété — " + nomActe(x.mention)})));
     const citees = new Set(); M.mentions.forEach(m => (m.immeubles || []).forEach(i => { if(i.section && i.numero) citees.add(filCleCourte(i)); }));
     M.parcelles.forEach(p => {
       const cle = filCleCourte(p), nom = (p.section || "") + " " + (p.numero || "");
-      poser("reference", "Référence cadastrale " + nom, citees.has(cle) ? "justifie" : "sans");
-      poser("contenance", "Contenance " + nom, "sans");
+      const titre = titreDe.get(cle) || {piece: base + "|sans-titre", pieceLib: "Titre de propriété (aucune mutation lue à l'état hypothécaire)"};
+      poser("reference", cle, "Référence cadastrale " + nom, citees.has(cle) ? "justifie" : "sans", {pieceLib: "État hypothécaire citant la parcelle"});
+      poser("contenance", cle, "Contenance " + nom, "sans", titre);
       const x = M.parParcelle.get(cle);
-      poser("origine", "Effet relatif et origine " + nom, x && x.derniere ? (x.derniere.valide ? "justifie" : "incomplet") : "sans");
+      poser("origine", cle, "Effet relatif et origine " + nom, x && x.derniere ? (x.derniere.valide ? "justifie" : "incomplet") : "sans",
+        x && x.derniere ? {action: "Mention à valider à l'écran de contrôle de l'état hypothécaire"} : titre);
     });
-    M.inscriptions.forEach(m => poser("inscription", "Inscription " + (blocV(m.natures) || "") + (blocV(m.dateActe) ? " du " + blocV(m.dateActe) : ""), m.valide ? "justifie" : "incomplet"));
-    M.servitudes.forEach(m => poser("servitude", "Servitude " + (blocV(m.natures) || "") + (blocV(m.dateActe) ? " du " + blocV(m.dateActe) : ""), m.valide && m.fonds ? "justifie" : "incomplet"));
-    divergencesParcelles().filter(x => x.groupe === g.num).forEach(x => poser("reference", "Référence " + x.ref + " citée par l'état hypothécaire, absente du cadastre", "divergence"));
+    M.inscriptions.forEach(m => poser("inscription", cleM(m), "Inscription — " + nomActe(m), m.valide ? "justifie" : "incomplet", {action: "Mention à valider à l'écran de contrôle de l'état hypothécaire"}));
+    M.servitudes.forEach(m => poser("servitude", cleM(m), "Servitude — " + nomActe(m), m.valide && m.fonds ? "justifie" : "incomplet",
+      {action: m.valide ? "Fonds dominant ou servant à qualifier" : "Mention à valider à l'écran de contrôle de l'état hypothécaire"}));
+    divergencesParcelles().filter(x => x.groupe === g.num).forEach(x => poser("reference", "div:" + x.id, "Référence " + x.ref + " citée par l'état hypothécaire, absente du cadastre", "divergence",
+      {source: "cadastre : référence absente", pieceDit: "état hypothécaire : référence citée", action: "À trancher dans les points à trancher (divergences de parcelles)"}));
     const lib = (a, n) => "Filiation " + filLibelle(a) + " > " + filLibelle(n);
+    const filDiv = {action: "À trancher dans l'écran Appui HISTO"};
     if(histoPret(g)){
       const c = histoCroisement(g);
-      c.concordants.forEach(x => poser("filiation", lib(x.ancien, x.maillon.parcelle), x.pieces.every(y => y.statut === "manuel") ? "main" : "justifie"));
-      c.histoSeuls.forEach(x => poser("filiation", lib(x.ancien, x.maillon.parcelle), x.decision === "retenu" ? "main" : x.decision ? "sans" : "divergence"));
-      c.piecesSeules.forEach(x => poser("filiation", lib(x.maillon.ancien, x.maillon.nouveau), x.decision ? "main" : "divergence"));
+      c.concordants.forEach(x => poser("filiation", x.cle, lib(x.ancien, x.maillon.parcelle), x.pieces.every(y => y.statut === "manuel") ? "main" : "justifie"));
+      c.histoSeuls.forEach(x => poser("filiation", x.cle, lib(x.ancien, x.maillon.parcelle), x.decision === "retenu" ? "main" : x.decision ? "sans" : "divergence",
+        x.decision ? {pieceLib: "Pièce établissant le mouvement cadastral"} : Object.assign({source: "cadastre (HISTO) : mouvement relevé", pieceDit: "pièces : mouvement non retrouvé"}, filDiv)));
+      c.piecesSeules.forEach(x => poser("filiation", x.cle, lib(x.maillon.ancien, x.maillon.nouveau), x.decision ? "main" : "divergence",
+        Object.assign({source: "cadastre (HISTO) : mouvement non relevé", pieceDit: "pièces : mouvement relevé"}, filDiv)));
     }else{
       (etat.filiation.maillons || []).filter(x => x.groupe === g.num && x.moteur !== "histo" && (x.statut === "valide" || x.statut === "manuel"))
-        .forEach(x => poser("filiation", lib(x.ancien, x.nouveau), x.statut === "manuel" ? "main" : "justifie"));
+        .forEach(x => poser("filiation", histoCle(x.ancien, x.nouveau), lib(x.ancien, x.nouveau), x.statut === "manuel" ? "main" : "justifie"));
     }
+    // gestes humains (lot 3) : une information sans pièce ou incomplète VALIDÉE À LA MAIN, une divergence LEVÉE, comptent comme
+    // justifiées et restent signalées à part ; le motif, l'auteur et la date sont gardés avec le dossier et portés au journal.
+    const K = etat.compteur || {main: {}, levees: {}};
+    infos.forEach(i => {
+      if((i.etat === "sans" || i.etat === "incomplet") && K.main[i.id]){ i.origine = i.etat; i.etat = "main"; i.geste = K.main[i.id]; }
+      else if(i.etat === "divergence" && K.levees[i.id]){ i.origine = "divergence"; i.etat = "main"; i.geste = K.levees[i.id]; }
+    });
   }
   const n = (e) => infos.filter(i => i.etat === e).length;
   const r = {groupe: g.num, nonAnalyse, infos, total: infos.length, justifie: n("justifie"), main: n("main"), sans: n("sans"),
@@ -4338,6 +4375,95 @@ function compteurHtml(c, taille, prefixe){
     : '<b>tout est justifié</b>');
   if(c.main) t += ' · ' + pl(c.main, "validée à la main", "validées à la main");
   return '<span class="cpt">' + camembertSvg(c, taille) + '<span class="cpt-t">' + t + '</span></span>';
+}
+/* ---------- LES DEUX LISTES (lot 3, 21/11/2026) ----------
+   Arbitrages du 20/11 : un clic sur le compteur ouvre DEUX listes séparées — les informations SANS PIÈCE (regroupées par pièce
+   manquante, les pièces qui débloquent le plus d'informations en tête) et les SOURCES DIVERGENTES (les graves d'abord). On n'écrit
+   jamais le nom d'une couleur : une pastille. Une information sans pièce se valide à la main (collaborateur, motif court obligatoire,
+   journal) ; une divergence ordinaire se lève de même ; une divergence grave ne se lève que par le notaire en charge ou l'administrateur. */
+// Qui fait le geste : le courriel du compte Google connecté au Drive (lu une fois, gardé pour la séance).
+async function driveCourriel(){
+  if(etat.drive && etat.drive.courriel) return etat.drive.courriel;
+  try{
+    if(!etat.drive || !etat.drive.token) return null;
+    const r = await fetch("https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)", {headers: {Authorization: "Bearer " + etat.drive.token}});
+    const u = r.ok ? ((await r.json()).user || {}) : {};
+    if(u.emailAddress) etat.drive.courriel = String(u.emailAddress).toLowerCase();
+  }catch(e){ /* sans réseau : le geste reste possible, l'auteur est simplement inconnu */ }
+  return (etat.drive && etat.drive.courriel) || null;
+}
+async function compteurGeste(liste, info, motif){
+  await driveCourriel();
+  etat.compteur = etat.compteur || {main: {}, levees: {}};
+  etat.compteur[liste][info.id] = {motif, par: (etat.drive && etat.drive.courriel) || null, le: new Date().toISOString(), libelle: info.libelle};
+  marquerModifie(liste === "main" ? "compteur-validation-main" : "compteur-divergence-levee", {information: info.libelle, motif});
+  rendre();
+}
+function compteurAnnuler(info){
+  const K = etat.compteur || {}; let quoi = null;
+  if(K.main && K.main[info.id]){ delete K.main[info.id]; quoi = "compteur-validation-main-annulee"; }
+  else if(K.levees && K.levees[info.id]){ delete K.levees[info.id]; quoi = "compteur-divergence-levee-annulee"; }
+  if(quoi){ marquerModifie(quoi, {information: info.libelle}); rendre(); }
+}
+function rendreCompteurListes(g){
+  const c = compteurGroupe(g), z = document.createElement("div"); z.className = "cpt-listes";
+  if(c.nonAnalyse){ z.innerHTML = '<p class="cpt-vide">Groupe non analysé : aucun état hypothécaire lu.</p>'; return z; }
+  const jour = (iso) => iso ? new Date(iso).toLocaleDateString("fr-FR") : "";
+  const P = piecesAReclamer().lignes, parId = new Map(P.map(l => [l.id, l]));
+  // ---- liste 1 : sans pièce, regroupée par pièce attendue (ou par geste à faire)
+  const sans = c.infos.filter(i => i.etat === "sans" || i.etat === "incomplet"), blocs = new Map();
+  sans.forEach(i => { const k = i.piece || i.pieceLib || i.action || "Autre"; if(!blocs.has(k)) blocs.set(k, {titre: i.pieceLib || i.action || "Autre", piece: i.piece || null, estPiece: Boolean(i.pieceLib), infos: []}); blocs.get(k).infos.push(i); });
+  const tri = [...blocs.values()].sort((a, b) => b.infos.length - a.infos.length || a.titre.localeCompare(b.titre, "fr"));
+  let h = '<h5>Informations sans pièce <span class="n">' + sans.length + '</span></h5>';
+  if(!sans.length) h += '<p class="cpt-vide">Aucune.</p>';
+  tri.forEach((b, kb) => {
+    const l = b.piece && parId.get(b.piece), dem = l && l.etat === "demandee", recue = l && l.etat === "recue";
+    h += '<div class="cpt-piece"><div class="cpt-piece-t"><b>' + echap(b.titre) + '</b><span class="n">' + b.infos.length + ' information' + (b.infos.length > 1 ? "s" : "") + '</span>'
+      + (dem ? '<span class="cpt-etat">réclamée' + (l.le ? " le " + jour(l.le) : "") + ", " + PIECES_DEST_NOM[pieceDest(l)] + '</span>' : recue ? '<span class="cpt-etat">reçue — lecture à venir</span>' : "")
+      + (l ? '<button class="btn" type="button" data-pieces="1" title="Ouvrir la rubrique Pièces, où cette pièce se réclame">' + (dem || recue ? "Voir la pièce" : "Réclamer") + '</button>' : "") + '</div><ul>'
+      + b.infos.map((i, ki) => '<li data-b="' + kb + '" data-i="' + ki + '"><span class="lib">' + echap(i.libelle) + '</span><button class="lien-btn" type="button" data-main="1">Valider à la main</button></li>').join("") + '</ul></div>';
+  });
+  // ---- liste 2 : sources divergentes, les graves en tête
+  const div = c.infos.filter(i => i.etat === "grave").concat(c.infos.filter(i => i.etat === "divergence"));
+  h += '<h5>Sources divergentes <span class="n">' + div.length + '</span></h5>';
+  if(!div.length) h += '<p class="cpt-vide">Aucune.</p>';
+  else h += '<ul class="cpt-div">' + div.map((i, k) => '<li data-d="' + k + '">' + cptPast(i.etat === "grave" ? "carmin" : "orange") + '<span class="lib">' + echap(i.libelle)
+      + (i.source || i.pieceDit ? '<small>' + echap([i.source, i.pieceDit].filter(Boolean).join(" · ")) + '</small>' : "") + (i.action ? '<small>' + echap(i.action) + '</small>' : "") + '</span>'
+      + '<button class="lien-btn" type="button" data-lever="1">Lever</button></li>').join("") + '</ul>';
+  // ---- rappel : ce qui a été validé ou levé à la main
+  const mains = c.infos.filter(i => i.geste);
+  if(mains.length) h += '<h5>Validées ou levées à la main <span class="n">' + mains.length + '</span></h5><ul class="cpt-mains">' + mains.map((i, k) => '<li data-m="' + k + '"><span class="lib">' + echap(i.libelle)
+      + '<small>' + (i.origine === "divergence" ? "divergence levée" : "validée à la main") + (i.geste.le ? " le " + jour(i.geste.le) : "") + (i.geste.par ? " par " + echap(i.geste.par) : "") + " — " + echap(i.geste.motif || "") + '</small></span>'
+      + '<button class="lien-btn" type="button" data-annuler="1">Annuler</button></li>').join("") + '</ul>';
+  z.innerHTML = h;
+  // motif court OBLIGATOIRE, saisi sur la ligne (pas de fenêtre du navigateur)
+  const demanderMotif = (li, libelle, suite) => {
+    if(li.querySelector(".cpt-motif")) return;
+    const f = document.createElement("span"); f.className = "cpt-motif";
+    f.innerHTML = '<input type="text" maxlength="160" placeholder="Motif (une ligne, obligatoire)"><button class="btn plein" type="button">' + libelle + '</button><button class="btn" type="button" data-non="1">Annuler</button>';
+    li.appendChild(f); const inp = f.querySelector("input"); inp.focus();
+    const ok = () => { const m = inp.value.trim(); if(!m){ inp.classList.add("manque"); inp.focus(); return; } suite(m); };
+    f.querySelector("button.plein").addEventListener("click", ok);
+    inp.addEventListener("keydown", e => { if(e.key === "Enter") ok(); if(e.key === "Escape") f.remove(); });
+    f.querySelector("[data-non]").addEventListener("click", () => f.remove());
+  };
+  z.addEventListener("click", e => {
+    const b = e.target.closest("button"); if(!b) return; const li = b.closest("li");
+    if(b.dataset.pieces){ etat.piecesOuvert = true; ongletPoser("pieces"); rendre(); return; }
+    if(b.dataset.main && li){ const i = tri[+li.dataset.b].infos[+li.dataset.i]; demanderMotif(li, "Valider", m => compteurGeste("main", i, m)); return; }
+    if(b.dataset.lever && li){ const i = div[+li.dataset.d];
+      if(i.etat === "grave"){ driveCourriel().then(() => { if(!compteurPeutLeverGrave()){ signaler("Une divergence grave ne peut être levée que par le notaire en charge du dossier ou l'administrateur.", true); return; } demanderMotif(li, "Lever", m => compteurGeste("levees", i, m)); }); return; }
+      demanderMotif(li, "Lever", m => compteurGeste("levees", i, m)); return; }
+    if(b.dataset.annuler && li){ compteurAnnuler(mains[+li.dataset.m]); }
+  });
+  return z;
+}
+// Divergence grave : levée réservée au notaire en charge du dossier ou à l'administrateur (20/11). Reconnu à son courriel de connexion.
+const COMPTEUR_ADMIN = ["jean-francois.dumetz@fidal.notaires.fr"];
+function compteurPeutLeverGrave(){
+  const moi = String((etat.drive && etat.drive.courriel) || "").toLowerCase(); if(!moi) return false;
+  const a = etat.charge && etat.charge.associe, p = a && typeof personneCarnet === "function" ? personneCarnet(a) : null;
+  return COMPTEUR_ADMIN.includes(moi) || String((a && a.courriel) || (p && p.courriel) || "").toLowerCase() === moi;
 }
 // Sur la ligne d'un groupe : le seul pourcentage, coloré (carmin dès une divergence grave, orange s'il manque quelque chose, canard si tout est justifié).
 function compteurLigneHtml(g){
@@ -4782,10 +4908,17 @@ function rendreSorties(g){
   const c = couleurGroupe(g);
   const sp = spfSourceDuGroupe(g), lu = sp && sp.source === "lu";
   const LIB_SRC = {lu: "lu dans l\u2019état hypothécaire", manuel: "attribué à la main", appris: "automatique — appris d\u2019un état validé de la même commune", annuaire: "automatique — annuaire des services"};
-  z.innerHTML = (etat.dossier ? '<div class="cpt-bloc">' + compteurHtml(compteurGroupe(g), 46) + '</div>' : '') + '<span class="lib">SPF : ' + (sp ? '<b>' + echap(sp.valeur) + '</b> <em>(' + LIB_SRC[sp.source] + ')</em>' : '<em>non encore lu</em>') + '</span>'
+  const cptOuvert = etat.dossier && etat.cptOuvert === g.num && !compteurGroupe(g).nonAnalyse;
+  z.innerHTML = (etat.dossier ? '<div class="cpt-bloc" data-cpt="1" title="Ouvrir le détail des justificatifs">' + compteurHtml(compteurGroupe(g), 46)
+      + (compteurGroupe(g).nonAnalyse ? '' : '<button class="btn" type="button" data-cpt-b="1">' + (cptOuvert ? "Fermer le détail" : "Détail") + '</button>') + '</div>' : '') + '<span class="lib">SPF : ' + (sp ? '<b>' + echap(sp.valeur) + '</b> <em>(' + LIB_SRC[sp.source] + ')</em>' : '<em>non encore lu</em>') + '</span>'
     + (lu ? '' : '<button class="btn" type="button" data-spf="1">' + (sp ? 'Modifier' : 'Attribuer') + '</button>')
     + '<span style="flex-basis:100%;height:0"></span><span class="lib">Fiche du groupe' + (c ? ' — <b style="color:' + COULEURS[c].hex + '">' + COULEURS[c].nom + '</b>' : '') + '</span>'
     + '<button class="btn" type="button" data-f="docx">Word</button><button class="btn" type="button" data-f="pdf">PDF</button>';
+  const zc = z.querySelector("[data-cpt]");
+  if(zc && !compteurGroupe(g).nonAnalyse){
+    zc.addEventListener("click", () => { etat.cptOuvert = cptOuvert ? null : g.num; rendre(); });
+    if(cptOuvert) zc.after(rendreCompteurListes(g));
+  }
   const bSpf = z.querySelector("[data-spf]");
   if(bSpf) bSpf.addEventListener("click", () => attribuerSpf([g], "le groupe " + numeroGroupe4(g.num)));
   z.querySelectorAll("button[data-f]").forEach(b => b.addEventListener("click", async () => { b.disabled = true; try{ await sortirGroupe(g, b.dataset.f); }catch(e){ signaler(e.message, true); } finally{ b.disabled = false; } }));
@@ -6428,7 +6561,7 @@ function traiterTexte(texte){
     chargerGeoJSON(objet);
     dessiner.cadre = false;
     etat.dossier = null; etat.persist.actif = false; etat.ignores = new Set(); etat.filiation = {maillons: []}; etat.concordance = []; etat.histo = histoVide();
-    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false; etat.spfParIdu = {}; etat.pieces = {}; etat.piecesOpt = {}; etat.charge = null; etat.risques = {parGroupe: {}};
+    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false; etat.spfParIdu = {}; etat.pieces = {}; etat.piecesOpt = {}; etat.charge = null; etat.compteur = {main: {}, levees: {}}; etat.risques = {parGroupe: {}};
     afficherPersist("Jeu local — non enregistré");
     regrouperAutomatiquement();
     rendre();
@@ -6482,6 +6615,7 @@ function etatPersistable(){
     pieces: etat.pieces || {},
     pieces_options: etat.piecesOpt || {},
     charge: etat.charge || null,
+    compteur: etat.compteur || {main: {}, levees: {}},
     risques: {parGroupe: (etat.risques && etat.risques.parGroupe) || {}},
     numerotation_definitive: etat.numerotationFaite ? (etat.numerotationDate || new Date().toISOString()) : null
   };
@@ -6582,6 +6716,7 @@ function ouvrirDepuisBase(d){
   etat.pieces = (e.pieces && typeof e.pieces === "object") ? e.pieces : {};
   etat.piecesOpt = (e.pieces_options && typeof e.pieces_options === "object") ? e.pieces_options : {};
   etat.charge = (e.charge && typeof e.charge === "object") ? e.charge : null;
+  etat.compteur = {main: (e.compteur && e.compteur.main) || {}, levees: (e.compteur && e.compteur.levees) || {}};
   etat.risques = {parGroupe: (e.risques && e.risques.parGroupe && typeof e.risques.parGroupe === "object") ? e.risques.parGroupe : {}};
   if(e.seuils){
     if(e.seuils.rapprochement_m != null){ document.getElementById("rapproch").value = e.seuils.rapprochement_m; document.getElementById("rapproch-val").textContent = e.seuils.rapprochement_m + " m"; }
@@ -6816,7 +6951,7 @@ async function chercherParcelles(siren, libelle, forcer){
     etat.ouvert = null;                 // vue d'ensemble d'abord : les groupes repliés
     etat.sansGeometrie = sansGeometrie;
     etat.dossier = {siren, denomination: (d1.societe && d1.societe.denomination) || libelle || null, millesime: d1.millesime || null};
-    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false; etat.numerotationDate = null; etat.spfParIdu = {}; etat.pieces = {}; etat.piecesOpt = {}; etat.charge = null; etat.risques = {parGroupe: {}};
+    etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false; etat.numerotationDate = null; etat.spfParIdu = {}; etat.pieces = {}; etat.piecesOpt = {}; etat.charge = null; etat.compteur = {main: {}, levees: {}}; etat.risques = {parGroupe: {}};
     etat.groupes.forEach(g => { g.drive = {}; });
     rendre();
     fermer();
