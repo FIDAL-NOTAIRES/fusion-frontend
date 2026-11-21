@@ -290,6 +290,11 @@
   .cpt-motif{flex-basis:100%;display:flex;gap:6px;align-items:center}
   .cpt-motif input{flex:1;min-width:0;font:inherit;font-size:12.5px;padding:3px 6px;border:1px solid var(--trait);border-radius:4px}
   .cpt-motif input.manque{border-color:#FF982D}
+  .pieces-relances{margin:6px 14px 8px;padding:7px 10px;border:1px solid #FF982D;border-radius:6px;background:#FFF8EF;font-size:12.5px}
+  .pieces-relance{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:5px}
+  .pieces-relance span{flex:1 1 120px}
+  .chrono{margin:0 0 8px;font-size:12.5px;color:var(--gris)}
+  .chrono b{color:var(--nuit)}
   .cpt-accords{margin:8px 14px;padding:8px 10px;border:1px solid #FF982D;border-radius:6px;background:#FFF8EF;font-size:12.5px;color:var(--nuit)}
   .cpt-accords-t{font-weight:700;margin:0 0 4px}
   .cpt-accords .n{margin-left:6px;font-weight:600;color:var(--gris)}
@@ -771,9 +776,13 @@
 
       <div class="volet docs" data-v="documents">
         <h4 class="famille">Acte</h4>
+        <p class="chrono" id="chrono" hidden></p>
         <div class="doc-ligne"><button class="btn plein" id="btn-acte" disabled title="Dépôt de pièces consécutif à une fusion, en Word, daté « version au … » ; ce qui manque est surligné en jaune dans l'acte">Acte de fusion (Word)</button><span>Dépôt de pièces consécutif à la fusion, annexes à la suite. Ce qui manque est surligné en jaune.</span></div>
         <div class="doc-ligne envoi"><button class="btn plein" id="btn-acte-envoi" disabled title="Produit l'acte et le joint à un brouillon Outlook signé de l'associé en charge — à relire puis envoyer">Envoyer le projet d'acte</button><span><select id="acte-envoi-dest" aria-label="Destinataire du projet d'acte"><option value="client">au client</option><option value="avocat">à l'avocat</option><option value="libre">à un autre destinataire</option></select><em id="acte-envoi-rappel"></em></span></div>
-        <h4 class="famille">Fiches des groupes</h4>
+        <h4 class="famille">Rapports clients</h4>
+        <div class="doc-ligne"><button class="btn" id="btn-compil-client-docx" disabled title="Un seul document réunissant les rapports clients des groupes dont la sortie est permise (seuil atteint et accord donné, ou blocage levé) — les autres groupes n'y figurent pas">Compiler les rapports clients (Word)</button></div>
+        <div class="doc-ligne"><button class="btn" id="btn-compil-client-pdf" disabled title="La même compilation, en PDF">Compiler les rapports clients (PDF)</button></div>
+        <h4 class="famille">Fiches internes des groupes</h4>
         <div class="doc-ligne"><button class="btn" id="btn-compil-docx" disabled title="Compilation de toutes les fiches de groupe, sommaire cliquable en tête — Word, à coller dans l'acte">Compiler (Word)</button><span>Toutes les fiches de groupe, sommaire en tête.</span></div>
         <div class="doc-ligne"><button class="btn" id="btn-compil-pdf" disabled title="Même compilation en PDF, mentions colorées conservées — trace datée du dossier">Compiler (PDF)</button><span>La même compilation, mentions colorées conservées.</span></div>
         <div class="doc-ligne"><button class="btn" id="btn-annexe" disabled title="Recueil unique des servitudes et charges de tous les groupes, texte intégral en annexe">Annexe servitudes</button><span>Recueil des servitudes et charges de tous les groupes.</span></div>
@@ -4758,6 +4767,26 @@ function ouvrirImpression(html, nom){
 }
 
 // Sorties : fiche d'un groupe, compilation de tous les groupes, annexe des servitudes.
+/* ---------- CHRONOMÈTRE (lot 5, 21/11/2026 ; validé par JFD le 16/11 : « ça m'a pris X minutes ») ----------
+   Temps écoulé entre l'ouverture du dossier dans FUSION et la production de l'acte (ou maintenant, tant qu'il n'est pas produit). */
+function dureeFr(ms){
+  const min = Math.max(0, Math.round(ms / 60000));
+  if(min < 60) return min + " minute" + (min > 1 ? "s" : "");
+  const h = Math.floor(min / 60), m = min % 60;
+  if(h < 24) return h + " h" + (m ? " " + String(m).padStart(2, "0") : "");
+  const j = Math.floor(h / 24), hr = h % 24;
+  return j + " jour" + (j > 1 ? "s" : "") + (hr ? " " + hr + " h" : "");
+}
+function rendreChrono(){
+  const z = document.getElementById("chrono"); if(!z) return;
+  const d0 = etat.dossier && etat.dossier.cree_le ? new Date(etat.dossier.cree_le) : null;
+  if(!d0 || isNaN(d0)){ z.hidden = true; return; }
+  const a = (etat.piecesOpt || {}).acte, acteLe = a && a.genere_le ? new Date(a.genere_le) : null;
+  z.hidden = false;
+  z.innerHTML = "Dossier ouvert le " + d0.toLocaleDateString("fr-FR") + " à " + d0.toLocaleTimeString("fr-FR", {hour: "2-digit", minute: "2-digit"}).replace(":", " h ")
+    + (acteLe && !isNaN(acteLe) && acteLe > d0 ? " — dernier acte produit <b>" + dureeFr(acteLe - d0) + "</b> après l'ouverture" : " — ouvert depuis <b>" + dureeFr(Date.now() - d0) + "</b>, acte pas encore produit") + ".";
+}
+
 /* ---------- SEUIL, ACCORD DU NOTAIRE ET RAPPORTS (lot 4, 21/11/2026) ----------
    Arbitrages du 20/11. La fiche INTERNE sort toujours : elle imprime le compteur et les deux listes, et porte sur chaque page
    « document interne, ne pas diffuser ». Le RAPPORT CLIENT ne porte aucune trace du compteur et dépend du compteur DU GROUPE :
@@ -4887,6 +4916,25 @@ async function sortirGroupeClient(g, format){
   else telechargerBlob(await blocsDocx([s], titre, o), nomSortie(n + "_client_v" + version, "docx"));
   V[cle] = version;
   marquerModifie("sortie-rapport-client", {groupe: g.num, format, version, pourcentage: c.pc, provisoire: c.pc < 100, autorisation: au.etat});
+  rendre();
+}
+// COMPILATION CLIENT (20/11) : les rapports clients des seuls groupes dont la sortie est permise ; les groupes sous le seuil,
+// non analysés ou sans accord n'y figurent pas, et le message de fin les nomme.
+async function sortirCompilationClient(format){
+  const ordonnes = [...etat.groupes].sort((a, b) => a.num - b.num);
+  const permis = ordonnes.filter(g => ["libre", "accorde", "leve"].includes(compteurAutorisation(g).etat)), ecartes = ordonnes.filter(g => !permis.includes(g));
+  if(!permis.length){ signaler("Aucun groupe dont le rapport client puisse sortir : tous sont sous le seuil de " + compteurSeuil() + " %, non analysés ou en attente d'accord.", true); return; }
+  const V = compteurBoite("versions"), soc = etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "";
+  const sections = permis.map(g => sectionClient(g, (V[cleGroupe(g)] || 0) + 1));
+  const provisoire = permis.some(g => compteurGroupe(g).pc < 100) || ecartes.length > 0;
+  const titre = soc + " — rapports par groupe" + (provisoire ? " — document provisoire" : "");
+  const o = {sommaire: true, entete: "FIDAL Notaires — rapport établi le " + blocDateFr(new Date()) + " — " + permis.length + " groupe" + (permis.length > 1 ? "s" : "") + (ecartes.length ? " sur " + ordonnes.length + " ; les autres groupes suivront" : "") + "."};
+  sections.forEach(x => { x.matiere = Object.assign({}, x.matiere, {couleur: "vert"}); });   // aucune couleur d'indication dans un document client
+  if(format === "pdf") ouvrirImpression(blocsHtml(sections, titre, o), nomSortie("client", "pdf"));
+  else telechargerBlob(await blocsDocx(sections, titre, o), nomSortie("client", "docx"));
+  permis.forEach(g => { V[cleGroupe(g)] = (V[cleGroupe(g)] || 0) + 1; });
+  marquerModifie("sortie-compilation-client", {groupes: permis.length, ecartes: ecartes.map(g => g.num), format});
+  signaler("Compilation client produite : " + permis.length + " groupe" + (permis.length > 1 ? "s" : "") + (ecartes.length ? " ; " + ecartes.length + " écarté" + (ecartes.length > 1 ? "s" : "") + " (groupes " + ecartes.map(g => numeroGroupe4(g.num)).join(", ") + ")" : "") + ".");
   rendre();
 }
 // ACCORDS EN ATTENTE du dossier, en tête de la rubrique Groupes : un seul oui / non par groupe, les raisons dans un déroulant.
@@ -5307,6 +5355,50 @@ function piecesAReclamer(){
   }
   out.forEach(l => { const e = (etat.pieces || {})[l.id]; l.etat = e && e.etat ? e.etat : (l.depose ? "recue" : "a_reclamer"); l.le = e && e.le ? e.le : null; l.auto = !(e && e.etat) && l.depose; });
   return {lignes: out, sansEhf};
+}
+/* ---------- RELANCES DES PIÈCES RÉCLAMÉES (lot 5, 21/11/2026 ; arbitrage du 20/11) ----------
+   Une pièce « demandée » au client, à l'avocat ou au destinataire libre depuis SIX JOURS OUVRÉS est proposée à la relance — puis de
+   nouveau tous les six jours ouvrés. Un seul courriel par destinataire. Le collaborateur relance (brouillon signé) ou écarte la
+   relance : dans les deux cas, trace au journal (la relance, ou son absence). */
+const RELANCE_JOURS_OUVRES = 6;
+function piecesARelancer(lignes){
+  const par = {};
+  lignes.filter(l => l.circuit === "client" && l.etat === "demandee").forEach(l => {
+    const e = (etat.pieces || {})[l.id] || {}, depuis = e.relance || l.le; if(!depuis) return;
+    if(joursOuvresDepuis(depuis) < RELANCE_JOURS_OUVRES) return;
+    const d = pieceDest(l); (par[d] = par[d] || []).push(l);
+  });
+  return par;
+}
+function piecesRelanceNoter(ids, ecartee, dest){
+  etat.pieces = etat.pieces || {}; const jour = aujourdhuiISO();
+  ids.forEach(id => { const e = etat.pieces[id] || {etat: "demandee", le: null}; etat.pieces[id] = Object.assign({}, e, {relance: jour, relances: (e.relances || 0) + (ecartee ? 0 : 1)}); });
+  marquerModifie(ecartee ? "pieces-relance-ecartee" : "pieces-relance", {pieces: ids.length, destinataire: dest});
+  rendre();
+}
+async function piecesRelancer(liste, dest){
+  if(!piecesExigerAssocie()) return;
+  const adresse = (piecesContacts()[dest] || "").trim();
+  if(dest === "libre" && !adresse){ signaler("Saisissez d'abord l'adresse du destinataire libre.", true); return; }
+  if(!(await signatureAssurer())) return;
+  const soc = etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "", collab = etat.charge.collaborateur;
+  const appel = dest === "avocat" ? "Cher Maître," : dest === "client" ? "Madame, Monsieur," : "Bonjour,";
+  const html = piecesCorpsHtml([appel, "Nous nous permettons de revenir vers vous au sujet des pièces demandées pour l'opération concernant la société " + soc + ", qui ne nous sont pas encore parvenues :"],
+    piecesParCategorie(liste), ["Nous vous remercions par avance de bien vouloir nous les adresser, et restons à votre disposition pour tout renseignement."]);
+  piecesBrouillon(adresse, collab && collab.courriel ? collab.courriel : "", soc + " — relance : pièces à nous adresser (" + liste.length + ")", html, "FUSION - " + soc + " - relance " + dest);
+  signaler("Brouillon de relance téléchargé : ouvrez-le d'un double clic, Outlook l'affiche prêt à envoyer.");
+  piecesRelanceNoter(liste.map(l => l.id), false, dest);
+}
+function rendreRelances(lignes){
+  const par = piecesARelancer(lignes), dests = Object.keys(par); if(!dests.length) return null;
+  const z = document.createElement("div"); z.className = "pieces-relances";
+  z.innerHTML = '<b>Relances à proposer</b> <span class="rien" style="padding:0">pièces réclamées depuis ' + RELANCE_JOURS_OUVRES + ' jours ouvrés ou plus</span>';
+  dests.forEach(d => { const l = par[d], lg = document.createElement("div"); lg.className = "pieces-relance";
+    lg.innerHTML = '<span>' + l.length + ' pièce' + (l.length > 1 ? "s" : "") + ' ' + PIECES_DEST_NOM[d] + '</span><button class="btn plein" type="button" data-r="1">Préparer la relance</button><button class="btn" type="button" data-n="1" title="Écarte cette relance et l\'inscrit au journal ; elle sera proposée de nouveau dans six jours ouvrés">Ne pas relancer</button>';
+    lg.querySelector("[data-r]").addEventListener("click", () => piecesRelancer(l, d));
+    lg.querySelector("[data-n]").addEventListener("click", () => piecesRelanceNoter(l.map(x => x.id), true, d));
+    z.appendChild(lg); });
+  return z;
 }
 function piecesPoser(ids, etatPiece, quoi){
   etat.pieces = etat.pieces || {};
@@ -6201,6 +6293,7 @@ function rendrePieces(liste){
   det.innerHTML = '<summary><span class="n' + (total ? "" : " zero") + '">' + total + '</span>Pièces à réclamer'
     + '<span class="detail">' + nb(client, "a_reclamer") + ' au client · ' + nb(collab, "a_reclamer") + ' à la collaboratrice' + (dem ? ' · ' + dem + ' demandée' + (dem > 1 ? 's' : '') : '') + '</span></summary>';
   det.addEventListener("toggle", () => { etat.piecesOuvert = det.open; });
+  { const zr = rendreRelances(lignes); if(zr) det.appendChild(zr); }
   const dateFr = (iso) => { const d = dateDepuisISO(iso); return d && !isNaN(d) ? d.toLocaleDateString("fr-FR") : ""; };
   const bloc = (titre, l, bouton, action, extra) => {
     const tete = document.createElement("div"); tete.className = "cat-tete";
@@ -6508,6 +6601,7 @@ function ongletsMaj(){
 function rendre(){
   matiereMemo.clear(); compteurMemo.clear();
   { const zs = document.getElementById("seuil-cpt"); if(zs && document.activeElement !== zs) zs.value = compteurSeuil(); }
+  rendreChrono();
   if(document.getElementById("panneau").dataset.onglet === "pieces") etat.piecesOuvert = true;   // dans sa rubrique, la liste des pièces est toujours dépliée
   memoriserReprise();
   rendreCharge();
@@ -6722,6 +6816,7 @@ function majBoutons(){
   // 16/11/2026 : l'acte s'ouvre dès que les parcelles sont chargées — ce qui n'est pas encore lu est signalé DANS l'acte
   document.getElementById("btn-acte").disabled = !(charge && etat.groupes.length);
   document.getElementById("btn-acte-envoi").disabled = !(charge && etat.groupes.length); acteEnvoiRappel();
+  ["btn-compil-client-docx", "btn-compil-client-pdf"].forEach(id => { const el = document.getElementById(id); if(el) el.disabled = !lu || !etat.dossier; });
   ["btn-compil-docx", "btn-compil-pdf", "btn-annexe"].forEach(id => { const el = document.getElementById(id); el.disabled = !lu; if(!lu && charge) el.title = "Lisez d'abord au moins un état hypothécaire : les blocs 2 à 5 s'établissent à partir des mentions lues."; });
   document.getElementById("btn-fusionner").disabled =
     etat.groupes.filter(g => g.coche).length < 2;
@@ -6920,7 +7015,7 @@ function ouvrirDepuisBase(d){
     if(e.seuils.toleranceContact_m != null){ document.getElementById("tolerance").value = e.seuils.toleranceContact_m; }
   }
   etat.sansGeometrie = sans.map(p => ({...(p.props||{}), idu: p.idu, motif: "absente du plan au dernier relevé"}));
-  etat.dossier = {siren: d.dossier.siren, denomination: d.dossier.denomination, millesime: d.dossier.millesime};
+  etat.dossier = {siren: d.dossier.siren, denomination: d.dossier.denomination, millesime: d.dossier.millesime, cree_le: d.dossier.cree_le || null};
   const reprise = groupeDeReprise(d.dossier.siren, e, etat.groupes);   // le dernier groupe ouvert se rouvre tout seul
   etat.ouvert = reprise; etat.zoomSur = reprise;
   etat.dernierGroupe = reprise != null ? reprise : (Number.isInteger(e.dernier_groupe) ? e.dernier_groupe : null); etat.dernierGroupeLe = e.dernier_groupe_le || null;
@@ -7146,7 +7241,7 @@ async function chercherParcelles(siren, libelle, forcer){
     regrouperAutomatiquement();
     etat.ouvert = null;                 // vue d'ensemble d'abord : les groupes repliés
     etat.sansGeometrie = sansGeometrie;
-    etat.dossier = {siren, denomination: (d1.societe && d1.societe.denomination) || libelle || null, millesime: d1.millesime || null};
+    etat.dossier = {siren, denomination: (d1.societe && d1.societe.denomination) || libelle || null, millesime: d1.millesime || null, cree_le: new Date().toISOString()};
     etat.documents = []; etat.driveSociete = null; etat.numerotationFaite = false; etat.numerotationDate = null; etat.spfParIdu = {}; etat.pieces = {}; etat.piecesOpt = {}; etat.charge = null; etat.compteur = {main: {}, levees: {}}; etat.risques = {parGroupe: {}};
     etat.groupes.forEach(g => { g.drive = {}; });
     rendre();
@@ -7273,6 +7368,8 @@ function brancher(){
       if(!(v >= 50 && v <= 100)){ zs.value = compteurSeuil(); return; }
       const avant = compteurSeuil(); etat.compteur = etat.compteur || {main: {}, levees: {}}; etat.compteur.seuil = v;
       marquerModifie("compteur-seuil", {avant, apres: v}); rendre(); }); }
+  brancherSortie("btn-compil-client-docx", () => sortirCompilationClient("docx"));
+  brancherSortie("btn-compil-client-pdf", () => sortirCompilationClient("pdf"));
   brancherSortie("btn-compil-docx", () => sortirCompilation("docx"));
   brancherSortie("btn-compil-pdf", () => sortirCompilation("pdf"));
   brancherSortie("btn-acte", async () => ouvrirDonneesActe());
@@ -7360,3 +7457,5 @@ document.getElementById("btn-panneau").addEventListener("click", (e) => {
 </script>
 </body>
 </html>
+
+  
