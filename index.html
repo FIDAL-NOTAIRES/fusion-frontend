@@ -290,6 +290,19 @@
   .cpt-motif{flex-basis:100%;display:flex;gap:6px;align-items:center}
   .cpt-motif input{flex:1;min-width:0;font:inherit;font-size:12.5px;padding:3px 6px;border:1px solid var(--trait);border-radius:4px}
   .cpt-motif input.manque{border-color:#FF982D}
+  .cpt-accords{margin:8px 14px;padding:8px 10px;border:1px solid #FF982D;border-radius:6px;background:#FFF8EF;font-size:12.5px;color:var(--nuit)}
+  .cpt-accords-t{font-weight:700;margin:0 0 4px}
+  .cpt-accords .n{margin-left:6px;font-weight:600;color:var(--gris)}
+  .cpt-accords details{padding:3px 0;border-top:1px dotted var(--trait)}
+  .cpt-accords summary{cursor:pointer}
+  .cpt-accords ul{list-style:none;margin:4px 0;padding:0 0 0 14px}
+  .panneau[data-onglet="pieces"] .cpt-accords{display:none}
+  .cpt-client{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:2px 0 6px}
+  .cpt-client .lib{flex:0 0 auto}
+  .cpt-client .cpt-msg{flex:1 1 180px;min-width:0;font-size:11.5px;color:var(--gris)}
+  .cpt-client .cpt-decision{flex-basis:100%;display:flex;gap:6px}
+  .cpt-client .cpt-motif select{font:inherit;font-size:12.5px;padding:3px 6px;border:1px solid var(--trait);border-radius:4px}
+  .cpt-client .btn[disabled]{opacity:.45;cursor:not-allowed}
   /* 21/11/2026 (JFD) : pas de dossier sans notaire en charge NI numéro Kivia — tant que l'un manque, rien d'autre ne s'affiche */
   .charge-kivia{flex:1 1 150px;min-width:0;display:flex;flex-direction:column;gap:3px;font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:var(--canard)}
   .charge-kivia input{font:inherit;font-size:12.5px;text-transform:none;letter-spacing:0;padding:4px 6px;border:1px solid var(--trait);border-radius:4px;background:#fff;color:var(--nuit);width:100%;min-width:0}
@@ -722,6 +735,11 @@
           <label for="tolerance">Tolérance de contact entre contours</label>
           <input type="number" id="tolerance" min="0" max="3" step="0.1" value="0.5">
           <span class="val">m</span>
+        </div>
+        <div class="reglage" title="Part minimale d'informations justifiées pour sortir le rapport client d'un groupe — réglable par l'administrateur seul">
+          <label for="seuil-cpt">Seuil du rapport client</label>
+          <input type="number" id="seuil-cpt" min="50" max="100" step="1" value="85">
+          <span class="val">%</span>
         </div>
         <p class="options-titre">Charger des parcelles sans passer par la société</p>
         <div class="depose" id="depose">
@@ -4660,7 +4678,9 @@ function blocsHtml(sections, titre, options){
   const o = options || {};
   const css = "body{font-family:'Segoe UI',system-ui,sans-serif;font-size:11.5pt;line-height:1.45;color:#111;margin:22mm 18mm}h1,h2,h3,h4{font-weight:700}h1{font-size:18pt;margin:0 0 6mm}h2{font-size:14pt;margin:9mm 0 3mm;padding:2px 8px;border-left:6px solid #888}h3{font-size:11pt;letter-spacing:.6px;text-transform:uppercase;margin:6mm 0 2mm;color:#0B3B4A}h4{font-size:10.5pt;letter-spacing:.4px;text-transform:uppercase;margin:4mm 0 2mm;color:#0B3B4A}p{margin:0 0 2.6mm;text-align:justify}li{margin:0 0 1.6mm}table{border-collapse:collapse;margin:2mm 0 3mm;font-size:10.5pt}td,th{border:1px solid #999;padding:2px 7px;text-align:left}th{background:#EEF1F4}.alerte{color:#fff;padding:3px 8px;margin:0 0 1.5mm;font-family:'Segoe UI',system-ui,sans-serif;font-size:10pt;text-align:left}.note{color:#666;font-style:italic}.lien{font-size:10pt;margin:3mm 0 8mm}.som li{margin:1mm 0}.som .puce{display:inline-block;width:11px;height:11px;border-radius:50%;vertical-align:-1px;margin-right:6px}.gs{text-decoration:underline;font-weight:bold}.pied{color:#666;font-size:9.5pt;margin-top:10mm}@media print{h2{break-before:page}h2:first-of-type{break-before:auto}.alerte{-webkit-print-color-adjust:exact;print-color-adjust:exact}}";
   let h = "<!doctype html><html lang='fr'><head><meta charset='utf-8'><title>" + echap(titre) + "</title><style>" + css + "</style></head><body>";
-  h += "<h1>" + echap(titre) + "</h1><p class='note'>Document de travail FUSION — produit le " + blocDateFr(new Date()) + ". Les mentions colorées sont des indications internes, à ne pas reporter dans l'acte.</p>";
+  // 21/11/2026 (lot 4) : o.bandeau = mention répétée en haut de CHAQUE page imprimée ; o.entete = phrase de tête propre au document
+  if(o.bandeau) h += "<style>.bandeau-page{position:fixed;top:4mm;left:0;right:0;text-align:center;font-size:9pt;font-weight:700;letter-spacing:.5px;color:#A01040}@media screen{.bandeau-page{position:static;margin:0 0 4mm}}</style><div class='bandeau-page'>" + echap(o.bandeau) + "</div>";
+  h += "<h1>" + echap(titre) + "</h1><p class='note'>" + echap(o.entete || ("Document de travail FUSION — produit le " + blocDateFr(new Date()) + ". Les mentions colorées sont des indications internes, à ne pas reporter dans l'acte.")) + "</p>";
   if(o.sommaire){
     h += "<h3 id='sommaire'>Sommaire</h3><ul class='som'>";
     sections.forEach(s => { const M = s.matiere; h += "<li><span class='puce' style='background:" + COULEURS[M.couleur].hex + "'></span><a href='#g" + numeroGroupe4(M.g.num) + "'>Groupe " + numeroGroupe4(M.g.num) + "</a> — " + echap(M.communes.join(" / ") || "commune non renseignée") + " (" + COULEURS[M.couleur].nom + ")</li>"; });
@@ -4695,7 +4715,7 @@ async function blocsDocx(sections, titre, options){
   const enfants = [];
   const texte = (t, opts) => new D.TextRun(Object.assign({text: t, font: "Segoe UI", size: 23}, opts || {}));
   enfants.push(new D.Paragraph({children: [texte(titre, {bold: true, size: 36})], spacing: {after: 200}}));
-  enfants.push(new D.Paragraph({children: [texte("Document de travail FUSION — produit le " + blocDateFr(new Date()) + ". Les mentions colorées sont des indications internes, à retirer avant de coller dans l'acte.", {italics: true, color: "666666", size: 20})], spacing: {after: 300}}));
+  enfants.push(new D.Paragraph({children: [texte(o.entete || ("Document de travail FUSION — produit le " + blocDateFr(new Date()) + ". Les mentions colorées sont des indications internes, à retirer avant de coller dans l'acte."), {italics: true, color: "666666", size: 20})], spacing: {after: 300}}));
   if(o.sommaire){
     enfants.push(new D.Paragraph({children: [new D.Bookmark({id: "sommaire", children: [texte("SOMMAIRE", {bold: true, size: 24})]})], spacing: {after: 120}}));
     sections.forEach(s => { const M = s.matiere, n = numeroGroupe4(M.g.num);
@@ -4717,7 +4737,8 @@ async function blocsDocx(sections, titre, options){
     else if(p.style === "lien") enfants.push(new D.Paragraph({children: [new D.InternalHyperlink({anchor: p.ancre, children: [texte("↑ " + p.t, {style: "Hyperlink", size: 20})]})], spacing: {before: 160, after: 400}}));
     else enfants.push(new D.Paragraph({alignment: D.AlignmentType.JUSTIFIED, children: [texte(p.t, {bold: Boolean(p.gras) || Boolean(p.couleur), underline: p.souligne ? {} : undefined, color: p.couleur ? hexSans(p.couleur) : undefined})], spacing: {after: 120}}));
   }));
-  const doc = new D.Document({creator: "FUSION — FIDAL Notaires", title: titre, sections: [{properties: {page: {margin: {top: 1250, bottom: 1250, left: 1100, right: 1100}}}, children: enfants}]});
+  const entetes = o.bandeau ? {default: new D.Header({children: [new D.Paragraph({alignment: D.AlignmentType.CENTER, children: [texte(o.bandeau, {bold: true, size: 18, color: "A01040"})]})]})} : undefined;
+  const doc = new D.Document({creator: "FUSION — FIDAL Notaires", title: titre, sections: [{properties: {page: {margin: {top: 1250, bottom: 1250, left: 1100, right: 1100}}}, headers: entetes, children: enfants}]});
   return D.Packer.toBlob(doc);
 }
 
@@ -4737,11 +4758,183 @@ function ouvrirImpression(html, nom){
 }
 
 // Sorties : fiche d'un groupe, compilation de tous les groupes, annexe des servitudes.
+/* ---------- SEUIL, ACCORD DU NOTAIRE ET RAPPORTS (lot 4, 21/11/2026) ----------
+   Arbitrages du 20/11. La fiche INTERNE sort toujours : elle imprime le compteur et les deux listes, et porte sur chaque page
+   « document interne, ne pas diffuser ». Le RAPPORT CLIENT ne porte aucune trace du compteur et dépend du compteur DU GROUPE :
+     - sous le seuil (85 % par défaut, réglable par l'administrateur) : bouton grisé, message « vous êtes à 78 %, il faut 85 % » ;
+       seul l'administrateur lève le blocage, motif court obligatoire, journal ;
+     - du seuil à 99 % : accord du notaire en charge du dossier ou de l'administrateur — un clic, sans motif ; un refus se motive
+       par une liste de trois motifs ; l'accord TOMBE si une divergence grave apparaît ensuite ;
+     - 100 % : libre.
+   Tout rapport client incomplet est « provisoire » (nombre de pièces attendues en tête, liste à la fin) et numéroté par groupe. */
+const COMPTEUR_SEUIL_DEFAUT = 85;
+const COMPTEUR_REFUS = ["Points essentiels non tranchés", "Difficulté majeure", "Autre"];
+function compteurSeuil(){ const v = Number((etat.compteur || {}).seuil); return v >= 50 && v <= 100 ? v : COMPTEUR_SEUIL_DEFAUT; }
+function compteurBoite(nom){ etat.compteur = etat.compteur || {main: {}, levees: {}}; etat.compteur[nom] = etat.compteur[nom] || {}; return etat.compteur[nom]; }
+function compteurEstAdmin(){ return COMPTEUR_ADMIN.includes(String((etat.drive && etat.drive.courriel) || "").toLowerCase()); }
+// État du rapport client d'un groupe : {etat, message} — etat ∈ non-analyse | bloque | leve | accord-requis | demande | refuse | accorde | libre
+function compteurAutorisation(g){
+  const c = compteurGroupe(g), seuil = compteurSeuil(), cle = cleGroupe(g);
+  if(c.nonAnalyse || !c.total) return {etat: "non-analyse", message: "Rapport non éditable : groupe non analysé (aucun état hypothécaire lu)."};
+  if(c.pc < seuil){
+    const lv = compteurBoite("seuilLeve")[cle];
+    return lv ? {etat: "leve", geste: lv, message: "Blocage levé par l'administrateur : " + lv.motif}
+      : {etat: "bloque", message: "Rapport non éditable : vous êtes à " + c.pc + " %, il faut " + seuil + " %."};
+  }
+  if(c.pc >= 100) return {etat: "libre", message: "Toutes les informations sont justifiées."};
+  const a = compteurBoite("accords")[cle];
+  if(a && a.statut === "accorde" && c.grave > (a.graves || 0)){ return {etat: "accord-requis", tombe: true, message: "L'accord du notaire est tombé : une divergence grave est apparue depuis. Il faut le redemander."}; }
+  if(a && a.statut === "accorde") return {etat: "accorde", geste: a, message: "Sortie autorisée par le notaire" + (a.decideLe ? " le " + new Date(a.decideLe).toLocaleDateString("fr-FR") : "") + "."};
+  if(a && a.statut === "refuse") return {etat: "refuse", geste: a, message: "Sortie refusée par le notaire : " + (a.motif || "")};
+  if(a && a.statut === "demande") return {etat: "demande", geste: a, message: "Accord du notaire demandé le " + new Date(a.le).toLocaleDateString("fr-FR") + "."};
+  return {etat: "accord-requis", message: "Vous êtes à " + c.pc + " % : la sortie du rapport client demande l'accord du notaire en charge du dossier."};
+}
+// Jours ouvrés (lundi à vendredi) écoulés depuis une date ; et la date située n jours ouvrés plus tard.
+function joursOuvresDepuis(iso){ const d = new Date(iso), fin = new Date(); let n = 0; d.setHours(12, 0, 0, 0); fin.setHours(12, 0, 0, 0); while(d < fin){ d.setDate(d.getDate() + 1); const j = d.getDay(); if(j !== 0 && j !== 6) n++; } return n; }
+function dansJoursOuvres(n){ const d = new Date(); while(n > 0){ d.setDate(d.getDate() + 1); const j = d.getDay(); if(j !== 0 && j !== 6) n--; } return d; }
+// Courriel interne en brouillon (ton direct) : pas de signature, le message reste dans l'étude.
+function compteurBrouillon(a, objet, lignes, nomFichier){
+  const html = '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:11pt;color:#0F2238">' + lignes.map(l => '<p style="margin:0 0 9pt">' + l + '</p>').join("") + '</div>';
+  piecesBrouillon(a || "", "", objet, html, nomFichier);
+}
+function compteurRaisons(g){   // ce qui manque ou diverge, pour la demande d'accord et la liste du notaire
+  const c = compteurGroupe(g);
+  return c.infos.filter(i => i.etat === "grave").map(i => ({grave: true, t: i.libelle}))
+    .concat(c.infos.filter(i => i.etat === "divergence").map(i => ({div: true, t: i.libelle})))
+    .concat(c.infos.filter(i => i.etat === "sans" || i.etat === "incomplet").map(i => ({t: i.libelle + (i.pieceLib ? " — pièce attendue : " + i.pieceLib : i.action ? " — " + i.action : "")})));
+}
+function compteurReference(g){ const k = etat.charge && etat.charge.kivia; return (etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "") + (k ? " (Kivia " + k + ")" : "") + " — groupe " + numeroGroupe4(g.num); }
+async function compteurDemanderAccord(g, relance){
+  if(!piecesExigerAssocie()) return;                       // pas de demande sans notaire en charge désigné (20/11)
+  await driveCourriel();
+  const c = compteurGroupe(g), cle = cleGroupe(g), B = compteurBoite("accords"), a = etat.charge.associe, p = personneCarnet(a);
+  const dest = (a && a.courriel) || (p && p.courriel) || "", ref = compteurReference(g), raisons = compteurRaisons(g);
+  const pastille = (r) => '<span style="color:' + (r.grave ? CPT_COUL.carmin : r.div ? CPT_COUL.orange : "#8A93A0") + '">●</span> ';
+  compteurBrouillon(dest, "FUSION — " + ref + " — " + (relance ? "relance : " : "") + "accord demandé pour la sortie du rapport client", [
+    (relance ? "Relance. " : "") + "Le rapport client de ce groupe est justifié à <b>" + c.pc + " %</b> (seuil : " + compteurSeuil() + " %). Sa sortie demande votre accord.",
+    "Ce qui manque ou diverge (" + raisons.length + ") :<br>" + raisons.map(r => pastille(r) + echap(r.t)).join("<br>"),
+    'Pour autoriser ou refuser : ouvrir <a href="' + location.origin + location.pathname + '">FUSION</a>, dossier ' + echap(etat.dossier.denomination || etat.dossier.siren) + ', rubrique Groupes — la liste « Accords en attente » est en tête.'],
+    "FUSION - " + ref + " - demande accord");
+  if(relance){ B[cle] = Object.assign({}, B[cle], {relanceLe: new Date().toISOString()}); marquerModifie("compteur-accord-relance", {groupe: g.num, pourcentage: c.pc});
+    // rappel pour l'agenda du COLLABORATEUR, deux jours ouvrés plus tard (rien dans l'agenda du notaire)
+    const j = dansJoursOuvres(2), ymd = j.getFullYear() + String(j.getMonth() + 1).padStart(2, "0") + String(j.getDate()).padStart(2, "0"), titreR = "Voir retour notaire référent pour dossier " + ref;
+    const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//FIDAL Notaires//FUSION//FR", "BEGIN:VEVENT", "UID:fusion-" + Date.now() + "@fidal.notaires.fr", "DTSTAMP:" + new Date().toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z",
+      "DTSTART;VALUE=DATE:" + ymd, "SUMMARY:" + titreR.replace(/[,;]/g, " "), "END:VEVENT", "END:VCALENDAR"].join("\r\n");
+    telechargerBlob(new Blob([ics], {type: "text/calendar"}), "rappel - " + ref.replace(/[\\/:*?"<>|]/g, "") + ".ics");
+    signaler("Relance préparée, et rappel d'agenda téléchargé pour le " + j.toLocaleDateString("fr-FR") + ".");
+  }else{ B[cle] = {statut: "demande", le: new Date().toISOString(), par: etat.drive.courriel || null, pc: c.pc, graves: c.grave};
+    marquerModifie("compteur-accord-demande", {groupe: g.num, pourcentage: c.pc, notaire: (a && a.initiales) || null});
+    signaler("Demande d'accord préparée pour " + chargeLibelle(a) + " : ouvrez le brouillon dans Outlook."); }
+  rendre();
+}
+async function compteurDecider(g, accord, motif){
+  await driveCourriel();
+  if(!compteurPeutLeverGrave()){ signaler("Seul le notaire en charge du dossier ou l'administrateur peut autoriser ou refuser la sortie du rapport client.", true); return; }
+  const c = compteurGroupe(g), cle = cleGroupe(g), B = compteurBoite("accords"), ref = compteurReference(g), dest = destinataireCollab();
+  B[cle] = Object.assign({}, B[cle], {statut: accord ? "accorde" : "refuse", decideLe: new Date().toISOString(), decidePar: etat.drive.courriel || null, motif: accord ? null : motif, pc: c.pc, graves: c.grave});
+  marquerModifie(accord ? "compteur-accord-donne" : "compteur-accord-refuse", {groupe: g.num, pourcentage: c.pc, motif: accord ? null : motif});
+  compteurBrouillon(dest.courriel, "FUSION — " + ref + " — sortie du rapport client " + (accord ? "autorisée" : "refusée"),
+    accord ? ["La sortie du rapport client de ce groupe est autorisée : le rapport est disponible pour génération dans FUSION."]
+           : ["La sortie du rapport client de ce groupe est refusée.", "Motif : " + echap(motif || "")], "FUSION - " + ref + " - " + (accord ? "accord" : "refus"));
+  rendre();
+}
+async function compteurLeverSeuil(g, motif){
+  await driveCourriel();
+  if(!compteurEstAdmin()){ signaler("Seul l'administrateur peut lever le blocage sous le seuil.", true); return; }
+  const c = compteurGroupe(g);
+  compteurBoite("seuilLeve")[cleGroupe(g)] = {motif, par: etat.drive.courriel, le: new Date().toISOString(), pc: c.pc};
+  marquerModifie("compteur-seuil-leve", {groupe: g.num, pourcentage: c.pc, seuil: compteurSeuil(), motif});
+  rendre();
+}
+// Section de la fiche INTERNE : la fiche habituelle, plus le compteur et les deux listes sous le titre du groupe.
+function sectionInterne(g){
+  const s = redigerGroupe(g, {}), c = compteurGroupe(g), P = [];
+  if(c.nonAnalyse || !c.total) P.push({style: "note", t: "Justificatifs : groupe non analysé."});
+  else{
+    P.push({style: "p", gras: true, t: "Justificatifs : " + c.pc + " % des informations justifiées (" + c.ok + " sur " + c.total + ")" + (c.incomplets ? " — " + c.incomplets + " incomplète" + (c.incomplets > 1 ? "s" : "") + (c.divergences ? ", dont " + c.divergences + " divergence" + (c.divergences > 1 ? "s" : "") : "") : "") + (c.main ? " — " + c.main + " validée" + (c.main > 1 ? "s" : "") + " à la main" : "") + "."});
+    const sans = c.infos.filter(i => i.etat === "sans" || i.etat === "incomplet"), div = c.infos.filter(i => i.etat === "grave").concat(c.infos.filter(i => i.etat === "divergence")), mains = c.infos.filter(i => i.geste);
+    if(sans.length){ P.push({style: "sous2", t: "Informations sans pièce (" + sans.length + ")"}); sans.forEach(i => P.push({style: "puce", t: i.libelle + (i.pieceLib ? " — pièce attendue : " + i.pieceLib : i.action ? " — " + i.action : "")})); }
+    if(div.length){ P.push({style: "sous2", t: "Sources divergentes (" + div.length + ")"}); div.forEach(i => P.push({style: "puce", t: (i.etat === "grave" ? "● " : "○ ") + i.libelle + ([i.source, i.pieceDit].filter(Boolean).length ? " — " + [i.source, i.pieceDit].filter(Boolean).join(" ; ") : "")})); }
+    if(mains.length){ P.push({style: "sous2", t: "Validées ou levées à la main (" + mains.length + ")"}); mains.forEach(i => P.push({style: "puce", t: i.libelle + " — " + (i.geste.motif || "") + (i.geste.par ? " (" + i.geste.par + ")" : "")})); }
+  }
+  const k = s.paragraphes.findIndex(p => p.style === "sous");
+  s.paragraphes.splice(k < 0 ? s.paragraphes.length : k, 0, ...P);
+  return s;
+}
+// Section du RAPPORT CLIENT : ni indications colorées, ni compteur ; « provisoire » tant qu'il manque des pièces.
+function sectionClient(g, version){
+  const s = redigerGroupe(g, {}), c = compteurGroupe(g);
+  s.paragraphes = s.paragraphes.filter(p => p.style !== "alerte").map(p => p.style === "titre" ? Object.assign({}, p, {couleur: "vert"}) : p.couleur ? Object.assign({}, p, {couleur: null}) : p);
+  const attendues = [...new Set(c.infos.filter(i => (i.etat === "sans" || i.etat === "incomplet") && i.pieceLib).map(i => i.pieceLib))];
+  const provisoire = c.pc < 100, tete = [{style: "note", t: "Version " + version + (provisoire ? " — RAPPORT PROVISOIRE : " + (attendues.length ? attendues.length + " pièce" + (attendues.length > 1 ? "s" : "") + " attendue" + (attendues.length > 1 ? "s" : "") + " (liste en fin de rapport)" : "des vérifications restent en cours") + "." : "")}];
+  s.paragraphes.splice(1, 0, ...tete);
+  if(provisoire && attendues.length){ s.paragraphes.push({style: "sous", t: "PIÈCES ATTENDUES"}); attendues.forEach(t => s.paragraphes.push({style: "puce", t})); }
+  return s;
+}
 async function sortirGroupe(g, format){
-  const s = redigerGroupe(g, {}); const n = numeroGroupe4(g.num), titre = "FUSION — Fiche du groupe " + n;
-  if(format === "pdf") ouvrirImpression(blocsHtml([s], titre, {}), nomSortie(n, "pdf"));
-  else telechargerBlob(await blocsDocx([s], titre, {}), nomSortie(n, "docx"));
+  const s = sectionInterne(g); const n = numeroGroupe4(g.num), titre = "FUSION — Fiche interne du groupe " + n, o = {bandeau: "DOCUMENT INTERNE — NE PAS DIFFUSER"};
+  if(format === "pdf") ouvrirImpression(blocsHtml([s], titre, o), nomSortie(n + "_interne", "pdf"));
+  else telechargerBlob(await blocsDocx([s], titre, o), nomSortie(n + "_interne", "docx"));
   marquerModifie("sortie-fiche", {groupe: g.num, format, couleur: s.matiere.couleur});
+}
+async function sortirGroupeClient(g, format){
+  const au = compteurAutorisation(g);
+  if(!["libre", "accorde", "leve"].includes(au.etat)){ signaler(au.message, true); return; }
+  const V = compteurBoite("versions"), cle = cleGroupe(g), version = (V[cle] || 0) + 1, n = numeroGroupe4(g.num), c = compteurGroupe(g);
+  const s = sectionClient(g, version), soc = etat.dossier ? etat.dossier.denomination || etat.dossier.siren : "";
+  const titre = soc + " — Groupe " + n + (c.pc < 100 ? " — rapport provisoire" : ""), o = {entete: "FIDAL Notaires — rapport établi le " + blocDateFr(new Date()) + " — version " + version + "."};
+  if(format === "pdf") ouvrirImpression(blocsHtml([s], titre, o), nomSortie(n + "_client_v" + version, "pdf"));
+  else telechargerBlob(await blocsDocx([s], titre, o), nomSortie(n + "_client_v" + version, "docx"));
+  V[cle] = version;
+  marquerModifie("sortie-rapport-client", {groupe: g.num, format, version, pourcentage: c.pc, provisoire: c.pc < 100, autorisation: au.etat});
+  rendre();
+}
+// ACCORDS EN ATTENTE du dossier, en tête de la rubrique Groupes : un seul oui / non par groupe, les raisons dans un déroulant.
+function rendreAccordsAttente(){
+  const att = [...etat.groupes].sort((a, b) => a.num - b.num).filter(g => compteurAutorisation(g).etat === "demande");
+  if(!att.length) return null;
+  const z = document.createElement("div"); z.className = "cpt-accords";
+  z.innerHTML = '<div class="cpt-accords-t">Accords en attente <span class="n">' + att.length + '</span></div>';
+  att.forEach(g => {
+    const c = compteurGroupe(g), raisons = compteurRaisons(g), d = document.createElement("details");
+    d.innerHTML = '<summary>Groupe ' + numeroGroupe4(g.num) + ' — <b style="color:' + CPT_COUL[c.couleur] + '">' + c.pc + ' %</b> <span class="n">' + raisons.length + ' raison' + (raisons.length > 1 ? "s" : "") + '</span></summary><ul>'
+      + raisons.map(r => '<li>' + cptPast(r.grave ? "carmin" : r.div ? "orange" : "gris") + echap(r.t) + '</li>').join("") + '</ul>';
+    d.appendChild(rendreRapportClient(g)); z.appendChild(d);
+  });
+  return z;
+}
+// Ligne « Rapport client » de la fiche du groupe : boutons grisés selon l'état, et le geste attendu à côté.
+function rendreRapportClient(g){
+  const au = compteurAutorisation(g), ok = ["libre", "accorde", "leve"].includes(au.etat), z = document.createElement("div"); z.className = "cpt-client";
+  const V = compteurBoite("versions")[cleGroupe(g)] || 0;
+  let h = '<span class="lib">Rapport client' + (V ? ' <em>(version ' + V + ' sortie)</em>' : '') + '</span>'
+    + '<button class="btn" type="button" data-c="docx"' + (ok ? "" : " disabled") + ' title="' + echap(au.message) + '">Word</button><button class="btn" type="button" data-c="pdf"' + (ok ? "" : " disabled") + ' title="' + echap(au.message) + '">PDF</button>'
+    + '<span class="cpt-msg" title="' + echap(au.message) + '">' + echap(au.message) + '</span>';
+  if(au.etat === "bloque") h += '<button class="lien-btn" type="button" data-lever-seuil="1">Lever le blocage (administrateur)</button>';
+  if(au.etat === "accord-requis" || au.etat === "refuse") h += '<button class="btn plein" type="button" data-demander="1">Demander l\'accord du notaire</button>';
+  if(au.etat === "demande"){
+    const j = joursOuvresDepuis(au.geste.le);
+    if(au.geste.relanceLe) h += '<span class="cpt-msg">accord en attente depuis ' + j + ' jour' + (j > 1 ? "s" : "") + ' ouvré' + (j > 1 ? "s" : "") + '</span>';
+    else if(j >= 3) h += '<button class="btn plein" type="button" data-relancer="1">Relancer le notaire</button>';
+    h += '<span class="cpt-decision"><button class="btn plein" type="button" data-oui="1">J\'autorise la sortie</button><button class="btn" type="button" data-non="1">Je refuse</button></span>';
+  }
+  z.innerHTML = h;
+  z.querySelectorAll("button[data-c]").forEach(b => b.addEventListener("click", async () => { b.disabled = true; try{ await sortirGroupeClient(g, b.dataset.c); }catch(e){ signaler(e.message, true); } finally{ b.disabled = false; } }));
+  const motifSur = (libelle, suite) => { if(z.querySelector(".cpt-motif")) return; const f = document.createElement("span"); f.className = "cpt-motif";
+    f.innerHTML = '<input type="text" maxlength="160" placeholder="Motif (une ligne, obligatoire)"><button class="btn plein" type="button">' + libelle + '</button>'; z.appendChild(f);
+    const inp = f.querySelector("input"); inp.focus(); const go = () => { const m = inp.value.trim(); if(!m){ inp.classList.add("manque"); return; } suite(m); };
+    f.querySelector("button").addEventListener("click", go); inp.addEventListener("keydown", e => { if(e.key === "Enter") go(); if(e.key === "Escape") f.remove(); }); };
+  const q = (sel) => z.querySelector(sel);
+  if(q("[data-lever-seuil]")) q("[data-lever-seuil]").addEventListener("click", () => motifSur("Lever", m => compteurLeverSeuil(g, m)));
+  if(q("[data-demander]")) q("[data-demander]").addEventListener("click", () => compteurDemanderAccord(g, false));
+  if(q("[data-relancer]")) q("[data-relancer]").addEventListener("click", () => compteurDemanderAccord(g, true));
+  if(q("[data-oui]")) q("[data-oui]").addEventListener("click", () => compteurDecider(g, true));
+  if(q("[data-non]")) q("[data-non]").addEventListener("click", () => {
+    if(z.querySelector(".cpt-motif")) return; const f = document.createElement("span"); f.className = "cpt-motif";
+    f.innerHTML = '<select>' + COMPTEUR_REFUS.map(m => '<option>' + m + '</option>').join("") + '</select><input type="text" maxlength="160" placeholder="Précision (pour « Autre »)" hidden><button class="btn plein" type="button">Refuser</button>'; z.appendChild(f);
+    const sel = f.querySelector("select"), inp = f.querySelector("input"); sel.addEventListener("change", () => { inp.hidden = sel.value !== "Autre"; });
+    f.querySelector("button").addEventListener("click", () => { const autre = sel.value === "Autre"; if(autre && !inp.value.trim()){ inp.classList.add("manque"); inp.focus(); return; } compteurDecider(g, false, autre ? "Autre — " + inp.value.trim() : sel.value); }); });
+  return z;
 }
 async function sortirCompilation(format){
   const ordonnes = [...etat.groupes].sort((a, b) => a.num - b.num);
@@ -4912,7 +5105,7 @@ function rendreSorties(g){
   z.innerHTML = (etat.dossier ? '<div class="cpt-bloc" data-cpt="1" title="Ouvrir le détail des justificatifs">' + compteurHtml(compteurGroupe(g), 46)
       + (compteurGroupe(g).nonAnalyse ? '' : '<button class="btn" type="button" data-cpt-b="1">' + (cptOuvert ? "Fermer le détail" : "Détail") + '</button>') + '</div>' : '') + '<span class="lib">SPF : ' + (sp ? '<b>' + echap(sp.valeur) + '</b> <em>(' + LIB_SRC[sp.source] + ')</em>' : '<em>non encore lu</em>') + '</span>'
     + (lu ? '' : '<button class="btn" type="button" data-spf="1">' + (sp ? 'Modifier' : 'Attribuer') + '</button>')
-    + '<span style="flex-basis:100%;height:0"></span><span class="lib">Fiche du groupe' + (c ? ' — <b style="color:' + COULEURS[c].hex + '">' + COULEURS[c].nom + '</b>' : '') + '</span>'
+    + '<span style="flex-basis:100%;height:0"></span><span class="lib">Fiche interne du groupe' + (c ? ' — <b style="color:' + COULEURS[c].hex + '">' + COULEURS[c].nom + '</b>' : '') + '</span>'
     + '<button class="btn" type="button" data-f="docx">Word</button><button class="btn" type="button" data-f="pdf">PDF</button>';
   const zc = z.querySelector("[data-cpt]");
   if(zc && !compteurGroupe(g).nonAnalyse){
@@ -4922,6 +5115,7 @@ function rendreSorties(g){
   const bSpf = z.querySelector("[data-spf]");
   if(bSpf) bSpf.addEventListener("click", () => attribuerSpf([g], "le groupe " + numeroGroupe4(g.num)));
   z.querySelectorAll("button[data-f]").forEach(b => b.addEventListener("click", async () => { b.disabled = true; try{ await sortirGroupe(g, b.dataset.f); }catch(e){ signaler(e.message, true); } finally{ b.disabled = false; } }));
+  if(etat.dossier){ const bris = document.createElement("span"); bris.style.cssText = "flex-basis:100%;height:0"; z.appendChild(bris); z.appendChild(rendreRapportClient(g)); }
   if(etat.dossier) rendreRisques(g, z);
   return z;
 }
@@ -6313,6 +6507,7 @@ function ongletsMaj(){
 }
 function rendre(){
   matiereMemo.clear(); compteurMemo.clear();
+  { const zs = document.getElementById("seuil-cpt"); if(zs && document.activeElement !== zs) zs.value = compteurSeuil(); }
   if(document.getElementById("panneau").dataset.onglet === "pieces") etat.piecesOuvert = true;   // dans sa rubrique, la liste des pièces est toujours dépliée
   memoriserReprise();
   rendreCharge();
@@ -6323,6 +6518,7 @@ function rendre(){
   if(!etat.parcelles.length){
     liste.innerHTML = '<p class="vide">Aucune parcelle chargée. Déposez un GeoJSON, ou ouvrez le jeu d\'essai pour voir le regroupement à l\'œuvre.</p>';
   }else{
+    if(etat.dossier){ const za = rendreAccordsAttente(); if(za) liste.appendChild(za); }
     // ---- rapprochements proposés : rendus DANS l'onglet des points à trancher ----
     const rendreSuggestions = () => {
       const bloc = document.createElement("div");
@@ -6716,7 +6912,7 @@ function ouvrirDepuisBase(d){
   etat.pieces = (e.pieces && typeof e.pieces === "object") ? e.pieces : {};
   etat.piecesOpt = (e.pieces_options && typeof e.pieces_options === "object") ? e.pieces_options : {};
   etat.charge = (e.charge && typeof e.charge === "object") ? e.charge : null;
-  etat.compteur = {main: (e.compteur && e.compteur.main) || {}, levees: (e.compteur && e.compteur.levees) || {}};
+  etat.compteur = Object.assign({}, (e.compteur && typeof e.compteur === "object") ? e.compteur : {}, {main: (e.compteur && e.compteur.main) || {}, levees: (e.compteur && e.compteur.levees) || {}});
   etat.risques = {parGroupe: (e.risques && e.risques.parGroupe && typeof e.risques.parGroupe === "object") ? e.risques.parGroupe : {}};
   if(e.seuils){
     if(e.seuils.rapprochement_m != null){ document.getElementById("rapproch").value = e.seuils.rapprochement_m; document.getElementById("rapproch-val").textContent = e.seuils.rapprochement_m + " m"; }
@@ -7069,6 +7265,14 @@ function brancher(){
   ["dragleave", "drop"].forEach(ev => zoneReprise.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); zoneReprise.classList.remove("actif"); }));
   zoneReprise.addEventListener("drop", async e => { const fs = [...(e.dataTransfer.files || [])]; if(fs.length) await deposerDocumentSociete(fs); });
   const brancherSortie = (id, fn) => document.getElementById(id).addEventListener("click", async (e) => { e.target.disabled = true; try{ await fn(); }catch(err){ signaler(err.message || String(err), true); } finally{ e.target.disabled = false; } });
+  // 21/11/2026 — seuil du rapport client : réglable par l'administrateur seul, journalisé
+  { const zs = document.getElementById("seuil-cpt"); if(zs) zs.addEventListener("change", async () => {
+      await driveCourriel(); const v = Math.round(Number(zs.value));
+      if(!etat.dossier){ zs.value = compteurSeuil(); return; }
+      if(!compteurEstAdmin()){ signaler("Seul l'administrateur peut modifier le seuil du rapport client.", true); zs.value = compteurSeuil(); return; }
+      if(!(v >= 50 && v <= 100)){ zs.value = compteurSeuil(); return; }
+      const avant = compteurSeuil(); etat.compteur = etat.compteur || {main: {}, levees: {}}; etat.compteur.seuil = v;
+      marquerModifie("compteur-seuil", {avant, apres: v}); rendre(); }); }
   brancherSortie("btn-compil-docx", () => sortirCompilation("docx"));
   brancherSortie("btn-compil-pdf", () => sortirCompilation("pdf"));
   brancherSortie("btn-acte", async () => ouvrirDonneesActe());
