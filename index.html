@@ -264,6 +264,16 @@
   .charge-ligne select{font:inherit;font-size:12.5px;text-transform:none;letter-spacing:0;padding:4px 6px;border:1px solid var(--trait);border-radius:4px;background:#fff;color:var(--nuit);width:100%;min-width:0;max-width:100%}
   .charge-alerte{margin:7px 0 0;padding:5px 8px;border-radius:4px;background:#FFE6C7;color:#7A4300;font-size:12px}
   .charge-note{margin:6px 0 0;font-size:11.5px;color:var(--gris)}
+  /* 21/11/2026 — COMPTEUR DE JUSTIFICATIFS (lot 2) : camembert à trois couleurs, pourcentage au centre ; jamais les mots, toujours la couleur */
+  .cpt{display:inline-flex;align-items:center;gap:8px;vertical-align:middle}
+  .cpt svg{flex:0 0 auto;display:block}
+  .cpt .cpt-t{font-size:12px;color:var(--gris);line-height:1.35}
+  .cpt .cpt-t b{color:var(--nuit);font-weight:600}
+  .cpt-pc{display:inline-block;margin-left:8px;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+  .cpt-na{display:inline-block;margin-left:8px;font-size:11.5px;color:#8A93A0;font-style:italic}
+  .cpt-past{display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 3px 0 0;vertical-align:baseline}
+  .p-tete .cpt{display:flex;margin:5px 0 0;white-space:normal;font-family:"Segoe UI",system-ui,sans-serif}
+  .sorties .cpt-bloc{flex-basis:100%;display:flex;align-items:center;gap:10px;margin:0 0 6px}
   /* 21/11/2026 (JFD) : pas de dossier sans notaire en charge NI numéro Kivia — tant que l'un manque, rien d'autre ne s'affiche */
   .charge-kivia{flex:1 1 150px;min-width:0;display:flex;flex-direction:column;gap:3px;font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:var(--canard)}
   .charge-kivia input{font:inherit;font-size:12.5px;text-transform:none;letter-spacing:0;padding:4px 6px;border:1px solid var(--trait);border-radius:4px;background:#fff;color:var(--nuit);width:100%;min-width:0}
@@ -4226,10 +4236,114 @@ function matiereGroupe(g){
   return {g, membres, communes, parcelles, docs, ehfs, dernierEhf, mentions, mutations, inscriptions, servitudes, parParcelle, parActe, sansTitre, mainlevees, reprises, anomalies, couleur};
 }
 
+// Matière d'un groupe, mémorisée le temps d'un rendu (la ligne, la fiche et le compteur la lisent tous) ;
+// la mémoire est vidée à chaque rendre() et à chaque modification.
+const matiereMemo = new Map();
+function matiereRendu(g){ if(!matiereMemo.has(g.num)) matiereMemo.set(g.num, matiereGroupe(g)); return matiereMemo.get(g.num); }
+
 // Couleur de la ligne : seulement après le premier passage de lecture sur le dossier.
 function couleurGroupe(g){
   if(!(etat.documents || []).some(d => d.lecture && d.lecture.ehf)) return null;
-  return matiereGroupe(g).couleur;
+  return matiereRendu(g).couleur;
+}
+
+/* ---------- COMPTEUR DE JUSTIFICATIFS (lot 2, 21/11/2026) ----------
+   Arbitrages de JFD des 20 et 21/11/2026. On compte CHAQUE INFORMATION, jamais chaque phrase ; une source
+   publique seule ne justifie rien : il faut une pièce du dossier. Par groupe (c'est lui qui fait foi) :
+     - référence cadastrale, une par parcelle : justifiée si un état hypothécaire lu du groupe cite la parcelle ;
+     - contenance, une par parcelle : toujours « sans pièce » tant que la lecture du titre n'est pas codée (option B du 21/11) ;
+     - effet relatif et origine, un par parcelle : justifié si la dernière mutation lue pour la parcelle est validée ;
+     - chaque inscription en cours : justifiée si la mention est validée à l'écran de contrôle ;
+     - chaque servitude : justifiée si la mention est validée ET le fonds (dominant / servant) qualifié ;
+     - chaque maillon de filiation : justifié si HISTO et les pièces concordent, ou s'il vient d'une pièce validée
+       quand HISTO n'a pas répondu ; saisi ou retenu par un humain = « validé à la main » (compté, signalé à part) ;
+       vu par une seule des deux sources sans décision = divergence ;
+     - chaque référence citée par un état hypothécaire et absente du cadastre = divergence (cas 4 du 20/11).
+   États : "justifie" | "main" | "sans" (aucune pièce) | "incomplet" | "divergence" (pastille orange) | "grave" (pastille carmin).
+   AUCUNE divergence grave n'est encore détectée par FUSION (les 18 cas viennent avec la lecture des titres) : la part carmin
+   reste vide pour l'instant. Un groupe sans aucun état hypothécaire lu est « non analysé » (mention grise). */
+const CPT_COUL = {canard: "#33838B", orange: "#FF982D", carmin: "#A01040", gris: "#C9CED6"};
+const compteurMemo = new Map();
+function compteurGroupe(g){
+  if(compteurMemo.has(g.num)) return compteurMemo.get(g.num);
+  const M = matiereRendu(g), infos = [];
+  const poser = (type, libelle, etatInfo) => infos.push({type, libelle, etat: etatInfo});
+  const nonAnalyse = !M.dernierEhf;
+  if(!nonAnalyse){
+    const citees = new Set(); M.mentions.forEach(m => (m.immeubles || []).forEach(i => { if(i.section && i.numero) citees.add(filCleCourte(i)); }));
+    M.parcelles.forEach(p => {
+      const cle = filCleCourte(p), nom = (p.section || "") + " " + (p.numero || "");
+      poser("reference", "Référence cadastrale " + nom, citees.has(cle) ? "justifie" : "sans");
+      poser("contenance", "Contenance " + nom, "sans");
+      const x = M.parParcelle.get(cle);
+      poser("origine", "Effet relatif et origine " + nom, x && x.derniere ? (x.derniere.valide ? "justifie" : "incomplet") : "sans");
+    });
+    M.inscriptions.forEach(m => poser("inscription", "Inscription " + (blocV(m.natures) || "") + (blocV(m.dateActe) ? " du " + blocV(m.dateActe) : ""), m.valide ? "justifie" : "incomplet"));
+    M.servitudes.forEach(m => poser("servitude", "Servitude " + (blocV(m.natures) || "") + (blocV(m.dateActe) ? " du " + blocV(m.dateActe) : ""), m.valide && m.fonds ? "justifie" : "incomplet"));
+    divergencesParcelles().filter(x => x.groupe === g.num).forEach(x => poser("reference", "Référence " + x.ref + " citée par l'état hypothécaire, absente du cadastre", "divergence"));
+    const lib = (a, n) => "Filiation " + filLibelle(a) + " > " + filLibelle(n);
+    if(histoPret(g)){
+      const c = histoCroisement(g);
+      c.concordants.forEach(x => poser("filiation", lib(x.ancien, x.maillon.parcelle), x.pieces.every(y => y.statut === "manuel") ? "main" : "justifie"));
+      c.histoSeuls.forEach(x => poser("filiation", lib(x.ancien, x.maillon.parcelle), x.decision === "retenu" ? "main" : x.decision ? "sans" : "divergence"));
+      c.piecesSeules.forEach(x => poser("filiation", lib(x.maillon.ancien, x.maillon.nouveau), x.decision ? "main" : "divergence"));
+    }else{
+      (etat.filiation.maillons || []).filter(x => x.groupe === g.num && x.moteur !== "histo" && (x.statut === "valide" || x.statut === "manuel"))
+        .forEach(x => poser("filiation", lib(x.ancien, x.nouveau), x.statut === "manuel" ? "main" : "justifie"));
+    }
+  }
+  const n = (e) => infos.filter(i => i.etat === e).length;
+  const r = {groupe: g.num, nonAnalyse, infos, total: infos.length, justifie: n("justifie"), main: n("main"), sans: n("sans"),
+    incomplet: n("incomplet"), divergence: n("divergence"), grave: n("grave")};
+  compteurMemo.set(g.num, compteurChiffres(r));
+  return compteurMemo.get(g.num);
+}
+// Chiffres dérivés : la part canard réunit le justifié et le validé à la main (un seul canard, mention à côté) ;
+// le pourcentage est arrondi VERS LE BAS, pour qu'aucun groupe n'affiche 85 ou 100 % sans y être.
+function compteurChiffres(r){
+  r.ok = r.justifie + r.main; r.orange = r.sans + r.incomplet + r.divergence; r.carmin = r.grave;
+  r.incomplets = r.orange + r.carmin; r.divergences = r.divergence + r.grave;
+  r.pc = r.total ? Math.floor(100 * r.ok / r.total) : 0;
+  r.couleur = r.nonAnalyse || !r.total ? "gris" : r.carmin ? "carmin" : r.incomplets ? "orange" : "canard";
+  return r;
+}
+// Total d'ensemble du dossier : PUREMENT INDICATIF (il ne bloque rien) ; les groupes non analysés n'y entrent pas.
+function compteurDossier(){
+  const r = {nonAnalyse: false, total: 0, justifie: 0, main: 0, sans: 0, incomplet: 0, divergence: 0, grave: 0, groupes: 0, nonAnalyses: 0};
+  etat.groupes.forEach(g => { const c = compteurGroupe(g); if(c.nonAnalyse){ r.nonAnalyses++; return; } r.groupes++;
+    ["total", "justifie", "main", "sans", "incomplet", "divergence", "grave"].forEach(k => { r[k] += c[k]; }); });
+  r.nonAnalyse = r.groupes === 0;
+  return compteurChiffres(r);
+}
+// Camembert : trois parts (canard, orange, carmin), pourcentage justifié SEUL au centre. Dessiné en anneau pour que le chiffre se lise.
+function camembertSvg(c, taille){
+  const T = taille || 44, R = T / 2, ep = Math.max(5, T * 0.2), r = R - ep / 2, P = 2 * Math.PI * r;
+  const parts = c.nonAnalyse || !c.total ? [[1, CPT_COUL.gris]] : [[c.ok / c.total, CPT_COUL.canard], [c.orange / c.total, CPT_COUL.orange], [c.carmin / c.total, CPT_COUL.carmin]];
+  let dec = 0, arcs = "";
+  parts.forEach(([f, coul]) => { if(f <= 0) return;
+    arcs += '<circle cx="' + R + '" cy="' + R + '" r="' + r.toFixed(2) + '" fill="none" stroke="' + coul + '" stroke-width="' + ep.toFixed(2) + '" stroke-dasharray="' + (f * P).toFixed(3) + ' ' + (P - f * P).toFixed(3) + '" stroke-dashoffset="' + (-dec * P).toFixed(3) + '" transform="rotate(-90 ' + R + ' ' + R + ')"/>';
+    dec += f; });
+  const txt = c.nonAnalyse || !c.total ? "–" : c.pc + " %";
+  return '<svg width="' + T + '" height="' + T + '" viewBox="0 0 ' + T + ' ' + T + '" role="img" aria-label="' + (c.nonAnalyse ? "non analysé" : c.pc + " % d\'informations justifiées") + '">' + arcs
+    + '<text x="' + R + '" y="' + R + '" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI,system-ui,sans-serif" font-weight="700" font-size="' + (T * 0.215).toFixed(1) + '" fill="#0F2238">' + txt + '</text></svg>';
+}
+const cptPast = (coul) => '<span class="cpt-past" style="background:' + CPT_COUL[coul] + '"></span>';
+// Camembert + mention à côté : « N informations incomplètes, dont D divergences » (formule de JFD), le validé à la main signalé à part.
+function compteurHtml(c, taille, prefixe){
+  if(c.nonAnalyse || !c.total) return '<span class="cpt">' + camembertSvg(c, taille) + '<span class="cpt-t">' + (prefixe || "") + 'non analysé</span></span>';
+  // au centre le pourcentage SEUL (pas de « 12 sur 14 ») ; à côté, les incomplètes dont les divergences (20/11)
+  const pl = (k, sing, plur) => k + " " + (k > 1 ? plur : sing);
+  let t = (prefixe || "") + (c.incomplets ? '<b>' + pl(c.incomplets, "information incomplète", "informations incomplètes") + '</b>'
+      + (c.divergences ? ', dont ' + pl(c.divergences, "divergence", "divergences") + (c.grave ? ' (' + cptPast("carmin") + c.grave + ')' : '') : '')
+    : '<b>tout est justifié</b>');
+  if(c.main) t += ' · ' + pl(c.main, "validée à la main", "validées à la main");
+  return '<span class="cpt">' + camembertSvg(c, taille) + '<span class="cpt-t">' + t + '</span></span>';
+}
+// Sur la ligne d'un groupe : le seul pourcentage, coloré (carmin dès une divergence grave, orange s'il manque quelque chose, canard si tout est justifié).
+function compteurLigneHtml(g){
+  const c = compteurGroupe(g);
+  if(c.nonAnalyse || !c.total) return '<span class="cpt-na">non analysé</span>';
+  return '<span class="cpt-pc" style="color:' + CPT_COUL[c.couleur] + '" title="' + c.ok + ' information(s) justifiée(s) sur ' + c.total + '">' + c.pc + ' %</span>';
 }
 
 /* ---------- rédaction : un modèle neutre, rendu ensuite en HTML ou en Word ----------
@@ -4668,7 +4782,7 @@ function rendreSorties(g){
   const c = couleurGroupe(g);
   const sp = spfSourceDuGroupe(g), lu = sp && sp.source === "lu";
   const LIB_SRC = {lu: "lu dans l\u2019état hypothécaire", manuel: "attribué à la main", appris: "automatique — appris d\u2019un état validé de la même commune", annuaire: "automatique — annuaire des services"};
-  z.innerHTML = '<span class="lib">SPF : ' + (sp ? '<b>' + echap(sp.valeur) + '</b> <em>(' + LIB_SRC[sp.source] + ')</em>' : '<em>non encore lu</em>') + '</span>'
+  z.innerHTML = (etat.dossier ? '<div class="cpt-bloc">' + compteurHtml(compteurGroupe(g), 46) + '</div>' : '') + '<span class="lib">SPF : ' + (sp ? '<b>' + echap(sp.valeur) + '</b> <em>(' + LIB_SRC[sp.source] + ')</em>' : '<em>non encore lu</em>') + '</span>'
     + (lu ? '' : '<button class="btn" type="button" data-spf="1">' + (sp ? 'Modifier' : 'Attribuer') + '</button>')
     + '<span style="flex-basis:100%;height:0"></span><span class="lib">Fiche du groupe' + (c ? ' — <b style="color:' + COULEURS[c].hex + '">' + COULEURS[c].nom + '</b>' : '') + '</span>'
     + '<button class="btn" type="button" data-f="docx">Word</button><button class="btn" type="button" data-f="pdf">PDF</button>';
@@ -6050,7 +6164,7 @@ function ongletsMaj(){
   const cle = (etat.dossier && etat.dossier.siren || "") + "|" + charge;
   if(cle !== ongletsMaj.cle){ ongletsMaj.cle = cle; arbreEtat.clear(); if(!instruction.enCours) instruction.texte = ""; ongletPoser(charge && !document.body.classList.contains("fusion-bloque") ? "groupes" : "dossier"); }
   const t = document.getElementById("p-tete");
-  if(t) t.innerHTML = charge ? echap(soc || "Jeu local") + (etat.dossier && etat.dossier.siren && soc !== etat.dossier.siren ? '<small>SIREN ' + echap(etat.dossier.siren) + '</small>' : '') : "Aucun dossier ouvert";
+  if(t) t.innerHTML = charge ? echap(soc || "Jeu local") + (etat.dossier && etat.dossier.siren && soc !== etat.dossier.siren ? '<small>SIREN ' + echap(etat.dossier.siren) + '</small>' : '') + (etat.dossier && etat.groupes.length ? compteurHtml(compteurDossier(), 34, "ensemble du dossier (indicatif) : ") : '') : "Aucun dossier ouvert";
   // liste des dossiers de la base : le dossier ouvert n'y figure pas, les autres sont annoncés comme tels
   const zd = document.getElementById("dossiers"), sm = zd && zd.querySelector("summary");
   if(sm){
@@ -6065,6 +6179,7 @@ function ongletsMaj(){
   if(op){ op.textContent = charge && n ? n.textContent : ""; op.classList.toggle("vif", Boolean(n && !n.classList.contains("zero"))); }
 }
 function rendre(){
+  matiereMemo.clear(); compteurMemo.clear();
   if(document.getElementById("panneau").dataset.onglet === "pieces") etat.piecesOuvert = true;   // dans sa rubrique, la liste des pièces est toujours dépliée
   memoriserReprise();
   rendreCharge();
@@ -6199,7 +6314,7 @@ function rendre(){
         '<span class="num' + (g.manuel ? " manuel" : "") + '">Groupe ' + g.num + '</span>' +
         '<span class="info">' +
           (lieu ? '<span class="lieu">' + lieu + '</span>' : "") +
-          '<span class="chiffres">' + membres.length + ' parcelle' + (membres.length>1?"s":"") + ' · ' + formatSurface(surface) + '</span>' +
+          '<span class="chiffres">' + membres.length + ' parcelle' + (membres.length>1?"s":"") + ' · ' + formatSurface(surface) + (etat.dossier ? compteurLigneHtml(g) : "") + '</span>' +
           '<span class="voyants">' + voyant("État hypothécaire", lu, lu ? "État hypothécaire lu" : "Aucun état hypothécaire lu pour ce groupe")
             + voyant(rq && rq.statut === "en_cours" ? "Risques en cours" : rq && rq.statut === "termine" && !rqOk ? "Risques périmés" : "État des risques", rqOk ? true : rq && rq.statut === "en_cours" ? "cours" : false, rqOk ? "État des risques levé le " + new Date(rq.le).toLocaleDateString("fr-FR") : "État des risques à lever")
             + voyant(lu && nPieces ? "Pièces : " + nPieces + " à réclamer" : "Pièces", lu && !nPieces, lu ? (nPieces ? nPieces + " pièce(s) encore à réclamer" : "Plus aucune pièce à réclamer") : "Pièces déterminées à la lecture de l'état hypothécaire")
@@ -6407,7 +6522,7 @@ async function sauverInitial(){
 
 // Après chaque geste sur le découpage : enregistrement différé de 800 ms (les gestes rapides se regroupent).
 function marquerModifie(quoi, detail){
-  divergencesParcelles.cache = null;
+  divergencesParcelles.cache = null; matiereMemo.clear(); compteurMemo.clear();
   if(!etat.dossier || !etat.persist.actif) return;
   etat.persist.quoi = quoi; etat.persist.detail = detail || {};
   afficherPersist("Modifié…");
