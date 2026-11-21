@@ -18,6 +18,7 @@
 // SURFACE D'APPEL
 //
 //   GET  /api/dossier?liste=1            → dossiers enregistrés (siren, dénomination, comptes, dates)
+//   GET  /api/dossier?liste=1 renvoie aussi, par dossier, les accords du notaire en attente (liste commune, 21/11/2026)
 //   GET  /api/dossier?siren=123456789    → un dossier complet : groupes, parcelles avec contours, etat
 //
 //   POST /api/dossier  { action, siren, ... }
@@ -66,9 +67,20 @@ async function lister(res) {
            (SELECT count(*) FROM fusion_groupe   g WHERE g.dossier_id = d.id AND g.manuel)::int AS groupes_manuels,
            (SELECT count(*) FROM fusion_parcelle p WHERE p.dossier_id = d.id)::int AS parcelles,
            (SELECT count(*) FROM fusion_parcelle p WHERE p.dossier_id = d.id AND p.contour IS NOT NULL)::int AS avec_contour
+           , d.etat->'compteur'->'accords' AS accords, d.etat->'charge' AS charge
     FROM fusion_dossier d
     ORDER BY d.modifie_le DESC`;
-  return res.status(200).json({ dossiers: lignes });
+  // Liste commune des accords en attente (21/11/2026, JFD) : toutes les demandes d'accord du notaire encore sans réponse,
+  // tous dossiers confondus. L'état complet du compteur ne sort pas d'ici : seulement ce que la liste affiche.
+  const dossiers = lignes.map((l) => {
+    const { accords, charge, ...reste } = l;
+    const c = charge && typeof charge === 'object' ? charge : {};
+    const attente = Object.entries(accords && typeof accords === 'object' ? accords : {})
+      .filter(([, a]) => a && a.statut === 'demande')
+      .map(([cle, a]) => ({ cle, groupe: a.groupe || null, le: a.le || null, relance_le: a.relanceLe || null, pourcentage: a.pc == null ? null : a.pc, par: a.par || null }));
+    return { ...reste, kivia: c.kivia || null, associe: c.associe ? { nom: c.associe.nom || null, initiales: c.associe.initiales || null, courriel: c.associe.courriel || null } : null, accords_attente: attente };
+  });
+  return res.status(200).json({ dossiers });
 }
 
 async function charger(res, siren) {
