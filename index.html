@@ -297,6 +297,11 @@
   .chrono b{color:var(--nuit)}
   .cpt-accords{margin:8px 14px;padding:8px 10px;border:1px solid #FF982D;border-radius:6px;background:#FFF8EF;font-size:12.5px;color:var(--nuit)}
   .cpt-accords-t{font-weight:700;margin:0 0 4px}
+  .cpt-communs{margin:8px 0}
+  .cpt-communs button{display:flex;gap:8px;align-items:baseline;width:100%;padding:4px 2px;border:0;border-top:1px dotted var(--trait);background:none;font:inherit;color:inherit;text-align:left;cursor:pointer}
+  .cpt-communs button:hover{background:#FFEFD9}
+  .cpt-communs .qui{font-weight:600}
+  .cpt-communs .inf{margin-left:auto;color:var(--gris);white-space:nowrap}
   .cpt-accords .n{margin-left:6px;font-weight:600;color:var(--gris)}
   .cpt-accords details{padding:3px 0;border-top:1px dotted var(--trait)}
   .cpt-accords summary{cursor:pointer}
@@ -704,6 +709,7 @@
           <div class="societe-etat" id="societe-etat"></div>
           <div class="charge" id="charge" hidden></div>
           <ul class="candidats" id="candidats"></ul>
+          <div class="cpt-accords cpt-communs" id="accords-communs" hidden></div>
           <details class="dossiers" id="dossiers" hidden></details>
         </div>
         <input type="file" id="fichier" accept=".geojson,.json,application/geo+json,application/json" hidden>
@@ -4842,7 +4848,7 @@ async function compteurDemanderAccord(g, relance){
   compteurBrouillon(dest, "FUSION — " + ref + " — " + (relance ? "relance : " : "") + "accord demandé pour la sortie du rapport client", [
     (relance ? "Relance. " : "") + "Le rapport client de ce groupe est justifié à <b>" + c.pc + " %</b> (seuil : " + compteurSeuil() + " %). Sa sortie demande votre accord.",
     "Ce qui manque ou diverge (" + raisons.length + ") :<br>" + raisons.map(r => pastille(r) + echap(r.t)).join("<br>"),
-    'Pour autoriser ou refuser : ouvrir <a href="' + location.origin + location.pathname + '">FUSION</a>, dossier ' + echap(etat.dossier.denomination || etat.dossier.siren) + ', rubrique Groupes — la liste « Accords en attente » est en tête.'],
+    'Pour autoriser ou refuser : ouvrir <a href="' + location.origin + location.pathname + '">FUSION</a>, dossier ' + echap(etat.dossier.denomination || etat.dossier.siren) + ', rubrique Groupes — la liste « Accords en attente » est en tête (et, à l\'accueil, la liste commune à tous les dossiers).'],
     "FUSION - " + ref + " - demande accord");
   if(relance){ B[cle] = Object.assign({}, B[cle], {relanceLe: new Date().toISOString()}); marquerModifie("compteur-accord-relance", {groupe: g.num, pourcentage: c.pc});
     // rappel pour l'agenda du COLLABORATEUR, deux jours ouvrés plus tard (rien dans l'agenda du notaire)
@@ -4851,7 +4857,7 @@ async function compteurDemanderAccord(g, relance){
       "DTSTART;VALUE=DATE:" + ymd, "SUMMARY:" + titreR.replace(/[,;]/g, " "), "END:VEVENT", "END:VCALENDAR"].join("\r\n");
     telechargerBlob(new Blob([ics], {type: "text/calendar"}), "rappel - " + ref.replace(/[\\/:*?"<>|]/g, "") + ".ics");
     signaler("Relance préparée, et rappel d'agenda téléchargé pour le " + j.toLocaleDateString("fr-FR") + ".");
-  }else{ B[cle] = {statut: "demande", le: new Date().toISOString(), par: etat.drive.courriel || null, pc: c.pc, graves: c.grave};
+  }else{ B[cle] = {statut: "demande", le: new Date().toISOString(), par: etat.drive.courriel || null, pc: c.pc, graves: c.grave, groupe: g.num};
     marquerModifie("compteur-accord-demande", {groupe: g.num, pourcentage: c.pc, notaire: (a && a.initiales) || null});
     signaler("Demande d'accord préparée pour " + chargeLibelle(a) + " : ouvrez le brouillon dans Outlook."); }
   rendre();
@@ -5980,19 +5986,25 @@ async function acteAnnexes(annexes, M){
       ax.etat = incomplet ? M("jointe ci-après, texte des actes à compléter") : "jointe ci-après"; jointes++; continue;
     }
     if(ax.type === "ori"){
-      if(!Mg.dernierEhf){ ax.etat = M("origine de propriété à établir : aucun état hypothécaire lu"); continue; }
+      if(!Mg.dernierEhf){ ax.etat = M("origine de propriété antérieure à établir : aucun état hypothécaire lu"); continue; }
+      // 21/11/2026 (JFD) : l'annexe relate l'ORIGINE ANTÉRIEURE (le récit sorti du corps de l'acte), puis la récapitule en tableau ;
+      // la dernière mutation de chaque parcelle — l'origine immédiate — reste dans l'acte et ne figure pas ici.
       const actes = new Map();
-      Mg.parParcelle.forEach(x => x.toutes.forEach(m => { const k = blocV(m.volume) + "/" + blocV(m.numero) + "|" + blocV(m.dateActe) + "|" + blocV(m.natures); if(!actes.has(k)) actes.set(k, {m, parcelles: []}); actes.get(k).parcelles.push(x.parcelle); }));
-      if(!actes.size){ ax.etat = M("aucune mutation citant les parcelles à l'état hypothécaire lu : origine à établir sur les titres"); continue; }
+      Mg.parParcelle.forEach(x => x.toutes.filter(m => m !== x.derniere).forEach(m => { const k = blocV(m.volume) + "/" + blocV(m.numero) + "|" + blocV(m.dateActe) + "|" + blocV(m.natures); if(!actes.has(k)) actes.set(k, {m, parcelles: []}); actes.get(k).parcelles.push(x.parcelle); }));
+      const textes = ax.textes || [];
+      if(!actes.size && !textes.length){ ax.etat = M("aucune mutation antérieure à l'état hypothécaire lu : origine antérieure à établir sur les titres"); continue; }
       tete(ax);
-      const lignes = [...actes.values()].sort((x, y) => (y.m.dateA || 0) - (x.m.dateA || 0)).map(x => { const m = x.m;
-        const pub = [blocV(m.service) ? "SPF de " + blocV(m.service) : "", blocV(m.dateDepot) ? "le " + blocV(m.dateDepot) : "", blocV(m.volume) ? "volume " + blocV(m.volume) + (blocV(m.numero) ? " numéro " + blocV(m.numero) : "") : ""].filter(Boolean).join(", ");
-        return [blocV(m.dateActe) || [M("date")], (blocV(m.natures) || "acte") + (blocV(m.redacteur) ? " — " + blocV(m.redacteur).replace(/^NOT\s+/i, "Maître ") + (blocV(m.commune) ? ", notaire à " + blocV(m.commune) : "") : ""),
-          [blocNoms(m.disposants) ? "De : " + blocNoms(m.disposants) : "", blocNoms(m.disposants) && blocNoms(m.beneficiaires) ? " — " : "", blocNoms(m.beneficiaires) ? "À : " + blocNoms(m.beneficiaires) : ""],
-          pub || [M("références de publication")], blocNumeros(x.parcelles)]; });
-      corps.push(axTableau([1050, 2500, 2421, 1900, 1200], [["Date de l'acte", "Nature et rédacteur", "Parties", "Publication", "Parcelles"]].concat(lignes)));
+      textes.forEach(x => corps.push(axP(x.note ? [M(x.t.replace(/\.$/, ""))] : x.t)));
+      if(actes.size){
+        const lignes = [...actes.values()].sort((x, y) => (y.m.dateA || 0) - (x.m.dateA || 0)).map(x => { const m = x.m;
+          const pub = [blocV(m.service) ? "SPF de " + blocV(m.service) : "", blocV(m.dateDepot) ? "le " + blocV(m.dateDepot) : "", blocV(m.volume) ? "volume " + blocV(m.volume) + (blocV(m.numero) ? " numéro " + blocV(m.numero) : "") : ""].filter(Boolean).join(", ");
+          return [blocV(m.dateActe) || [M("date")], (blocV(m.natures) || "acte") + (blocV(m.redacteur) ? " — " + blocV(m.redacteur).replace(/^NOT\s+/i, "Maître ") + (blocV(m.commune) ? ", notaire à " + blocV(m.commune) : "") : ""),
+            [blocNoms(m.disposants) ? "De : " + blocNoms(m.disposants) : "", blocNoms(m.disposants) && blocNoms(m.beneficiaires) ? " — " : "", blocNoms(m.beneficiaires) ? "À : " + blocNoms(m.beneficiaires) : ""],
+            pub || [M("références de publication")], blocNumeros(x.parcelles)]; });
+        corps.push(axTableau([1050, 2500, 2421, 1900, 1200], [["Date de l'acte", "Nature et rédacteur", "Parties", "Publication", "Parcelles"]].concat(lignes)));
+      }
       const dEhf = blocDateFr(dateDepuisISO(Mg.dernierEhf.date_doc)) || Mg.dernierEhf.date_doc || "";
-      corps.push(axP([{t: "Tableau établi d'après l'état hypothécaire" + (dEhf ? " en date du " + dEhf : "") + ", de la mutation la plus récente à la plus ancienne ; l'origine de propriété est relatée dans le corps de l'acte.", ital: true}], {taille: 16, avant: 120}));
+      corps.push(axP([{t: "Origine antérieure établie d'après l'état hypothécaire" + (dEhf ? " en date du " + dEhf : "") + ", de la mutation la plus récente à la plus ancienne ; l'origine immédiate est relatée dans le corps de l'acte.", ital: true}], {taille: 16, avant: 120}));
       ax.etat = "jointe ci-après"; jointes++; continue;
     }
   }
@@ -6112,7 +6124,12 @@ async function sortirActe(a, opt){
   groupes.forEach((g, k) => {
     const s = redigerGroupe(g, {});
     art(3, "Immeuble ARTICLE " + ORDINAL_ARTICLE(k + 1));
+    // 21/11/2026 (JFD) : l'ORIGINE IMMÉDIATE reste dans l'acte ; l'ORIGINE ANTÉRIEURE passe en annexe (ses paragraphes sont mis de côté ici)
+    let dansAnterieure = false; const anterieure = [];
     s.paragraphes.forEach(x => {
+      if(x.style === "sous2" && /^ORIGINE DE PROPRI[ÉE]T[ÉE] ANT[ÉE]RIEURE/.test(x.t)){ dansAnterieure = true; return; }
+      if(dansAnterieure && (x.style === "sous" || x.style === "titre")) dansAnterieure = false;
+      if(dansAnterieure){ if(x.t) anterieure.push({t: x.t, note: x.style === "note"}); return; }
       if(x.tableau){ P("p", ital("Figurant ainsi au cadastre :")); X.push(trameTableau("cadastre", [x.tableau.entete.map(e => e === "Numéro" ? "N°" : e), ...x.tableau.lignes])); return; }
       if(x.style === "titre" || x.style === "alerte" || x.style === "lien") return;
       if(x.style === "sous"){ if(!/^D[ÉE]SIGNATION/.test(x.t)) P("sousgras", x.t.charAt(0) + x.t.slice(1).toLowerCase()); return; }
@@ -6131,8 +6148,8 @@ async function sortirActe(a, opt){
       AX(an, "Descriptif des servitudes et charges", {type: "ser", g, lieu: lieuAx, M: s.matiere});
       P("p", "Le descriptif des servitudes et charges relevées sur l'Immeuble est annexé. ", ital("(Annexe " + (an++) + ")"));
     }
-    AX(an, "Tableau de l'origine de propriété", {type: "ori", g, lieu: lieuAx, M: s.matiere});
-    P("p", "Un tableau récapitulatif de l'origine de propriété de l'Immeuble est annexé. ", ital("(Annexe " + (an++) + ")"));
+    AX(an, "Origine de propriété antérieure", {type: "ori", g, lieu: lieuAx, M: s.matiere, textes: anterieure});
+    P("p", "L'origine de propriété antérieure de l'Immeuble est relatée en annexe. ", ital("(Annexe " + (an++) + ")"));
     const duGroupe = manquantes.filter(l => l.g === g.num);
     if(duGroupe.length) P("p", M("pièces encore à réclamer pour cet Immeuble : " + duGroupe.map(l => l.texte).join(" ; ")));
     const val = valeurNombre(a.valeurs[g.num]); if(val) total += val; else valManque = true;
@@ -7042,12 +7059,32 @@ function ouvrirDepuisBase(d){
   signaler("Dossier rouvert : " + etat.parcelles.length + " parcelles, " + etat.groupes.length + " groupes.");
 }
 
+// Liste COMMUNE des accords en attente (21/11/2026, JFD) : toutes les demandes d'accord du notaire sans réponse, tous dossiers
+// confondus, dès l'écran d'accueil ; un clic ouvre le dossier, où la liste du dossier (en tête des groupes) porte les boutons.
+function rendreAccordsCommuns(dossiers){
+  const z = document.getElementById("accords-communs"); if(!z) return;
+  const lignes = [];
+  dossiers.forEach(x => (x.accords_attente || []).forEach(a => lignes.push({x, a})));
+  if(!lignes.length){ z.innerHTML = ""; z.hidden = true; return; }
+  lignes.sort((p, q) => String(p.a.le || "").localeCompare(String(q.a.le || "")));   // la plus ancienne en tête
+  z.hidden = false;
+  z.innerHTML = '<div class="cpt-accords-t">Accords en attente — tous dossiers <span class="n">' + lignes.length + '</span></div>'
+    + lignes.map(({x, a}, k) => { const j = a.le ? joursOuvresDepuis(a.le) : null, no = x.associe ? chargeLibelle(x.associe) : "";
+        return '<button type="button" data-k="' + k + '" title="Ouvrir le dossier">'
+          + '<span class="qui">' + echap(x.denomination || x.siren) + '</span>'
+          + '<span>' + (x.kivia ? "Kivia " + echap(x.kivia) + " · " : "") + (a.groupe ? "groupe " + echap(numeroGroupe4(a.groupe)) : "parcelle " + echap(String(a.cle || "").replace(/^g/, "")))
+          + (a.pourcentage == null ? "" : " · <b>" + echap(a.pourcentage) + " %</b>") + '</span>'
+          + '<span class="inf">' + (no ? echap(no) + " · " : "") + (a.le ? "demandé le " + new Date(a.le).toLocaleDateString("fr-FR") + (j ? " (" + j + " j ouvré" + (j > 1 ? "s" : "") + ")" : "") : "") + (a.relance_le ? " · relancé" : "") + '</span></button>'; }).join("");
+  z.querySelectorAll("button[data-k]").forEach(b => b.addEventListener("click", () => { const x = lignes[Number(b.dataset.k)].x;
+    document.getElementById("societe-saisie").value = x.denomination || x.siren; chercherParcelles(x.siren, x.denomination || x.siren, false); }));
+}
 async function listerDossiers(){
   const zone = document.getElementById("dossiers");
   try{
     const r = await fetch("/api/dossier?liste=1", {headers:{Accept:"application/json"}});
     const d = await r.json();
     if(!r.ok) throw new Error(d.erreur || ("HTTP " + r.status));
+    rendreAccordsCommuns(d.dossiers || []);
     if(!d.dossiers || !d.dossiers.length){ zone.innerHTML = ""; zone.hidden = true; return; }
     zone.hidden = false;
     let html = '<summary>Dossiers enregistrés <span class="n">(' + d.dossiers.length + ')</span></summary><ul>';
@@ -7457,5 +7494,3 @@ document.getElementById("btn-panneau").addEventListener("click", (e) => {
 </script>
 </body>
 </html>
-
-  
