@@ -4346,10 +4346,14 @@ function compteurGroupe(g){
     const titreDe = new Map();   // parcelle → pièce « titre de propriété » attendue (même identifiant que la ligne des pièces à réclamer)
     M.parActe.forEach((x, k) => x.parcelles.forEach(p => titreDe.set(filCleCourte(p), {piece: base + "|titre|" + k.replace(/\s+/g, " "), pieceLib: "Titre de propriété — " + nomActe(x.mention)})));
     const citees = new Set(); M.mentions.forEach(m => (m.immeubles || []).forEach(i => { if(i.section && i.numero) citees.add(filCleCourte(i)); }));
-    M.parcelles.forEach(p => {
+    // 21/11/2026 (JFD, option A) : la référence est justifiée dès que l'état hypothécaire LU cite la parcelle, même sans
+    // aucune formalité la concernant (état délivré sur cette désignation) — références relevées dans le texte de la pièce
+    const refsEhf = new Set(); M.ehfs.forEach(d => ((d.lecture || {}).references || []).forEach(r => refsEhf.add(String(r))));
+    M.parcelles.forEach((p, k) => {
       const cle = filCleCourte(p), nom = (p.section || "") + " " + (p.numero || "");
       const titre = titreDe.get(cle) || {piece: base + "|sans-titre", pieceLib: "Titre de propriété (aucune mutation lue à l'état hypothécaire)"};
-      poser("reference", cle, "Référence cadastrale " + nom, citees.has(cle) ? "justifie" : "sans", {pieceLib: "État hypothécaire citant la parcelle"});
+      const idu = String(((M.membres[k] || {}).props || {}).idu || "");
+      poser("reference", cle, "Référence cadastrale " + nom, citees.has(cle) || (idu && refsEhf.has(idu)) ? "justifie" : "sans", {pieceLib: "État hypothécaire citant la parcelle"});
       poser("contenance", cle, "Contenance " + nom, "sans", titre);
       const x = M.parParcelle.get(cle);
       poser("origine", cle, "Effet relatif et origine " + nom, x && x.derniere ? (x.derniere.valide ? "justifie" : "incomplet") : "sans",
