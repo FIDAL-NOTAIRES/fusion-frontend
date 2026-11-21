@@ -143,6 +143,19 @@
   }
   .btn:hover{background:var(--canard);color:#fff}
   .btn.plein{background:var(--canard);color:#fff}
+  #acces-voile{position:fixed;inset:0;z-index:100000;background:#F4F6F8;display:flex;align-items:center;justify-content:center;padding:20px}
+  #acces-voile[hidden]{display:none}
+  .acces-carte{width:100%;max-width:400px;background:#fff;border:1px solid #D9DEE5;border-top:4px solid #33838B;border-radius:8px;padding:22px 24px;font-family:'Segoe UI',sans-serif;color:#0F2238}
+  .acces-carte h2{margin:0 0 4px;font-family:Georgia,serif;font-size:22px;letter-spacing:.5px}
+  .acces-carte .acces-msg{margin:0 0 12px;font-size:13.5px;line-height:1.45}
+  .acces-carte .acces-err{margin:0 0 10px;font-size:13px;color:#A01040;font-weight:600}
+  .acces-carte label{display:block;margin:10px 0 3px;font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#657D96}
+  .acces-carte input{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #C5CCD6;border-radius:4px;font:inherit;font-size:14px}
+  .acces-carte .acces-actions{margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .acces-carte button{padding:8px 16px;border:0;border-radius:4px;background:#33838B;color:#fff;font:inherit;font-weight:600;cursor:pointer}
+  .acces-carte button[disabled]{opacity:.5;cursor:wait}
+  .acces-carte a{color:#33838B;font-size:13px}
+  #acces-bandeau{position:fixed;left:12px;bottom:12px;z-index:9000;padding:6px 10px;border-left:4px solid #FF982D;background:#FFF4E8;font:12.5px 'Segoe UI',sans-serif;color:#0F2238;border-radius:3px}
   .btn.plein:hover{background:var(--nuit);border-color:var(--nuit)}
   .btn.danger{border-color:var(--carmin);color:var(--carmin)}
   .btn.danger:hover{background:var(--carmin);color:#fff}
@@ -672,6 +685,9 @@
   <script src="https://connexion-omega.vercel.app/bandeau.js" defer></script>
 </head>
 <body>
+<!-- ÉTAPE 3 de PLATEFORME (21/11/2026) : voile d'accès. FUSION ne s'affiche qu'une fois la personne reconnue
+     par CARNET et son droit sur FUSION vérifié. Le voile est posé d'office ; c'est le code d'accès qui le lève. -->
+<div id="acces-voile"><div class="acces-carte" id="acces-carte"><h2>FUSION</h2><p class="acces-msg">Vérification de votre accès…</p></div></div>
 <div class="app">
 
   <header class="bandeau">
@@ -1862,6 +1878,9 @@ async function imagePagePdf(source, numero, largeurCible){
    serveur dans api/lecture.js). Le rendu remplit le même contrat que la passe 1. */
 const PASSE2_PAGES_PAR_LOT = 4;
 async function appelLecture(corps){
+  // 21/11/2026 — la lecture automatique (payante) demande la « version payante » dans CARNET (niveau 2)
+  if(corps && corps.action === "lire" && window.ACCES_FUSION && window.ACCES_FUSION.verifie && window.ACCES_FUSION.niveau < 2)
+    throw new Error("La lecture automatique n'est pas ouverte pour votre compte : utilisez la lecture par conversation, ou demandez la version payante.");
   const r = await fetch("/api/lecture", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(Object.assign({jeton: etat.drive.token}, corps))});
   const j = await r.json().catch(() => ({}));
   if(!r.ok) throw new Error(j.erreur || ("HTTP " + r.status));
@@ -7491,6 +7510,90 @@ document.getElementById("btn-panneau").addEventListener("click", (e) => {
   e.currentTarget.title = lib; e.currentTarget.setAttribute("aria-label", lib); e.currentTarget.setAttribute("aria-expanded", String(!replie));
   setTimeout(() => { if(carte) carte.invalidateSize(); }, 50);
 });
+</script>
+<!-- bloc à part : le contrôle d'accès tourne même si le code de FUSION s'arrête sur une erreur -->
+<script>
+function accesEchap(t){ return String(t == null ? "" : t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+/* ==================== ACCÈS PAR PERSONNE — étape 3 de PLATEFORME (21/11/2026, JFD : option A) ====================
+   Décisions des 14 et 16/11 : chaque outil vérifie les droits à son ouverture ; identifiant (initiales) et mot de
+   passe tenus dans CARNET ; outil non ouvert = « En attente d'ouverture d'accès » avec demande par courriel ;
+   si CARNET ne répond pas, les derniers droits connus du poste valent sept jours.
+   Option A du 21/11 : PLATEFORME transmet la connexion dans le fragment de l'adresse (#acces=…) ; à défaut
+   (favori, lien d'un courriel), FUSION affiche son propre écran de connexion, mêmes initiales, même mot de passe.
+   Ce voile protège l'ÉCRAN ; les fonctions du serveur de FUSION ne vérifient pas encore la personne.
+   Sans rapport avec la connexion Google du Drive, qui reste telle quelle. */
+const ACCES = { CARNET: "https://carnet-ivory.vercel.app/api/carnet", OUTIL: "fusion", PLATEFORME: "https://phare-ashy.vercel.app/", CLE: "fusion.acces", REPLI_MS: 7 * 864e5 };
+window.ACCES_FUSION = { verifie: false, niveau: 0, personne: null };
+function accesLire(){ try{ return JSON.parse(localStorage.getItem(ACCES.CLE) || "null"); }catch(e){ return null; } }
+function accesGarder(o){ try{ if(o) localStorage.setItem(ACCES.CLE, JSON.stringify(o)); else localStorage.removeItem(ACCES.CLE); }catch(e){} }
+async function accesCarnet(action, corps){
+  let r;
+  try{ r = await fetch(ACCES.CARNET, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(Object.assign({action}, corps || {}))}); }
+  catch(e){ const x = new Error("CARNET ne répond pas."); x.muet = true; throw x; }
+  const d = await r.json().catch(() => ({}));
+  if(!r.ok){ const x = new Error(d.erreur || ("Erreur " + r.status)); x.code = r.status; if(r.status >= 500) x.muet = true; throw x; }
+  return d;
+}
+function accesCarte(html){ const v = document.getElementById("acces-voile"); v.hidden = false; document.getElementById("acces-carte").innerHTML = "<h2>FUSION</h2>" + html; }
+function accesOuvrir(niveau, personne, repli){
+  window.ACCES_FUSION = { verifie: true, niveau, personne: personne || null };
+  document.getElementById("acces-voile").hidden = true;
+  const b = document.getElementById("acces-bandeau"); if(b) b.remove();
+  if(repli){ const z = document.createElement("div"); z.id = "acces-bandeau"; z.textContent = "CARNET ne répond pas : accès ouvert sur vos derniers droits connus (valables sept jours)."; document.body.appendChild(z); }
+}
+function accesEcranConnexion(message){
+  accesCarte('<p class="acces-msg">Connectez-vous avec vos initiales et votre mot de passe, les mêmes que sur PLATEFORME.</p>'
+    + (message ? '<p class="acces-err">' + accesEchap(message) + '</p>' : '')
+    + '<form id="acces-form"><label for="acces-id">Identifiant (initiales)</label><input id="acces-id" autocomplete="username" autocapitalize="none" spellcheck="false">'
+    + '<label for="acces-mdp">Mot de passe</label><input id="acces-mdp" type="password" autocomplete="current-password">'
+    + '<div class="acces-actions"><button type="submit">Se connecter</button><a href="' + ACCES.PLATEFORME + '">Ouvrir PLATEFORME</a></div></form>');
+  const f = document.getElementById("acces-form");
+  f.addEventListener("submit", async (ev) => {
+    ev.preventDefault(); const bt = f.querySelector("button"); bt.disabled = true;
+    try{
+      const d = await accesCarnet("p_connexion", {identifiant: document.getElementById("acces-id").value.trim(), mdp: document.getElementById("acces-mdp").value});
+      accesDecider(d, d.jeton);
+    }catch(e){ accesEcranConnexion(e.muet ? "CARNET ne répond pas pour l'instant : réessayez dans un moment." : e.message); }
+  });
+  const c = document.getElementById("acces-id"); if(c) c.focus();
+}
+function accesDecider(d, jeton){
+  const nom = d.personne ? [d.personne.prenom, d.personne.nom].filter(Boolean).join(" ") : "";
+  if(d.provisoire){
+    accesGarder(null);
+    accesCarte('<p class="acces-msg">' + (nom ? accesEchap(nom) + ", votre " : "Votre ") + 'mot de passe est encore provisoire. Choisissez d\'abord votre mot de passe personnel dans PLATEFORME, puis revenez dans FUSION.</p>'
+      + '<div class="acces-actions"><a href="' + ACCES.PLATEFORME + '">Ouvrir PLATEFORME</a></div>'); return;
+  }
+  const niveau = Number((d.acces || {})[ACCES.OUTIL]) || 0;
+  accesGarder({jeton, niveau, le: Date.now(), personne: d.personne || null, contact: d.contact || ""});
+  if(niveau >= 1){ accesOuvrir(niveau, d.personne, false); return; }
+  const sujet = "PLATEFORME — demande d'accès à FUSION", corps = "Bonjour,\n\nJe souhaite accéder à l'outil FUSION.\n\n" + nom;
+  accesCarte('<p class="acces-msg">' + (nom ? accesEchap(nom) + " : " : "") + '<b>en attente d\'ouverture d\'accès.</b><br>Votre compte n\'a pas encore accès à FUSION.</p>'
+    + '<div class="acces-actions">' + (d.contact ? '<a href="mailto:' + encodeURIComponent(d.contact) + '?subject=' + encodeURIComponent(sujet) + '&body=' + encodeURIComponent(corps) + '">Demander l\'accès par courriel</a>' : '')
+    + '<a href="' + ACCES.PLATEFORME + '">Ouvrir PLATEFORME</a><a href="#" id="acces-autre">Changer de compte</a></div>');
+  const a = document.getElementById("acces-autre"); if(a) a.addEventListener("click", (ev) => { ev.preventDefault(); accesGarder(null); accesEcranConnexion(); });
+}
+async function accesVerifier(){
+  // en local (fichier ouvert hors ligne, essais) le voile ne joue pas : aucune fonction du serveur n'y est joignable
+  if(location.protocol === "file:" && !window.ACCES_ESSAI){ document.getElementById("acces-voile").hidden = true; return; }
+  let jeton = null; const m = /[#&]acces=([^&]+)/.exec(location.hash || "");
+  if(m){ try{ jeton = decodeURIComponent(m[1]); }catch(e){ jeton = null; }
+    try{ history.replaceState(null, "", location.pathname + location.search); }catch(e){} }   // le jeton ne reste pas dans l'adresse
+  const garde = accesLire();
+  if(!jeton && garde && garde.jeton) jeton = garde.jeton;
+  if(!jeton){ accesEcranConnexion(); return; }
+  try{ accesDecider(await accesCarnet("p_moi", {jeton}), jeton); }
+  catch(e){
+    if(e.muet){
+      if(garde && garde.jeton === jeton && garde.niveau >= 1 && Date.now() - (garde.le || 0) < ACCES.REPLI_MS){ accesOuvrir(garde.niveau, garde.personne, true); return; }
+      accesCarte('<p class="acces-err">CARNET ne répond pas pour l\'instant.</p><p class="acces-msg">Votre accès ne peut pas être vérifié. Réessayez dans un moment.</p><div class="acces-actions"><button type="button" id="acces-re">Réessayer</button></div>');
+      document.getElementById("acces-re").addEventListener("click", () => { accesCarte('<p class="acces-msg">Vérification de votre accès…</p>'); accesVerifier(); });
+      return;
+    }
+    accesGarder(null); accesEcranConnexion(e.code === 401 ? "Connexion expirée, reconnectez-vous." : e.message);
+  }
+}
+accesVerifier();
 </script>
 </body>
 </html>
