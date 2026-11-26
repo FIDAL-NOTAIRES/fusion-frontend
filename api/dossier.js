@@ -34,6 +34,7 @@
 // MARTEAU et PARTAGE AMIABLE.
 
 import { neon } from '@neondatabase/serverless';
+import { verifierPersonne } from './_acces.js';
 
 let _sql;
 function db() {
@@ -271,6 +272,9 @@ export default async function handler(req, res) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
   try {
+    // lot 5 de CARNET (26/11/2026) : lecture comme écriture d'un dossier demandent une personne connectée ayant FUSION dans CARNET
+    const qui = await verifierPersonne(req, 'fusion');
+    if (!qui.ok) { if (qui.expire) res.setHeader('X-Acces', 'carnet'); return res.status(qui.code).json({ erreur: qui.message }); }
     if (req.method === 'GET') {
       if (req.query.liste) return await lister(res);
       const siren = sirenPropre(req.query.siren);
